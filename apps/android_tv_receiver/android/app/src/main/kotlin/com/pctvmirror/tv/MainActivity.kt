@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
+import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -27,6 +28,7 @@ import java.net.SocketException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicLong
 
 class MainActivity : FlutterActivity() {
     private val receiverServer = StageOneReceiverServer()
@@ -42,6 +44,7 @@ class MainActivity : FlutterActivity() {
                 "getCapabilities" -> result.success(capabilities())
                 "startReceiver" -> startReceiver(call, result)
                 "stopReceiver" -> result.success(receiverServer.stop())
+                "getReceiverStatus" -> result.success(receiverServer.getStatus())
                 else -> result.notImplemented()
             }
         }
@@ -107,8 +110,20 @@ private class StageOneReceiverServer {
     @Volatile
     private var boundPort = DEFAULT_PORT
 
+    private val bytesReceived = AtomicLong(0)
+    private val configPacketsReceived = AtomicLong(0)
+    private val accessUnitsReceived = AtomicLong(0)
+    private val keyFramesReceived = AtomicLong(0)
+
+    @Volatile
+    private var lastPacketError: String? = null
+
+    @Volatile
+    private var lastErrorCode: String? = null
+
     fun start(port: Int): Map<String, Any> {
         stop()
+        resetCounters()
 
         return try {
             val socket = ServerSocket()
@@ -149,6 +164,8 @@ private class StageOneReceiverServer {
         clientSocket = null
         serverSocket = null
         decoder.releaseCodec()
+        lastPacketError = null
+        lastErrorCode = null
 
         return snapshot(
             state = "idle",
@@ -157,6 +174,10 @@ private class StageOneReceiverServer {
             decoderReady = false,
             surfaceRendererReady = decoder.hasSurface,
         )
+    }
+
+    fun getStatus(): Map<String, Any> {
+        return snapshot(receiverPort = boundPort)
     }
 
     fun onSurfaceAvailable(surface: Surface) {
@@ -176,9 +197,12 @@ private class StageOneReceiverServer {
                 handleClient(client)
             } catch (error: SocketException) {
                 if (running) {
-                    running = false
+                    recordPacketError(error.message ?: "Receiver socket accept failed.")
                 }
-            } catch (_: IOException) {
+            } catch (error: IOException) {
+                if (running) {
+                    recordPacketError(error.message ?: "Receiver accept loop failed.")
+                }
             }
         }
     }
@@ -195,7 +219,7 @@ private class StageOneReceiverServer {
                 return
             }
 
-            writeJsonLine(socket, streamAnswerResponse())
+            writeJsonLine(socket, streamAnswerResponse(decoder.hasSurface))
             readVideoPackets(input)
         }
     }
@@ -206,18 +230,51 @@ private class StageOneReceiverServer {
                 VideoPacket.readFrom(input) ?: break
             } catch (_: EOFException) {
                 break
-            } catch (_: IOException) {
+            } catch (error: IOException) {
+                recordPacketError(error.message ?: "Video packet read failed.")
                 break
-            } catch (_: IllegalArgumentException) {
+            } catch (error: IllegalArgumentException) {
+                recordPacketError(error.message ?: "Invalid video packet.")
                 break
             }
+            bytesReceived.addAndGet(packet.wireLength.toLong())
 
             when (packet.type) {
                 VideoPacketType.CODEC_CONFIG -> {
-                    decoder.configure(H264StreamConfig.decode(packet.payload))
+                    configPacketsReceived.incrementAndGet()
+                    val config = try {
+                        H264StreamConfig.decode(packet.payload)
+                    } catch (error: IllegalArgumentException) {
+                        recordPacketError(error.message ?: "Invalid H.264 config packet.")
+                        null
+                    }
+                    if (config != null) {
+                        lastPacketError = null
+                        lastErrorCode = null
+                        Log.i(
+                            "PC_TV_MIRROR",
+                            "Received H.264 config SPS=${config.sps.size} PPS=${config.pps.size}",
+                        )
+                        decoder.configure(config)
+                    }
                 }
                 VideoPacketType.ACCESS_UNIT -> {
-                    decoder.queueAccessUnit(packet.payload, packet.ptsUs)
+                    accessUnitsReceived.incrementAndGet()
+                    if (packet.isKeyFrame) {
+                        keyFramesReceived.incrementAndGet()
+                        Log.i(
+                            "PC_TV_MIRROR",
+                            "Received key access unit ${packet.sequenceNumber}",
+                        )
+                    }
+                    val queued = decoder.queueAccessUnit(
+                        packet.payload,
+                        packet.ptsUs,
+                        packet.isKeyFrame,
+                    )
+                    if (!queued) {
+                        Log.w("PC_TV_MIRROR", "Dropped access unit ${packet.sequenceNumber}")
+                    }
                 }
                 VideoPacketType.END_OF_STREAM -> {
                     decoder.releaseCodec()
@@ -228,44 +285,132 @@ private class StageOneReceiverServer {
     }
 
     private fun snapshot(
-        state: String,
-        userMessage: String,
+        state: String? = null,
+        userMessage: String? = null,
         receiverPort: Int,
-        decoderReady: Boolean,
-        surfaceRendererReady: Boolean,
+        decoderReady: Boolean = hasH264Decoder(),
+        surfaceRendererReady: Boolean = decoder.hasSurface,
         errorCode: String? = null,
         developerMessage: String? = null,
     ): Map<String, Any> {
+        val decoderSnapshot = decoder.snapshot()
+        val activeDeveloperMessage =
+            developerMessage ?: lastPacketError ?: decoderSnapshot.lastDecoderError
+        val activeErrorCode =
+            errorCode ?: lastErrorCode ?: if (decoderSnapshot.lastDecoderError != null) {
+                "DECODER_NOT_AVAILABLE"
+            } else {
+                null
+            }
+        val activeState = state ?: when {
+            !running -> "idle"
+            activeErrorCode != null -> "failed"
+            decoderSnapshot.renderedFrames >= 1 -> "streaming"
+            else -> "negotiating"
+        }
+        val activeUserMessage = userMessage ?: when (activeState) {
+            "idle" -> "Receiver resources were released."
+            "streaming" -> "PC video is rendering on the TV."
+            "failed" -> "The receiver video path reported an error."
+            else -> "Waiting for PC video frames."
+        }
         val values = mutableMapOf<String, Any>(
-            "state" to state,
-            "userMessage" to userMessage,
+            "state" to activeState,
+            "userMessage" to activeUserMessage,
             "receiverPort" to receiverPort,
             "decoderReady" to decoderReady,
             "surfaceRendererReady" to surfaceRendererReady,
+            "bytesReceived" to bytesReceived.get(),
+            "configPacketsReceived" to configPacketsReceived.get(),
+            "accessUnitsReceived" to accessUnitsReceived.get(),
+            "keyFramesReceived" to keyFramesReceived.get(),
+            "decoderInputFrames" to decoderSnapshot.decoderInputFrames,
+            "decoderOutputFrames" to decoderSnapshot.decoderOutputFrames,
+            "renderedFrames" to decoderSnapshot.renderedFrames,
+            "droppedFrames" to decoderSnapshot.droppedFrames,
         )
-        if (errorCode != null) {
-            values["errorCode"] = errorCode
+        if (activeErrorCode != null) {
+            values["errorCode"] = activeErrorCode
         }
-        if (developerMessage != null) {
-            values["developerMessage"] = developerMessage
+        if (activeDeveloperMessage != null) {
+            values["developerMessage"] = activeDeveloperMessage
+            values["lastDecoderError"] = activeDeveloperMessage
         }
         return values
     }
+
+    private fun resetCounters() {
+        bytesReceived.set(0)
+        configPacketsReceived.set(0)
+        accessUnitsReceived.set(0)
+        keyFramesReceived.set(0)
+        lastPacketError = null
+        lastErrorCode = null
+        decoder.resetDiagnostics()
+    }
+
+    private fun recordPacketError(message: String) {
+        lastPacketError = message
+        lastErrorCode = "INVALID_MESSAGE"
+        Log.w("PC_TV_MIRROR", message)
+    }
 }
+
+private data class DecoderSnapshot(
+    val decoderInputFrames: Long,
+    val decoderOutputFrames: Long,
+    val renderedFrames: Long,
+    val droppedFrames: Long,
+    val lastDecoderError: String?,
+)
 
 private class StageOneVideoDecoder {
     private val lock = Any()
     private var surface: Surface? = null
     private var codec: MediaCodec? = null
-    private var config = H264StreamConfig(width = 1280, height = 720, fps = 30)
+    private var config: H264StreamConfig? = null
+    private var needsKeyFrame = true
+    private var decoderInputFrames = 0L
+    private var decoderOutputFrames = 0L
+    private var renderedFrames = 0L
+    private var droppedFrames = 0L
+    private var lastDecoderError: String? = null
 
     val hasSurface: Boolean
         get() = synchronized(lock) { surface?.isValid == true }
 
+    fun snapshot(): DecoderSnapshot {
+        return synchronized(lock) {
+            DecoderSnapshot(
+                decoderInputFrames = decoderInputFrames,
+                decoderOutputFrames = decoderOutputFrames,
+                renderedFrames = renderedFrames,
+                droppedFrames = droppedFrames,
+                lastDecoderError = lastDecoderError,
+            )
+        }
+    }
+
+    fun resetDiagnostics() {
+        synchronized(lock) {
+            decoderInputFrames = 0
+            decoderOutputFrames = 0
+            renderedFrames = 0
+            droppedFrames = 0
+            lastDecoderError = null
+            needsKeyFrame = true
+            config = null
+        }
+    }
+
     fun setSurface(value: Surface) {
         synchronized(lock) {
+            if (surface == value && value.isValid) {
+                tryConfigureCodecLocked()
+                return
+            }
             surface = value
-            recreateCodecLocked()
+            tryConfigureCodecLocked()
         }
     }
 
@@ -274,6 +419,7 @@ private class StageOneVideoDecoder {
             if (surface == value) {
                 releaseCodecLocked()
                 surface = null
+                needsKeyFrame = true
             }
         }
     }
@@ -281,56 +427,120 @@ private class StageOneVideoDecoder {
     fun configure(value: H264StreamConfig) {
         synchronized(lock) {
             config = value
-            recreateCodecLocked()
+            releaseCodecLocked()
+            needsKeyFrame = true
+            tryConfigureCodecLocked()
         }
     }
 
-    fun queueAccessUnit(payload: ByteArray, ptsUs: Long): Boolean {
-        synchronized(lock) {
-            val activeCodec = codec ?: return false
-            val inputIndex = activeCodec.dequeueInputBuffer(10_000)
-            if (inputIndex < 0) {
-                drainOutputLocked(activeCodec)
-                return false
+    fun queueAccessUnit(payload: ByteArray, ptsUs: Long, keyFrame: Boolean): Boolean {
+        return synchronized(lock) {
+            if (needsKeyFrame && !keyFrame) {
+                droppedFrames += 1
+                lastDecoderError = "Waiting for an IDR frame after decoder configuration."
+                return@synchronized false
             }
 
-            val inputBuffer = activeCodec.getInputBuffer(inputIndex) ?: return false
-            if (payload.size > inputBuffer.capacity()) {
-                activeCodec.queueInputBuffer(inputIndex, 0, 0, ptsUs, 0)
-                return false
+            val activeCodec = codec
+            if (activeCodec == null) {
+                droppedFrames += 1
+                lastDecoderError = "MediaCodec is not configured for access units yet."
+                return@synchronized false
             }
-            inputBuffer.clear()
-            inputBuffer.put(payload)
-            activeCodec.queueInputBuffer(inputIndex, 0, payload.size, ptsUs, 0)
-            drainOutputLocked(activeCodec)
-            return true
+
+            try {
+                val inputIndex = activeCodec.dequeueInputBuffer(10_000)
+                if (inputIndex < 0) {
+                    drainOutputLocked(activeCodec)
+                    droppedFrames += 1
+                    false
+                } else {
+                    val inputBuffer = activeCodec.getInputBuffer(inputIndex)
+                    if (inputBuffer == null || payload.size > inputBuffer.capacity()) {
+                        droppedFrames += 1
+                        lastDecoderError =
+                            "Access unit did not fit in a MediaCodec input buffer."
+                        false
+                    } else {
+                        inputBuffer.clear()
+                        inputBuffer.put(payload)
+                        activeCodec.queueInputBuffer(inputIndex, 0, payload.size, ptsUs, 0)
+                        decoderInputFrames += 1
+                        if (keyFrame) {
+                            needsKeyFrame = false
+                        }
+                        drainOutputLocked(activeCodec)
+                        lastDecoderError = null
+                        true
+                    }
+                }
+            } catch (error: MediaCodec.CodecException) {
+                droppedFrames += 1
+                recordDecoderErrorLocked(describeCodecException(error))
+                releaseCodecLocked()
+                needsKeyFrame = true
+                false
+            } catch (error: Exception) {
+                droppedFrames += 1
+                recordDecoderErrorLocked(error.message ?: "MediaCodec input failed.")
+                releaseCodecLocked()
+                needsKeyFrame = true
+                false
+            }
         }
     }
 
     fun releaseCodec() {
         synchronized(lock) {
             releaseCodecLocked()
+            needsKeyFrame = true
         }
     }
 
-    private fun recreateCodecLocked() {
+    private fun tryConfigureCodecLocked() {
         val activeSurface = surface
+        val activeConfig = config
         if (activeSurface?.isValid != true) {
             releaseCodecLocked()
             return
         }
+        if (activeConfig == null) {
+            return
+        }
+        if (codec != null) {
+            return
+        }
 
-        releaseCodecLocked()
-        codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
+        var newCodec: MediaCodec? = null
+        try {
+            newCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             val format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC,
-                config.width,
-                config.height,
+                activeConfig.width,
+                activeConfig.height,
             )
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, config.fps)
+            format.setInteger(MediaFormat.KEY_FRAME_RATE, activeConfig.fps)
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 2 * 1024 * 1024)
-            configure(format, activeSurface, null, 0)
-            start()
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(activeConfig.sps))
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(activeConfig.pps))
+            newCodec.configure(format, activeSurface, null, 0)
+            newCodec.start()
+            codec = newCodec
+            newCodec = null
+            needsKeyFrame = true
+            lastDecoderError = null
+            Log.i(
+                "PC_TV_MIRROR",
+                "MediaCodec configured with SPS=${activeConfig.sps.size} PPS=${activeConfig.pps.size}",
+            )
+        } catch (error: MediaCodec.CodecException) {
+            recordDecoderErrorLocked(describeCodecException(error))
+            needsKeyFrame = true
+        } catch (error: Exception) {
+            recordDecoderErrorLocked(error.message ?: "MediaCodec configure/start failed.")
+            needsKeyFrame = true
+        } finally {
+            releaseCodecQuietly(newCodec)
         }
     }
 
@@ -343,7 +553,12 @@ private class StageOneVideoDecoder {
                 MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
                 else -> {
                     if (outputIndex >= 0) {
-                        activeCodec.releaseOutputBuffer(outputIndex, true)
+                        val render = bufferInfo.size > 0
+                        activeCodec.releaseOutputBuffer(outputIndex, render)
+                        decoderOutputFrames += 1
+                        if (render) {
+                            renderedFrames += 1
+                        }
                     } else {
                         return
                     }
@@ -355,12 +570,36 @@ private class StageOneVideoDecoder {
     private fun releaseCodecLocked() {
         val activeCodec = codec ?: return
         codec = null
+        releaseCodecQuietly(activeCodec)
+    }
+
+    private fun recordDecoderErrorLocked(message: String) {
+        lastDecoderError = message
+        Log.e("PC_TV_MIRROR", message)
+    }
+
+    private fun describeCodecException(error: MediaCodec.CodecException): String {
+        val parts = mutableListOf("MediaCodec error")
+        parts.add(error.diagnosticInfo)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            parts.add("errorCode=${error.errorCode}")
+            parts.add("recoverable=${error.isRecoverable}")
+            parts.add("transient=${error.isTransient}")
+        }
+        error.message?.let { parts.add(it) }
+        return parts.joinToString(" ")
+    }
+
+    private fun releaseCodecQuietly(value: MediaCodec?) {
+        if (value == null) {
+            return
+        }
         try {
-            activeCodec.stop()
+            value.stop()
         } catch (_: Exception) {
         }
         try {
-            activeCodec.release()
+            value.release()
         } catch (_: Exception) {
         }
     }
@@ -429,11 +668,16 @@ private data class VideoPacket(
     val sequenceNumber: Long,
     val ptsUs: Long,
     val payload: ByteArray,
+    val wireLength: Int,
 ) {
+    val isKeyFrame: Boolean
+        get() = (flags and FLAG_KEY_FRAME) != 0
+
     companion object {
         private const val MAX_PAYLOAD = 16 * 1024 * 1024
         private const val HEADER_LENGTH = 24
         private const val MAGIC = 0x5054564D
+        private const val FLAG_KEY_FRAME = 1 shl 0
 
         fun readFrom(input: InputStream): VideoPacket? {
             val lengthBytes = readFullyOrNull(input, 4) ?: return null
@@ -465,7 +709,14 @@ private data class VideoPacket(
                 "payload length does not match packet length"
             }
             val payload = body.copyOfRange(HEADER_LENGTH, body.size)
-            return VideoPacket(type, flags, sequenceNumber, ptsUs, payload)
+            return VideoPacket(
+                type = type,
+                flags = flags,
+                sequenceNumber = sequenceNumber,
+                ptsUs = ptsUs,
+                payload = payload,
+                wireLength = 4 + packetLength,
+            )
         }
     }
 }
@@ -474,26 +725,67 @@ private data class H264StreamConfig(
     val width: Int,
     val height: Int,
     val fps: Int,
+    val sps: ByteArray,
+    val pps: ByteArray,
 ) {
     companion object {
-        private const val BINARY_LENGTH = 20
+        private const val BINARY_HEADER_LENGTH = 24
         private const val MAGIC = 0x48323634
 
         fun decode(payload: ByteArray): H264StreamConfig {
-            require(payload.size == BINARY_LENGTH) { "invalid H.264 config length" }
+            require(payload.size >= BINARY_HEADER_LENGTH) { "invalid H.264 config length" }
             val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
             require(buffer.int == MAGIC) { "invalid H.264 config magic" }
             require((buffer.get().toInt() and 0xFF) == 1) {
                 "unsupported H.264 config version"
             }
-            buffer.get()
+            val flags = buffer.get().toInt() and 0xFF
+            require((flags and 0xFC) == 0) { "unsupported H.264 config flags" }
             buffer.short
             val width = buffer.short.toInt() and 0xFFFF
             val height = buffer.short.toInt() and 0xFFFF
             val fps = buffer.short.toInt() and 0xFFFF
-            return H264StreamConfig(width = width, height = height, fps = fps)
+            require(width > 0 && height > 0 && fps > 0) {
+                "H.264 config metadata must be non-zero"
+            }
+            buffer.short
+            buffer.int
+            val spsLength = buffer.short.toInt() and 0xFFFF
+            val ppsLength = buffer.short.toInt() and 0xFFFF
+            val expectedLength = BINARY_HEADER_LENGTH + spsLength + ppsLength
+            require(payload.size == expectedLength) {
+                "H.264 config SPS/PPS lengths do not match payload length"
+            }
+            val sps = payload.copyOfRange(BINARY_HEADER_LENGTH, BINARY_HEADER_LENGTH + spsLength)
+            val pps = payload.copyOfRange(BINARY_HEADER_LENGTH + spsLength, expectedLength)
+            require(h264NalType(sps) == 7) { "H.264 config SPS NAL type is invalid" }
+            require(h264NalType(pps) == 8) { "H.264 config PPS NAL type is invalid" }
+            return H264StreamConfig(width = width, height = height, fps = fps, sps = sps, pps = pps)
         }
     }
+}
+
+private fun h264NalType(bytes: ByteArray): Int {
+    require(bytes.isNotEmpty()) { "H.264 parameter set is empty" }
+    var offset = 0
+    if (
+        bytes.size >= 4 &&
+        bytes[0].toInt() == 0 &&
+        bytes[1].toInt() == 0 &&
+        bytes[2].toInt() == 0 &&
+        bytes[3].toInt() == 1
+    ) {
+        offset = 4
+    } else if (
+        bytes.size >= 3 &&
+        bytes[0].toInt() == 0 &&
+        bytes[1].toInt() == 0 &&
+        bytes[2].toInt() == 1
+    ) {
+        offset = 3
+    }
+    require(offset < bytes.size) { "H.264 NAL unit is missing a header byte" }
+    return bytes[offset].toInt() and 0x1F
 }
 
 private fun readUtf8Line(input: InputStream, maxBytes: Int): String {
@@ -534,12 +826,12 @@ private fun writeJsonLine(socket: Socket, json: JSONObject) {
     socket.getOutputStream().flush()
 }
 
-private fun streamAnswerResponse(): JSONObject {
+private fun streamAnswerResponse(surfaceRendererReady: Boolean): JSONObject {
     return JSONObject()
         .put("type", "session.answer")
         .put("protocolVersion", 1)
         .put("decoderReady", hasH264Decoder())
-        .put("surfaceRendererReady", true)
+        .put("surfaceRendererReady", surfaceRendererReady)
 }
 
 private fun receiverStoppedResponse(): JSONObject {

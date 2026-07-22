@@ -274,6 +274,10 @@ class _SessionPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _StateBanner(controller: controller),
+          if (controller.snapshot != null) ...[
+            const SizedBox(height: 12),
+            _SenderCounters(snapshot: controller.snapshot!),
+          ],
           const SizedBox(height: 16),
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -303,6 +307,39 @@ class _SessionPanel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SenderCounters extends StatelessWidget {
+  const _SenderCounters({required this.snapshot});
+
+  final NativeSessionSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            _MetricRow(label: 'Captured', value: '${snapshot.capturedFrames}'),
+            _MetricRow(label: 'Encoded', value: '${snapshot.encodedFrames}'),
+            _MetricRow(
+              label: 'Config sent',
+              value: '${snapshot.codecConfigSent}',
+            ),
+            _MetricRow(label: 'Key frames', value: '${snapshot.keyFramesSent}'),
+            _MetricRow(label: 'Packets', value: '${snapshot.packetsSent}'),
+            _MetricRow(label: 'Bytes', value: '${snapshot.bytesSent}'),
+          ],
+        ),
       ),
     );
   }
@@ -351,6 +388,34 @@ class _StateBanner extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
       ),
     );
   }

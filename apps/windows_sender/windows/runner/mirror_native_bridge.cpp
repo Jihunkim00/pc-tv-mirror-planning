@@ -4,6 +4,7 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -53,6 +54,26 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.signaling_ready);
   map[EncodableValue("nativeVideoPathReady")] =
       EncodableValue(snapshot.native_video_path_ready);
+  map[EncodableValue("capturedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.captured_frames));
+  map[EncodableValue("encodedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoded_frames));
+  map[EncodableValue("codecConfigSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.codec_config_sent));
+  map[EncodableValue("keyFramesSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.key_frames_sent));
+  map[EncodableValue("packetsSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.packets_sent));
+  map[EncodableValue("bytesSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.bytes_sent));
+  if (!snapshot.last_encode_error.empty()) {
+    map[EncodableValue("lastEncodeError")] =
+        EncodableValue(snapshot.last_encode_error);
+  }
+  if (!snapshot.last_send_error.empty()) {
+    map[EncodableValue("lastSendError")] =
+        EncodableValue(snapshot.last_send_error);
+  }
   if (!snapshot.error_code.empty()) {
     map[EncodableValue("errorCode")] = EncodableValue(snapshot.error_code);
   }
@@ -79,6 +100,11 @@ class MirrorNativeBridge {
 
     if (call.method_name() == "stopSession") {
       result->Success(ToEncodable(session_.Stop()));
+      return;
+    }
+
+    if (call.method_name() == "getSessionStatus") {
+      result->Success(ToEncodable(session_.Snapshot()));
       return;
     }
 

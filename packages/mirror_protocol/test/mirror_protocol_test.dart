@@ -3,6 +3,9 @@ import 'dart:typed_data';
 import 'package:mirror_protocol/mirror_protocol.dart';
 import 'package:test/test.dart';
 
+final _sps = Uint8List.fromList([0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1F]);
+final _pps = Uint8List.fromList([0, 0, 0, 1, 0x68, 0xCE, 0x06, 0xE2]);
+
 void main() {
   group('ReceiverCapabilities', () {
     test('round-trips versioned H.264 decoder capabilities', () {
@@ -90,12 +93,14 @@ void main() {
   });
 
   group('H264CodecConfig', () {
-    test('encodes the STAGE 1 decoder configuration as fixed binary', () {
-      const config = H264CodecConfig(
+    test('encodes the STAGE 1 decoder configuration with SPS/PPS', () {
+      final config = H264CodecConfig(
         width: 1280,
         height: 720,
         fps: 30,
         bitrateKbps: 4000,
+        sps: _sps,
+        pps: _pps,
       );
 
       final copy = H264CodecConfig.decode(config.encode());
@@ -106,23 +111,47 @@ void main() {
       expect(copy.bitrateKbps, 4000);
       expect(copy.annexB, isTrue);
       expect(copy.spsPpsInBand, isTrue);
+      expect(copy.sps, _sps);
+      expect(copy.pps, _pps);
     });
 
     test('rejects malformed codec config payloads', () {
-      expect(
-        () => H264CodecConfig.decode(Uint8List(4)),
-        throwsFormatException,
-      );
+      expect(() => H264CodecConfig.decode(Uint8List(4)), throwsFormatException);
 
       final payload = H264CodecConfig(
         width: 1280,
         height: 720,
         fps: 30,
         bitrateKbps: 4000,
+        sps: _sps,
+        pps: _pps,
       ).encode();
       payload[0] = 0;
 
       expect(() => H264CodecConfig.decode(payload), throwsFormatException);
+
+      final wrongLength = H264CodecConfig(
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrateKbps: 4000,
+        sps: _sps,
+        pps: _pps,
+      ).encode()..[23] = 0x40;
+
+      expect(() => H264CodecConfig.decode(wrongLength), throwsFormatException);
+
+      expect(
+        () => H264CodecConfig(
+          width: 1280,
+          height: 720,
+          fps: 30,
+          bitrateKbps: 4000,
+          sps: Uint8List.fromList([0, 0, 0, 1, 0x65]),
+          pps: _pps,
+        ).encode(),
+        throwsFormatException,
+      );
     });
   });
 
@@ -148,11 +177,13 @@ void main() {
     });
 
     test('round-trips a codec config packet', () {
-      final config = const H264CodecConfig(
+      final config = H264CodecConfig(
         width: 1280,
         height: 720,
         fps: 30,
         bitrateKbps: 4000,
+        sps: _sps,
+        pps: _pps,
       ).encode();
       final packet = VideoPacket(
         type: VideoPacketType.codecConfig,

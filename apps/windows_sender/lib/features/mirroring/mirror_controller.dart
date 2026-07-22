@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
@@ -11,14 +13,18 @@ class MirrorController extends ChangeNotifier {
   var _displays = <DisplayInfo>[];
   var _state = MirrorSessionState.idle;
   var _log = <String>['Native sender bridge is idle.'];
+  NativeSessionSnapshot? _snapshot;
   String? _selectedDisplayId;
   String? _activeSessionId;
   bool _busy = false;
   String? _userMessage;
   String? _developerMessage;
+  Timer? _statusTimer;
+  bool _pollingStatus = false;
 
   List<DisplayInfo> get displays => List.unmodifiable(_displays);
   MirrorSessionState get state => _state;
+  NativeSessionSnapshot? get snapshot => _snapshot;
   List<String> get log => List.unmodifiable(_log);
   String? get selectedDisplayId => _selectedDisplayId;
   bool get busy => _busy;
@@ -100,6 +106,7 @@ class MirrorController extends ChangeNotifier {
       );
       _activeSessionId = sessionId;
       _applySnapshot(snapshot);
+      _startPolling();
       _appendLog(snapshot.userMessage);
     } catch (error) {
       _state = MirrorSessionState.failed;
@@ -128,6 +135,7 @@ class MirrorController extends ChangeNotifier {
     try {
       final snapshot = await _nativeApi.stopSession(sessionId);
       _activeSessionId = null;
+      _stopPolling();
       _applySnapshot(snapshot);
       _appendLog(snapshot.userMessage);
     } catch (error) {
@@ -141,9 +149,49 @@ class MirrorController extends ChangeNotifier {
   }
 
   void _applySnapshot(NativeSessionSnapshot snapshot) {
+    _snapshot = snapshot;
     _state = snapshot.state;
     _userMessage = snapshot.userMessage;
-    _developerMessage = snapshot.developerMessage;
+    _developerMessage =
+        snapshot.lastEncodeError ??
+        snapshot.lastSendError ??
+        snapshot.developerMessage;
+    notifyListeners();
+  }
+
+  void _startPolling() {
+    _statusTimer ??= Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _pollStatus(),
+    );
+  }
+
+  void _stopPolling() {
+    _statusTimer?.cancel();
+    _statusTimer = null;
+    _pollingStatus = false;
+  }
+
+  Future<void> _pollStatus() async {
+    if (_pollingStatus || _activeSessionId == null) {
+      return;
+    }
+    _pollingStatus = true;
+    try {
+      final snapshot = await _nativeApi.getSessionStatus();
+      _applySnapshot(snapshot);
+      if (snapshot.state == MirrorSessionState.idle ||
+          snapshot.state == MirrorSessionState.failed) {
+        _stopPolling();
+      }
+    } catch (error) {
+      _developerMessage = '$error';
+      _appendLog('Sender status polling failed.');
+      _stopPolling();
+      notifyListeners();
+    } finally {
+      _pollingStatus = false;
+    }
   }
 
   void _setBusy(bool value) {
@@ -164,5 +212,11 @@ class MirrorController extends ChangeNotifier {
     final mm = now.minute.toString().padLeft(2, '0');
     final ss = now.second.toString().padLeft(2, '0');
     return '$hh:$mm:$ss  $message';
+  }
+
+  @override
+  void dispose() {
+    _stopPolling();
+    super.dispose();
   }
 }

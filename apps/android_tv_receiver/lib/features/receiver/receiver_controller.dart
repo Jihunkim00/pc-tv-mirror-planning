@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
@@ -16,6 +18,8 @@ class ReceiverController extends ChangeNotifier {
   String _statusMessage = 'Receiver is starting.';
   List<String> _log = const ['Native receiver bridge is idle.'];
   bool _busy = false;
+  Timer? _statusTimer;
+  bool _pollingStatus = false;
 
   ReceiverCapabilities? get capabilities => _capabilities;
   ReceiverSessionSnapshot? get snapshot => _snapshot;
@@ -31,6 +35,7 @@ class ReceiverController extends ChangeNotifier {
       _appendLog('Loaded receiver capabilities.');
       final snapshot = await _nativeApi.startReceiver(port: defaultPort);
       _applySnapshot(snapshot);
+      _startPolling();
       _appendLog(snapshot.userMessage);
     } catch (error) {
       _state = MirrorSessionState.failed;
@@ -45,6 +50,7 @@ class ReceiverController extends ChangeNotifier {
     _setBusy(true);
     try {
       final snapshot = await _nativeApi.stopReceiver();
+      _stopPolling();
       _applySnapshot(snapshot);
       _appendLog(snapshot.userMessage);
     } catch (error) {
@@ -56,10 +62,46 @@ class ReceiverController extends ChangeNotifier {
     }
   }
 
-  void _applySnapshot(ReceiverSessionSnapshot snapshot) {
+  void _applySnapshot(ReceiverSessionSnapshot snapshot, {bool notify = false}) {
     _snapshot = snapshot;
     _state = snapshot.state;
     _statusMessage = snapshot.userMessage;
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
+  void _startPolling() {
+    _statusTimer ??= Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _pollStatus(),
+    );
+  }
+
+  void _stopPolling() {
+    _statusTimer?.cancel();
+    _statusTimer = null;
+    _pollingStatus = false;
+  }
+
+  Future<void> _pollStatus() async {
+    if (_pollingStatus) {
+      return;
+    }
+    _pollingStatus = true;
+    try {
+      final snapshot = await _nativeApi.getReceiverStatus();
+      _applySnapshot(snapshot, notify: true);
+      if (snapshot.state == MirrorSessionState.idle) {
+        _stopPolling();
+      }
+    } catch (error) {
+      _appendLog('Receiver status polling failed: $error');
+      _stopPolling();
+      notifyListeners();
+    } finally {
+      _pollingStatus = false;
+    }
   }
 
   void _setBusy(bool value) {
@@ -80,5 +122,11 @@ class ReceiverController extends ChangeNotifier {
     final mm = now.minute.toString().padLeft(2, '0');
     final ss = now.second.toString().padLeft(2, '0');
     return '$hh:$mm:$ss  $message';
+  }
+
+  @override
+  void dispose() {
+    _stopPolling();
+    super.dispose();
   }
 }

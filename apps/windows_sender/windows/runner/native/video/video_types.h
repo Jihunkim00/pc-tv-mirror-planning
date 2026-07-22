@@ -19,6 +19,13 @@ struct EncodedAccessUnit {
   std::vector<std::uint8_t> annex_b;
 };
 
+struct H264ParameterSets {
+  std::vector<std::uint8_t> sps;
+  std::vector<std::uint8_t> pps;
+
+  bool complete() const { return !sps.empty() && !pps.empty(); }
+};
+
 }  // namespace pctv
 
 #endif  // RUNNER_NATIVE_VIDEO_VIDEO_TYPES_H_

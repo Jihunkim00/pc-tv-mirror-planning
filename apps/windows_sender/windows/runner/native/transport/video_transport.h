@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "native/video/video_types.h"
+
 namespace pctv {
 
 struct TransportResult {
@@ -33,7 +35,9 @@ class VideoTransportClient {
   std::uintptr_t socket_ = UINTPTR_MAX;
 };
 
-std::vector<std::uint8_t> BuildH264CodecConfigPacket(std::uint32_t sequence);
+std::vector<std::uint8_t> BuildH264CodecConfigPacket(
+    std::uint32_t sequence,
+    const H264ParameterSets& parameter_sets);
 std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint32_t sequence,
                                                 std::uint64_t pts_us,
                                                 bool key_frame,

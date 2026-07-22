@@ -7,6 +7,8 @@ abstract interface class ReceiverNativeApi {
   Future<ReceiverSessionSnapshot> startReceiver({required int port});
 
   Future<ReceiverSessionSnapshot> stopReceiver();
+
+  Future<ReceiverSessionSnapshot> getReceiverStatus();
 }
 
 final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
@@ -40,6 +42,14 @@ final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
     );
     return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
   }
+
+  @override
+  Future<ReceiverSessionSnapshot> getReceiverStatus() async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'getReceiverStatus',
+    );
+    return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
+  }
 }
 
 final class ReceiverSessionSnapshot {
@@ -49,6 +59,15 @@ final class ReceiverSessionSnapshot {
     required this.receiverPort,
     required this.decoderReady,
     required this.surfaceRendererReady,
+    this.bytesReceived = 0,
+    this.configPacketsReceived = 0,
+    this.accessUnitsReceived = 0,
+    this.keyFramesReceived = 0,
+    this.decoderInputFrames = 0,
+    this.decoderOutputFrames = 0,
+    this.renderedFrames = 0,
+    this.droppedFrames = 0,
+    this.lastDecoderError,
     this.developerMessage,
     this.errorCode,
   });
@@ -58,6 +77,15 @@ final class ReceiverSessionSnapshot {
   final int receiverPort;
   final bool decoderReady;
   final bool surfaceRendererReady;
+  final int bytesReceived;
+  final int configPacketsReceived;
+  final int accessUnitsReceived;
+  final int keyFramesReceived;
+  final int decoderInputFrames;
+  final int decoderOutputFrames;
+  final int renderedFrames;
+  final int droppedFrames;
+  final String? lastDecoderError;
   final String? developerMessage;
   final MirrorErrorCode? errorCode;
 
@@ -69,6 +97,15 @@ final class ReceiverSessionSnapshot {
       receiverPort: _readInt(json, 'receiverPort'),
       decoderReady: _readBool(json, 'decoderReady'),
       surfaceRendererReady: _readBool(json, 'surfaceRendererReady'),
+      bytesReceived: _readOptionalInt(json, 'bytesReceived'),
+      configPacketsReceived: _readOptionalInt(json, 'configPacketsReceived'),
+      accessUnitsReceived: _readOptionalInt(json, 'accessUnitsReceived'),
+      keyFramesReceived: _readOptionalInt(json, 'keyFramesReceived'),
+      decoderInputFrames: _readOptionalInt(json, 'decoderInputFrames'),
+      decoderOutputFrames: _readOptionalInt(json, 'decoderOutputFrames'),
+      renderedFrames: _readOptionalInt(json, 'renderedFrames'),
+      droppedFrames: _readOptionalInt(json, 'droppedFrames'),
+      lastDecoderError: json['lastDecoderError'] as String?,
       developerMessage: json['developerMessage'] as String?,
       errorCode: errorCode == null
           ? null
@@ -109,4 +146,15 @@ bool _readBool(Map<String, Object?> json, String key) {
     return value;
   }
   throw FormatException('Expected bool for $key');
+}
+
+int _readOptionalInt(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return 0;
+  }
+  if (value is int) {
+    return value;
+  }
+  throw FormatException('Expected int for $key');
 }

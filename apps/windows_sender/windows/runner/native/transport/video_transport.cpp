@@ -6,7 +6,9 @@
 
 #include <ws2tcpip.h>
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <sstream>
 
 namespace pctv {
@@ -20,6 +22,7 @@ constexpr std::uint8_t kPacketTypeAccessUnit = 2;
 constexpr std::uint16_t kFlagKeyFrame = 1 << 0;
 constexpr std::uint16_t kFlagCodecConfig = 1 << 1;
 constexpr std::uint32_t kPacketHeaderLength = 24;
+constexpr std::uint32_t kConfigHeaderLength = 24;
 constexpr std::uint32_t kStageOneWidth = 1280;
 constexpr std::uint32_t kStageOneHeight = 720;
 constexpr std::uint32_t kStageOneFps = 30;
@@ -197,8 +200,18 @@ TransportResult VideoTransportClient::SendAll(const char* data, int length) {
   return {true, {}};
 }
 
-std::vector<std::uint8_t> BuildH264CodecConfigPacket(std::uint32_t sequence) {
-  constexpr std::uint32_t payload_size = 20;
+std::vector<std::uint8_t> BuildH264CodecConfigPacket(
+    std::uint32_t sequence,
+    const H264ParameterSets& parameter_sets) {
+  if (!parameter_sets.complete() || parameter_sets.sps.size() > 0xFFFF ||
+      parameter_sets.pps.size() > 0xFFFF) {
+    return {};
+  }
+
+  const std::uint32_t payload_size =
+      kConfigHeaderLength +
+      static_cast<std::uint32_t>(parameter_sets.sps.size() +
+                                 parameter_sets.pps.size());
   std::vector<std::uint8_t> bytes(4 + kPacketHeaderLength + payload_size);
   WritePacketHeader(bytes, kPacketTypeCodecConfig, kFlagCodecConfig, 0,
                     sequence, payload_size);
@@ -213,6 +226,15 @@ std::vector<std::uint8_t> BuildH264CodecConfigPacket(std::uint32_t sequence) {
   WriteU16(bytes, payload + 12, static_cast<std::uint16_t>(kStageOneFps));
   WriteU16(bytes, payload + 14, 0);
   WriteU32(bytes, payload + 16, kStageOneBitrateKbps);
+  WriteU16(bytes, payload + 20,
+           static_cast<std::uint16_t>(parameter_sets.sps.size()));
+  WriteU16(bytes, payload + 22,
+           static_cast<std::uint16_t>(parameter_sets.pps.size()));
+  const auto sps_begin =
+      bytes.begin() + static_cast<std::ptrdiff_t>(payload + kConfigHeaderLength);
+  std::copy(parameter_sets.sps.begin(), parameter_sets.sps.end(), sps_begin);
+  std::copy(parameter_sets.pps.begin(), parameter_sets.pps.end(),
+            sps_begin + static_cast<std::ptrdiff_t>(parameter_sets.sps.size()));
   return bytes;
 }
 

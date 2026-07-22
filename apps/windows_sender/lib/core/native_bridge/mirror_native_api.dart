@@ -9,6 +9,8 @@ abstract interface class MirrorNativeApi {
   Future<NativeSessionSnapshot> startSession(StartMirrorSessionRequest request);
 
   Future<NativeSessionSnapshot> stopSession(String sessionId);
+
+  Future<NativeSessionSnapshot> getSessionStatus();
 }
 
 final class MethodChannelMirrorNativeApi implements MirrorNativeApi {
@@ -46,6 +48,14 @@ final class MethodChannelMirrorNativeApi implements MirrorNativeApi {
     );
     return NativeSessionSnapshot.fromJson(_asJsonMap(result));
   }
+
+  @override
+  Future<NativeSessionSnapshot> getSessionStatus() async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'getSessionStatus',
+    );
+    return NativeSessionSnapshot.fromJson(_asJsonMap(result));
+  }
 }
 
 final class StartMirrorSessionRequest {
@@ -77,6 +87,14 @@ final class NativeSessionSnapshot {
     required this.encoderReady,
     required this.signalingReady,
     required this.nativeVideoPathReady,
+    this.capturedFrames = 0,
+    this.encodedFrames = 0,
+    this.codecConfigSent = 0,
+    this.keyFramesSent = 0,
+    this.packetsSent = 0,
+    this.bytesSent = 0,
+    this.lastEncodeError,
+    this.lastSendError,
     this.errorCode,
     this.developerMessage,
   });
@@ -87,6 +105,14 @@ final class NativeSessionSnapshot {
   final bool encoderReady;
   final bool signalingReady;
   final bool nativeVideoPathReady;
+  final int capturedFrames;
+  final int encodedFrames;
+  final int codecConfigSent;
+  final int keyFramesSent;
+  final int packetsSent;
+  final int bytesSent;
+  final String? lastEncodeError;
+  final String? lastSendError;
   final MirrorErrorCode? errorCode;
   final String? developerMessage;
 
@@ -99,6 +125,14 @@ final class NativeSessionSnapshot {
       encoderReady: _readBool(json, 'encoderReady'),
       signalingReady: _readBool(json, 'signalingReady'),
       nativeVideoPathReady: _readBool(json, 'nativeVideoPathReady'),
+      capturedFrames: _readOptionalInt(json, 'capturedFrames'),
+      encodedFrames: _readOptionalInt(json, 'encodedFrames'),
+      codecConfigSent: _readOptionalInt(json, 'codecConfigSent'),
+      keyFramesSent: _readOptionalInt(json, 'keyFramesSent'),
+      packetsSent: _readOptionalInt(json, 'packetsSent'),
+      bytesSent: _readOptionalInt(json, 'bytesSent'),
+      lastEncodeError: json['lastEncodeError'] as String?,
+      lastSendError: json['lastSendError'] as String?,
       errorCode: errorCode == null
           ? null
           : MirrorErrorCode.fromWireName(_readString(json, 'errorCode')),
@@ -131,4 +165,15 @@ bool _readBool(Map<String, Object?> json, String key) {
     return value;
   }
   throw FormatException('Expected bool for $key');
+}
+
+int _readOptionalInt(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return 0;
+  }
+  if (value is int) {
+    return value;
+  }
+  throw FormatException('Expected int for $key');
 }

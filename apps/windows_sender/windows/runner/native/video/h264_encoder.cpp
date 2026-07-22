@@ -7,6 +7,7 @@
 #include <codecapi.h>
 #include <mfapi.h>
 #include <mferror.h>
+#include <windows.h>
 #include <wmcodecdsp.h>
 
 #include <algorithm>
@@ -52,6 +53,105 @@ void AppendStartCode(std::vector<std::uint8_t>* output) {
   output->push_back(0);
   output->push_back(0);
   output->push_back(1);
+}
+
+std::size_t StartCodeLengthAt(const std::vector<std::uint8_t>& bytes,
+                              std::size_t offset) {
+  if (offset + 4 <= bytes.size() && bytes[offset] == 0 &&
+      bytes[offset + 1] == 0 && bytes[offset + 2] == 0 &&
+      bytes[offset + 3] == 1) {
+    return 4;
+  }
+  if (offset + 3 <= bytes.size() && bytes[offset] == 0 &&
+      bytes[offset + 1] == 0 && bytes[offset + 2] == 1) {
+    return 3;
+  }
+  return 0;
+}
+
+std::size_t FindStartCode(const std::vector<std::uint8_t>& bytes,
+                          std::size_t offset) {
+  while (offset < bytes.size()) {
+    if (StartCodeLengthAt(bytes, offset) != 0) {
+      return offset;
+    }
+    ++offset;
+  }
+  return std::string::npos;
+}
+
+struct NalUnitRange {
+  std::size_t payload_offset = 0;
+  std::size_t end_offset = 0;
+  int type = 0;
+};
+
+std::vector<NalUnitRange> FindNalUnits(
+    const std::vector<std::uint8_t>& annex_b) {
+  std::vector<NalUnitRange> units;
+  std::size_t start = FindStartCode(annex_b, 0);
+  if (start == std::string::npos) {
+    if (!annex_b.empty()) {
+      units.push_back({0, annex_b.size(), annex_b[0] & 0x1F});
+    }
+    return units;
+  }
+
+  while (start != std::string::npos) {
+    const std::size_t start_code_length = StartCodeLengthAt(annex_b, start);
+    const std::size_t payload_offset = start + start_code_length;
+    const std::size_t next_start = FindStartCode(annex_b, payload_offset);
+    const std::size_t end_offset =
+        next_start == std::string::npos ? annex_b.size() : next_start;
+    if (payload_offset < end_offset) {
+      units.push_back(
+          {payload_offset, end_offset, annex_b[payload_offset] & 0x1F});
+    }
+    start = next_start;
+  }
+  return units;
+}
+
+std::vector<std::uint8_t> CopyNalUnitWithStartCode(
+    const std::vector<std::uint8_t>& annex_b,
+    const NalUnitRange& range) {
+  std::vector<std::uint8_t> output;
+  output.reserve(4 + range.end_offset - range.payload_offset);
+  AppendStartCode(&output);
+  output.insert(output.end(), annex_b.begin() + range.payload_offset,
+                annex_b.begin() + range.end_offset);
+  return output;
+}
+
+H264ParameterSets ExtractParameterSets(
+    const std::vector<std::uint8_t>& annex_b) {
+  H264ParameterSets sets;
+  for (const auto& unit : FindNalUnits(annex_b)) {
+    if (unit.type == 7 && sets.sps.empty()) {
+      sets.sps = CopyNalUnitWithStartCode(annex_b, unit);
+    } else if (unit.type == 8 && sets.pps.empty()) {
+      sets.pps = CopyNalUnitWithStartCode(annex_b, unit);
+    }
+  }
+  return sets;
+}
+
+std::string NalTypesText(const std::vector<std::uint8_t>& annex_b) {
+  std::ostringstream stream;
+  bool first = true;
+  for (const auto& unit : FindNalUnits(annex_b)) {
+    if (!first) {
+      stream << ",";
+    }
+    first = false;
+    stream << unit.type;
+  }
+  return first ? std::string("none") : stream.str();
+}
+
+void Log(const std::string& message) {
+  const std::string line = "[pc-tv-mirror] " + message + "\n";
+  OutputDebugStringA(line.c_str());
 }
 
 std::vector<std::uint8_t> ConvertLengthPrefixedToAnnexB(
@@ -173,7 +273,10 @@ bool H264Encoder::Start(std::string* error) {
   transform_->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
   transform_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
   transform_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+  sequence_header_.clear();
+  parameter_sets_ = {};
   first_pts_us_ = 0;
+  force_next_key_frame_ = true;
   return true;
 }
 
@@ -217,6 +320,10 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   sample->SetSampleTime(sample_time);
   sample->SetSampleDuration(kFrameDuration100Ns);
 
+  if (force_next_key_frame_ && !ForceNextKeyFrame(error)) {
+    return false;
+  }
+
   hr = transform_->ProcessInput(0, sample.get(), 0);
   if (Failed(hr, "IMFTransform::ProcessInput", error)) {
     return false;
@@ -232,7 +339,9 @@ void H264Encoder::Stop() {
     transform_ = nullptr;
   }
   sequence_header_.clear();
+  parameter_sets_ = {};
   first_pts_us_ = 0;
+  force_next_key_frame_ = false;
   if (mf_started_) {
     MFShutdown();
     mf_started_ = false;
@@ -274,8 +383,81 @@ bool H264Encoder::ConfigureTypes(std::string* error) {
     return false;
   }
 
-  sequence_header_ = ConvertAvccToAnnexB(
-      BlobAttribute(output_type.get(), MF_MT_MPEG_SEQUENCE_HEADER));
+  return true;
+}
+
+bool H264Encoder::ForceNextKeyFrame(std::string* error) {
+  winrt::com_ptr<ICodecAPI> codec_api;
+  HRESULT hr = transform_->QueryInterface(IID_PPV_ARGS(codec_api.put()));
+  if (Failed(hr, "QueryInterface(ICodecAPI)", error)) {
+    return false;
+  }
+
+  VARIANT value;
+  VariantInit(&value);
+  value.vt = VT_UI4;
+  value.ulVal = 1;
+  hr = codec_api->SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value);
+  VariantClear(&value);
+  if (FAILED(hr)) {
+    VariantInit(&value);
+    value.vt = VT_BOOL;
+    value.boolVal = VARIANT_TRUE;
+    hr = codec_api->SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value);
+    VariantClear(&value);
+  }
+  if (Failed(hr, "CODECAPI_AVEncVideoForceKeyFrame", error)) {
+    return false;
+  }
+
+  force_next_key_frame_ = false;
+  Log("H.264 encoder requested IDR for the next output frame");
+  return true;
+}
+
+bool H264Encoder::RefreshSequenceHeaderFromCurrentType(bool require_header,
+                                                       std::string* error) {
+  if (parameter_sets_.complete()) {
+    return true;
+  }
+
+  winrt::com_ptr<IMFMediaType> current_type;
+  HRESULT hr = transform_->GetOutputCurrentType(0, current_type.put());
+  if (FAILED(hr)) {
+    if (require_header) {
+      *error = HResultText("IMFTransform::GetOutputCurrentType", hr);
+      return false;
+    }
+    return true;
+  }
+
+  auto sequence_header = ConvertAvccToAnnexB(
+      BlobAttribute(current_type.get(), MF_MT_MPEG_SEQUENCE_HEADER));
+  if (sequence_header.empty()) {
+    if (require_header) {
+      *error = "H.264 sequence header is unavailable before an IDR frame";
+      return false;
+    }
+    return true;
+  }
+
+  auto sets = ExtractParameterSets(sequence_header);
+  if (!sets.complete()) {
+    if (require_header) {
+      *error = "H.264 sequence header did not contain both SPS and PPS";
+      return false;
+    }
+    return true;
+  }
+
+  sequence_header_ = std::move(sequence_header);
+  parameter_sets_ = std::move(sets);
+
+  std::ostringstream stream;
+  stream << "H.264 SPS/PPS ready: spsBytes=" << parameter_sets_.sps.size()
+         << " ppsBytes=" << parameter_sets_.pps.size()
+         << " sequenceNalTypes=" << NalTypesText(sequence_header_);
+  Log(stream.str());
   return true;
 }
 
@@ -326,6 +508,9 @@ bool H264Encoder::ReadAvailableOutput(
       *error = HResultText("IMFTransform::ProcessOutput", hr);
       return false;
     }
+    if (!RefreshSequenceHeaderFromCurrentType(false, error)) {
+      return false;
+    }
 
     IMFSample* raw_sample = output_buffer.pSample;
     if (raw_sample == nullptr) {
@@ -355,10 +540,21 @@ bool H264Encoder::ReadAvailableOutput(
 
     auto annex_b = NormalizeAnnexB(encoded);
     const bool key_frame = clean_point != 0;
-    if (key_frame && !sequence_header_.empty()) {
+    if (key_frame) {
+      if (!RefreshSequenceHeaderFromCurrentType(true, error)) {
+        return false;
+      }
+      if (!parameter_sets_.complete()) {
+        *error = "H.264 key frame was produced before SPS/PPS were available";
+        return false;
+      }
       std::vector<std::uint8_t> with_headers = sequence_header_;
       with_headers.insert(with_headers.end(), annex_b.begin(), annex_b.end());
       annex_b = std::move(with_headers);
+
+      std::ostringstream stream;
+      stream << "H.264 key frame NAL types=" << NalTypesText(annex_b);
+      Log(stream.str());
     }
 
     output->push_back(

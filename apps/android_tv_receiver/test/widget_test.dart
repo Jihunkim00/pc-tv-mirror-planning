@@ -135,6 +135,18 @@ void main() {
     expect(_focusedDebugLabel(), 'Stop receiver');
   });
 
+  testWidgets('waiting label is hidden after the first rendered frame', (
+    tester,
+  ) async {
+    await _pumpReceiverApp(
+      tester,
+      _FakeReceiverNativeApi(startState: MirrorSessionState.streaming),
+    );
+
+    expect(find.text('Waiting for PC video frames'), findsNothing);
+    expect(find.text('State: streaming'), findsOneWidget);
+  });
+
   testWidgets('focused receiver button survives parent rebuild', (
     tester,
   ) async {
@@ -224,6 +236,7 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
+      renderedFrames: startState == MirrorSessionState.streaming ? 1 : 0,
     );
   }
 
@@ -237,6 +250,17 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       surfaceRendererReady: false,
     );
   }
+
+  @override
+  Future<ReceiverSessionSnapshot> getReceiverStatus() async {
+    return _snapshot(
+      state: startState,
+      userMessage: 'Listening for a Windows sender.',
+      decoderReady: true,
+      surfaceRendererReady: true,
+      renderedFrames: startState == MirrorSessionState.streaming ? 1 : 0,
+    );
+  }
 }
 
 ReceiverSessionSnapshot _snapshot({
@@ -244,6 +268,7 @@ ReceiverSessionSnapshot _snapshot({
   required String userMessage,
   required bool decoderReady,
   required bool surfaceRendererReady,
+  int renderedFrames = 0,
 }) {
   return ReceiverSessionSnapshot(
     state: state,
@@ -251,5 +276,6 @@ ReceiverSessionSnapshot _snapshot({
     receiverPort: 50720,
     decoderReady: decoderReady,
     surfaceRendererReady: surfaceRendererReady,
+    renderedFrames: renderedFrames,
   );
 }

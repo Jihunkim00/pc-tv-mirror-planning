@@ -26,9 +26,13 @@ class H264Encoder {
               std::vector<EncodedAccessUnit>* output,
               std::string* error);
   void Stop();
+  H264ParameterSets parameter_sets() const { return parameter_sets_; }
 
  private:
   bool ConfigureTypes(std::string* error);
+  bool ForceNextKeyFrame(std::string* error);
+  bool RefreshSequenceHeaderFromCurrentType(bool require_header,
+                                            std::string* error);
   bool ReadAvailableOutput(std::vector<EncodedAccessUnit>* output,
                            std::string* error);
   std::vector<std::uint8_t> NormalizeAnnexB(
@@ -36,7 +40,9 @@ class H264Encoder {
 
   winrt::com_ptr<IMFTransform> transform_;
   std::vector<std::uint8_t> sequence_header_;
+  H264ParameterSets parameter_sets_;
   std::uint64_t first_pts_us_ = 0;
+  bool force_next_key_frame_ = false;
   bool mf_started_ = false;
 };
 

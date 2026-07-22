@@ -9,6 +9,8 @@ class TvFocusButton extends StatefulWidget {
     required this.onPressed,
     required this.icon,
     required this.label,
+    this.onNextFocus,
+    this.onPreviousFocus,
     this.autofocus = false,
     this.enabled = true,
     super.key,
@@ -18,6 +20,8 @@ class TvFocusButton extends StatefulWidget {
   final VoidCallback onPressed;
   final IconData icon;
   final String label;
+  final VoidCallback? onNextFocus;
+  final VoidCallback? onPreviousFocus;
   final bool autofocus;
   final bool enabled;
 
@@ -30,17 +34,11 @@ class _TvFocusButtonState extends State<TvFocusButton> {
   bool _pressed = false;
   Timer? _pressTimer;
 
-  static const Map<ShortcutActivator, Intent> _activationShortcuts = {
-    SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
-    SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
-    SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
-    SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
-  };
-
   @override
   void initState() {
     super.initState();
     _syncFocusAvailability();
+    _scheduleAutofocus();
   }
 
   @override
@@ -52,6 +50,7 @@ class _TvFocusButtonState extends State<TvFocusButton> {
         ..skipTraversal = false;
     }
     _syncFocusAvailability();
+    _scheduleAutofocus();
   }
 
   @override
@@ -67,6 +66,26 @@ class _TvFocusButtonState extends State<TvFocusButton> {
     widget.focusNode
       ..canRequestFocus = widget.enabled
       ..skipTraversal = !widget.enabled;
+  }
+
+  void _scheduleAutofocus() {
+    if (!widget.autofocus || !widget.enabled) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !widget.enabled ||
+          !widget.focusNode.canRequestFocus ||
+          widget.focusNode.hasFocus) {
+        return;
+      }
+      final focusedChild = FocusScope.of(context).focusedChild;
+      if (focusedChild != null && focusedChild != widget.focusNode) {
+        return;
+      }
+      FocusScope.of(context).requestFocus(widget.focusNode);
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _activate() {
@@ -94,6 +113,42 @@ class _TvFocusButtonState extends State<TvFocusButton> {
     });
   }
 
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (!widget.enabled || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _activate();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowRight) {
+      final next = widget.onNextFocus;
+      if (next != null) {
+        next();
+      } else {
+        node.nextFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowLeft) {
+      final previous = widget.onPreviousFocus;
+      if (previous != null) {
+        previous();
+      } else {
+        node.previousFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -109,19 +164,12 @@ class _TvFocusButtonState extends State<TvFocusButton> {
       onTap: widget.enabled ? _activate : null,
       child: ExcludeFocus(
         excluding: !widget.enabled,
-        child: FocusableActionDetector(
-          enabled: widget.enabled,
+        child: Focus(
           focusNode: widget.focusNode,
-          autofocus: widget.autofocus && widget.enabled,
-          shortcuts: _activationShortcuts,
-          actions: <Type, Action<Intent>>{
-            ActivateIntent: CallbackAction<ActivateIntent>(
-              onInvoke: (_) {
-                _activate();
-                return null;
-              },
-            ),
-          },
+          autofocus: false,
+          canRequestFocus: widget.enabled,
+          skipTraversal: !widget.enabled,
+          onKeyEvent: _handleKeyEvent,
           onFocusChange: (value) {
             if (_focused == value) {
               return;
@@ -155,9 +203,9 @@ class _TvFocusButtonState extends State<TvFocusButton> {
                   boxShadow: _focused
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF20E0D0).withValues(
-                              alpha: 0.28,
-                            ),
+                            color: const Color(
+                              0xFF20E0D0,
+                            ).withValues(alpha: 0.28),
                             blurRadius: 18,
                             spreadRadius: 1,
                           ),
@@ -174,13 +222,12 @@ class _TvFocusButtonState extends State<TvFocusButton> {
                         widget.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelLarge
-                            ?.copyWith(
-                              color: textColor,
-                              fontWeight: _focused
-                                  ? FontWeight.w800
-                                  : FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: textColor,
+                          fontWeight: _focused
+                              ? FontWeight.w800
+                              : FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],

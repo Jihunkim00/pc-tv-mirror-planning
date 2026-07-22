@@ -27,6 +27,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   late final FocusNode _stopFocusNode;
   MirrorSessionState? _lastRestoredState;
   bool _focusRestoreScheduled = false;
+  int _focusRestoreRetryCount = 0;
 
   static const Map<ShortcutActivator, Intent> _tvRemoteShortcuts = {
     SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
@@ -74,6 +75,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
       return;
     }
     _focusRestoreScheduled = true;
+    _focusRestoreRetryCount = 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusRestoreScheduled = false;
       if (!mounted) {
@@ -88,16 +90,31 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     final preferredNode = _preferredFocusNodeForState(state);
     final controls = [_restartFocusNode, _stopFocusNode];
     final controlsHaveFocus = controls.any((node) => node.hasFocus);
-    final stateChanged = _lastRestoredState != state;
+    final previousRestoredState = _lastRestoredState;
+    final stateChanged = previousRestoredState != state;
     _lastRestoredState = state;
 
-    if (!stateChanged && controlsHaveFocus) {
+    if (controlsHaveFocus && (!stateChanged || previousRestoredState == null)) {
       return;
     }
 
     final fallbackNode = _firstFocusableNode(controls);
     final target = preferredNode.canRequestFocus ? preferredNode : fallbackNode;
-    target?.requestFocus();
+    if (target == null || target.context?.mounted != true) {
+      if (_focusRestoreRetryCount < 2) {
+        _focusRestoreRetryCount += 1;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _restoreFocusForState();
+          }
+        });
+        WidgetsBinding.instance.scheduleFrame();
+      }
+      return;
+    }
+
+    _focusRestoreRetryCount = 0;
+    target.requestFocus();
   }
 
   FocusNode _preferredFocusNodeForState(MirrorSessionState state) {
@@ -125,37 +142,43 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   Widget build(BuildContext context) {
     return PopScope<void>(
       canPop: true,
-      child: Shortcuts(
-        shortcuts: _tvRemoteShortcuts,
-        child: FocusTraversalGroup(
-          policy: OrderedTraversalPolicy(),
-          child: Scaffold(
-            body: SafeArea(
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, _) => Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: 5,
-                        child: _VideoSurface(
-                          showNativeSurface: widget.showNativeSurface,
+      child: Focus(
+        skipTraversal: true,
+        onKeyEvent: _handleTvRemoteKey,
+        child: Shortcuts(
+          shortcuts: _tvRemoteShortcuts,
+          child: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Scaffold(
+              body: SafeArea(
+                child: AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) => Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: _VideoSurface(
+                            showNativeSurface: widget.showNativeSurface,
+                            renderedFrames:
+                                _controller.snapshot?.renderedFrames ?? 0,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 24),
-                      Expanded(
-                        flex: 3,
-                        child: _ReceiverStatusPanel(
-                          controller: _controller,
-                          restartFocusNode: _restartFocusNode,
-                          stopFocusNode: _stopFocusNode,
-                          onRestart: _restartReceiver,
-                          onStop: _stopReceiver,
+                        const SizedBox(width: 24),
+                        Expanded(
+                          flex: 3,
+                          child: _ReceiverStatusPanel(
+                            controller: _controller,
+                            restartFocusNode: _restartFocusNode,
+                            stopFocusNode: _stopFocusNode,
+                            onRestart: _restartReceiver,
+                            onStop: _stopReceiver,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -165,12 +188,38 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
       ),
     );
   }
+
+  KeyEventResult _handleTvRemoteKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowRight) {
+      if (_restartFocusNode.hasFocus && _stopFocusNode.canRequestFocus) {
+        _stopFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+    }
+    if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowLeft) {
+      if (_stopFocusNode.hasFocus && _restartFocusNode.canRequestFocus) {
+        _restartFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
+  }
 }
 
 class _VideoSurface extends StatelessWidget {
-  const _VideoSurface({required this.showNativeSurface});
+  const _VideoSurface({
+    required this.showNativeSurface,
+    required this.renderedFrames,
+  });
 
   final bool showNativeSurface;
+  final int renderedFrames;
 
   @override
   Widget build(BuildContext context) {
@@ -198,25 +247,26 @@ class _VideoSurface extends StatelessWidget {
                 const AndroidView(viewType: 'pc_tv_mirror/video_surface')
               else
                 const ColoredBox(color: Colors.black),
-              Align(
-                alignment: Alignment.bottomLeft,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+              if (renderedFrames == 0)
+                Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.72),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Text('Waiting for PC video frames'),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Text('Waiting for PC video frames'),
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -273,6 +323,34 @@ class _ReceiverStatusPanel extends StatelessWidget {
             message: controller.statusMessage,
           ),
           const SizedBox(height: 18),
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(1),
+            child: TvFocusButton(
+              key: const Key('receiver.restartButton'),
+              focusNode: restartFocusNode,
+              autofocus: controller.state != MirrorSessionState.streaming,
+              enabled: !controller.busy,
+              onPressed: onRestart,
+              onNextFocus: stopFocusNode.requestFocus,
+              icon: Icons.refresh,
+              label: 'Restart receiver',
+            ),
+          ),
+          const SizedBox(height: 10),
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(2),
+            child: TvFocusButton(
+              key: const Key('receiver.stopButton'),
+              focusNode: stopFocusNode,
+              autofocus: controller.state == MirrorSessionState.streaming,
+              enabled: !controller.busy,
+              onPressed: onStop,
+              onPreviousFocus: restartFocusNode.requestFocus,
+              icon: Icons.stop,
+              label: 'Stop receiver',
+            ),
+          ),
+          const SizedBox(height: 18),
           _MetricRow(
             label: 'Control port',
             value:
@@ -302,30 +380,39 @@ class _ReceiverStatusPanel extends StatelessWidget {
                 : 'Pending',
           ),
           const SizedBox(height: 18),
-          FocusTraversalOrder(
-            order: const NumericFocusOrder(1),
-            child: TvFocusButton(
-              key: const Key('receiver.restartButton'),
-              focusNode: restartFocusNode,
-              autofocus: true,
-              enabled: !controller.busy,
-              onPressed: onRestart,
-              icon: Icons.refresh,
-              label: 'Restart receiver',
-            ),
+          Text('Diagnostics', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          _MetricRow(label: 'Bytes', value: '${snapshot?.bytesReceived ?? 0}'),
+          _MetricRow(
+            label: 'Config',
+            value: '${snapshot?.configPacketsReceived ?? 0}',
           ),
-          const SizedBox(height: 10),
-          FocusTraversalOrder(
-            order: const NumericFocusOrder(2),
-            child: TvFocusButton(
-              key: const Key('receiver.stopButton'),
-              focusNode: stopFocusNode,
-              enabled: !controller.busy,
-              onPressed: onStop,
-              icon: Icons.stop,
-              label: 'Stop receiver',
-            ),
+          _MetricRow(
+            label: 'Access units',
+            value: '${snapshot?.accessUnitsReceived ?? 0}',
           ),
+          _MetricRow(
+            label: 'Key frames',
+            value: '${snapshot?.keyFramesReceived ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Decoder input',
+            value: '${snapshot?.decoderInputFrames ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Decoder output',
+            value: '${snapshot?.decoderOutputFrames ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Rendered',
+            value: '${snapshot?.renderedFrames ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Dropped',
+            value: '${snapshot?.droppedFrames ?? 0}',
+          ),
+          if (snapshot?.lastDecoderError != null)
+            _MetricRow(label: 'Last error', value: snapshot!.lastDecoderError!),
           const SizedBox(height: 18),
           Text('Receiver log', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),

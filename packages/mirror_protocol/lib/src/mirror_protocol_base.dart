@@ -256,22 +256,28 @@ final class VideoProfile {
 }
 
 final class H264CodecConfig {
-  const H264CodecConfig({
+  H264CodecConfig({
     required this.width,
     required this.height,
     required this.fps,
     required this.bitrateKbps,
+    required Uint8List sps,
+    required Uint8List pps,
     this.annexB = true,
     this.spsPpsInBand = true,
-  });
+  }) : sps = Uint8List.fromList(sps),
+       pps = Uint8List.fromList(pps);
 
-  static const int binaryLength = 20;
+  static const int binaryHeaderLength = 24;
+  static const int binaryLength = binaryHeaderLength;
   static const int _magic = 0x48323634; // H264
 
   final int width;
   final int height;
   final int fps;
   final int bitrateKbps;
+  final Uint8List sps;
+  final Uint8List pps;
   final bool annexB;
   final bool spsPpsInBand;
 
@@ -280,29 +286,32 @@ final class H264CodecConfig {
     _checkUint16('height', height);
     _checkUint16('fps', fps);
     _checkUint32('bitrateKbps', bitrateKbps);
+    _checkParameterSet('sps', sps, expectedNalType: 7);
+    _checkParameterSet('pps', pps, expectedNalType: 8);
 
-    final bytes = Uint8List(binaryLength);
+    final payloadLength = binaryHeaderLength + sps.length + pps.length;
+    _checkPayloadLength(payloadLength);
+    final bytes = Uint8List(payloadLength);
     final data = ByteData.sublistView(bytes);
     data.setUint32(0, _magic);
     data.setUint8(4, mirrorProtocolVersion);
-    data.setUint8(
-      5,
-      (annexB ? 1 : 0) | (spsPpsInBand ? 2 : 0),
-    );
+    data.setUint8(5, (annexB ? 1 : 0) | (spsPpsInBand ? 2 : 0));
     data.setUint16(6, 0);
     data.setUint16(8, width);
     data.setUint16(10, height);
     data.setUint16(12, fps);
     data.setUint16(14, 0);
     data.setUint32(16, bitrateKbps);
+    data.setUint16(20, sps.length);
+    data.setUint16(22, pps.length);
+    bytes.setRange(binaryHeaderLength, binaryHeaderLength + sps.length, sps);
+    bytes.setRange(binaryHeaderLength + sps.length, bytes.length, pps);
     return bytes;
   }
 
   factory H264CodecConfig.decode(Uint8List bytes) {
-    if (bytes.length != binaryLength) {
-      throw FormatException(
-        'Invalid H.264 config length: ${bytes.length}',
-      );
+    if (bytes.length < binaryHeaderLength) {
+      throw FormatException('Invalid H.264 config length: ${bytes.length}');
     }
 
     final data = ByteData.sublistView(bytes);
@@ -317,11 +326,38 @@ final class H264CodecConfig {
     }
 
     final flags = data.getUint8(5);
+    if ((flags & ~0x03) != 0) {
+      throw FormatException('Unsupported H.264 config flags: $flags');
+    }
+    final spsLength = data.getUint16(20);
+    final ppsLength = data.getUint16(22);
+    final expectedLength = binaryHeaderLength + spsLength + ppsLength;
+    if (bytes.length != expectedLength) {
+      throw FormatException(
+        'H.264 config SPS/PPS lengths do not match payload length: '
+        '$spsLength/$ppsLength in ${bytes.length}',
+      );
+    }
+    final sps = Uint8List.sublistView(
+      bytes,
+      binaryHeaderLength,
+      binaryHeaderLength + spsLength,
+    );
+    final pps = Uint8List.sublistView(
+      bytes,
+      binaryHeaderLength + spsLength,
+      expectedLength,
+    );
+    _checkParameterSet('sps', sps, expectedNalType: 7);
+    _checkParameterSet('pps', pps, expectedNalType: 8);
+
     return H264CodecConfig(
       width: data.getUint16(8),
       height: data.getUint16(10),
       fps: data.getUint16(12),
       bitrateKbps: data.getUint32(16),
+      sps: sps,
+      pps: pps,
       annexB: (flags & 1) != 0,
       spsPpsInBand: (flags & 2) != 0,
     );
@@ -412,10 +448,7 @@ final class VideoPacket {
       flags: data.getUint16(10),
       ptsUs: data.getUint64(12),
       sequenceNumber: data.getUint32(20),
-      payload: Uint8List.sublistView(
-        bytes,
-        lengthPrefixLength + headerLength,
-      ),
+      payload: Uint8List.sublistView(bytes, lengthPrefixLength + headerLength),
     );
   }
 }
@@ -661,6 +694,43 @@ void _checkPayloadLength(int length) {
   if (length < 0 || length > VideoPacket.maxPayloadLength) {
     throw RangeError.range(length, 0, VideoPacket.maxPayloadLength, 'payload');
   }
+}
+
+void _checkParameterSet(
+  String label,
+  Uint8List bytes, {
+  required int expectedNalType,
+}) {
+  _checkUint16('$label.length', bytes.length);
+  if (bytes.isEmpty) {
+    throw FormatException('H.264 $label is empty');
+  }
+  final nalType = _h264NalType(bytes);
+  if (nalType != expectedNalType) {
+    throw FormatException(
+      'H.264 $label has NAL type $nalType, expected $expectedNalType',
+    );
+  }
+}
+
+int _h264NalType(Uint8List bytes) {
+  var offset = 0;
+  if (bytes.length >= 4 &&
+      bytes[0] == 0 &&
+      bytes[1] == 0 &&
+      bytes[2] == 0 &&
+      bytes[3] == 1) {
+    offset = 4;
+  } else if (bytes.length >= 3 &&
+      bytes[0] == 0 &&
+      bytes[1] == 0 &&
+      bytes[2] == 1) {
+    offset = 3;
+  }
+  if (offset >= bytes.length) {
+    throw const FormatException('H.264 NAL unit is missing a header byte');
+  }
+  return bytes[offset] & 0x1F;
 }
 
 String _readString(Map<String, Object?> json, String key) {

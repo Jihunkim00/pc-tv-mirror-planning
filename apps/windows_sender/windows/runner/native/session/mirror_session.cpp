@@ -2,12 +2,16 @@
 
 #include "native/display/display_enumerator.h"
 
+#include <chrono>
+#include <utility>
+
 #include <winrt/base.h>
 
 namespace pctv {
 
 NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   Stop();
+  ResetCounters();
 
   if (options.request_json.empty()) {
     return {"failed",
@@ -45,20 +49,6 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             signal.detail};
   }
 
-  const auto config_packet = BuildH264CodecConfigPacket(0);
-  const auto config_result = transport_.SendPacket(config_packet);
-  if (!config_result.ok) {
-    transport_.Close();
-    return {"failed",
-            "Could not send the H.264 stream configuration.",
-            false,
-            false,
-            true,
-            false,
-            "SIGNALING_FAILED",
-            config_result.detail};
-  }
-
   std::string error;
   auto capture = std::make_unique<DisplayCapture>();
   if (!capture->Start(options.source_id, &error)) {
@@ -90,6 +80,14 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   next_sequence_ = 1;
   running_ = true;
   {
+    std::scoped_lock status_lock(status_mutex_);
+    first_access_unit_sent_ = false;
+    codec_config_sent_for_stream_ = false;
+    session_error_code_.clear();
+    session_user_message_.clear();
+    session_developer_message_ = "Receiver response: " + signal.detail;
+  }
+  {
     std::scoped_lock lock(mutex_);
     last_source_id_ = options.source_id;
     capture_ = std::move(capture);
@@ -98,14 +96,14 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   encode_thread_ = std::thread([this]() { EncodeLoop(); });
   send_thread_ = std::thread([this]() { SendLoop(); });
 
-  return {"streaming",
-          "Native 1280x720 H.264 video path is running.",
-          true,
-          true,
-          true,
-          true,
-          {},
-          "Receiver response: " + signal.detail};
+  {
+    std::unique_lock status_lock(status_mutex_);
+    status_changed_.wait_for(status_lock, std::chrono::seconds(5), [this]() {
+      return first_access_unit_sent_ || !session_error_code_.empty();
+    });
+  }
+
+  return Snapshot();
 }
 
 NativeSnapshot MirrorSession::Stop() {
@@ -129,14 +127,17 @@ NativeSnapshot MirrorSession::Stop() {
   encoder_.Stop();
   transport_.Close();
 
-  return {"idle",
-          "Native sender resources were released.",
-          false,
-          false,
-          false,
-          false,
-          {},
-          {}};
+  {
+    std::scoped_lock status_lock(status_mutex_);
+    first_access_unit_sent_ = false;
+    codec_config_sent_for_stream_ = false;
+    session_error_code_.clear();
+    session_user_message_.clear();
+    session_developer_message_.clear();
+  }
+  status_changed_.notify_all();
+
+  return Snapshot();
 }
 
 void MirrorSession::EncodeLoop() {
@@ -159,13 +160,22 @@ void MirrorSession::EncodeLoop() {
     Nv12Frame frame;
     if (!capture->CaptureNext(&frame, 500, &error)) {
       if (!error.empty()) {
+        SetLastEncodeError(error);
+        SetSessionError("CAPTURE_SOURCE_GONE",
+                        "Windows screen capture stopped.",
+                        error);
         running_ = false;
       }
       continue;
     }
+    captured_frames_.fetch_add(1);
 
     std::vector<EncodedAccessUnit> access_units;
     if (!encoder_.Encode(frame, &access_units, &error)) {
+      SetLastEncodeError(error);
+      SetSessionError("ENCODER_NOT_AVAILABLE",
+                      "The H.264 encoder stopped producing video.",
+                      error);
       running_ = false;
       break;
     }
@@ -174,26 +184,222 @@ void MirrorSession::EncodeLoop() {
       if (access_unit.annex_b.empty()) {
         continue;
       }
+      if (!codec_config_sent_for_stream_) {
+        if (!access_unit.key_frame) {
+          continue;
+        }
+        const auto parameter_sets = encoder_.parameter_sets();
+        if (!parameter_sets.complete()) {
+          const std::string config_error =
+              "H.264 SPS/PPS were unavailable before the first IDR frame";
+          SetLastEncodeError(config_error);
+          SetSessionError("ENCODER_NOT_AVAILABLE",
+                          "The H.264 encoder did not provide SPS/PPS.",
+                          config_error);
+          running_ = false;
+          break;
+        }
+        if (!SendCodecConfig(parameter_sets)) {
+          running_ = false;
+          break;
+        }
+        codec_config_sent_for_stream_ = true;
+      }
+
       const auto sequence = next_sequence_.fetch_add(1);
-      packet_queue_.PushDropOldest(BuildAccessUnitPacket(
+      encoded_frames_.fetch_add(1);
+      auto packet = BuildAccessUnitPacket(
           sequence, access_unit.pts_us, access_unit.key_frame,
           access_unit.annex_b.data(),
-          static_cast<std::uint32_t>(access_unit.annex_b.size())));
+          static_cast<std::uint32_t>(access_unit.annex_b.size()));
+      bool first_access_unit_sent = false;
+      {
+        std::scoped_lock status_lock(status_mutex_);
+        first_access_unit_sent = first_access_unit_sent_;
+      }
+      if (!first_access_unit_sent) {
+        if (!SendFirstAccessUnit(std::move(packet), access_unit.key_frame)) {
+          running_ = false;
+          break;
+        }
+        continue;
+      }
+      packet_queue_.PushDropOldest(
+          {std::move(packet), true, access_unit.key_frame});
     }
   }
   packet_queue_.Close();
 }
 
 void MirrorSession::SendLoop() {
-  std::vector<std::uint8_t> packet;
+  QueuedVideoPacket packet;
   while (running_ && packet_queue_.Pop(&packet)) {
-    const auto result = transport_.SendPacket(packet);
+    const auto result = transport_.SendPacket(packet.bytes);
     if (!result.ok) {
+      SetLastSendError(result.detail);
+      SetSessionError("NETWORK_DISCONNECTED",
+                      "Could not send video packets to the TV.",
+                      result.detail);
       running_ = false;
       packet_queue_.Close();
       break;
     }
+    packets_sent_.fetch_add(1);
+    bytes_sent_.fetch_add(static_cast<std::uint64_t>(packet.bytes.size()));
+    if (packet.key_frame) {
+      key_frames_sent_.fetch_add(1);
+    }
+    if (packet.access_unit) {
+      MarkFirstAccessUnitSent();
+    }
   }
+}
+
+bool MirrorSession::SendCodecConfig(const H264ParameterSets& parameter_sets) {
+  const auto config_packet = BuildH264CodecConfigPacket(0, parameter_sets);
+  if (config_packet.empty()) {
+    const std::string error =
+        "H.264 codec config packet could not be built from SPS/PPS";
+    SetLastSendError(error);
+    SetSessionError("ENCODER_NOT_AVAILABLE",
+                    "Could not build the H.264 stream configuration.",
+                    error);
+    packet_queue_.Close();
+    return false;
+  }
+
+  const auto result = transport_.SendPacket(config_packet);
+  if (!result.ok) {
+    SetLastSendError(result.detail);
+    SetSessionError("SIGNALING_FAILED",
+                    "Could not send the H.264 stream configuration.",
+                    result.detail);
+    packet_queue_.Close();
+    return false;
+  }
+
+  codec_config_sent_.fetch_add(1);
+  packets_sent_.fetch_add(1);
+  bytes_sent_.fetch_add(static_cast<std::uint64_t>(config_packet.size()));
+  return true;
+}
+
+bool MirrorSession::SendFirstAccessUnit(std::vector<std::uint8_t> packet,
+                                        bool key_frame) {
+  const auto result = transport_.SendPacket(packet);
+  if (!result.ok) {
+    SetLastSendError(result.detail);
+    SetSessionError("NETWORK_DISCONNECTED",
+                    "Could not send the first video frame to the TV.",
+                    result.detail);
+    packet_queue_.Close();
+    return false;
+  }
+
+  packets_sent_.fetch_add(1);
+  bytes_sent_.fetch_add(static_cast<std::uint64_t>(packet.size()));
+  if (key_frame) {
+    key_frames_sent_.fetch_add(1);
+  }
+  MarkFirstAccessUnitSent();
+  return true;
+}
+
+NativeSnapshot MirrorSession::Snapshot() {
+  std::scoped_lock status_lock(status_mutex_);
+  return CurrentSnapshotLocked();
+}
+
+NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
+                                            const std::string& user_message) {
+  bool capture_ready = false;
+  {
+    std::scoped_lock lock(mutex_);
+    capture_ready = capture_ != nullptr;
+  }
+
+  NativeSnapshot snapshot;
+  snapshot.state = state;
+  snapshot.user_message = user_message;
+  snapshot.capture_ready = capture_ready;
+  snapshot.encoder_ready = running_;
+  snapshot.signaling_ready =
+      state != "idle" && session_error_code_ != "SIGNALING_FAILED" &&
+      session_error_code_ != "NETWORK_DISCONNECTED";
+  snapshot.native_video_path_ready = first_access_unit_sent_;
+  snapshot.error_code = session_error_code_;
+  snapshot.developer_message = session_developer_message_;
+  snapshot.captured_frames = captured_frames_.load();
+  snapshot.encoded_frames = encoded_frames_.load();
+  snapshot.codec_config_sent = codec_config_sent_.load();
+  snapshot.key_frames_sent = key_frames_sent_.load();
+  snapshot.packets_sent = packets_sent_.load();
+  snapshot.bytes_sent = bytes_sent_.load();
+  snapshot.last_encode_error = last_encode_error_;
+  snapshot.last_send_error = last_send_error_;
+  return snapshot;
+}
+
+NativeSnapshot MirrorSession::CurrentSnapshotLocked() {
+  if (!session_error_code_.empty()) {
+    return BuildSnapshot("failed", session_user_message_);
+  }
+  if (!running_) {
+    return BuildSnapshot("idle", "Native sender resources were released.");
+  }
+  if (first_access_unit_sent_) {
+    return BuildSnapshot("streaming",
+                         "Native 1280x720 H.264 video path is running.");
+  }
+  return BuildSnapshot("negotiating",
+                       "Waiting for the first encoded video frame.");
+}
+
+void MirrorSession::ResetCounters() {
+  captured_frames_ = 0;
+  encoded_frames_ = 0;
+  codec_config_sent_ = 0;
+  key_frames_sent_ = 0;
+  packets_sent_ = 0;
+  bytes_sent_ = 0;
+  std::scoped_lock status_lock(status_mutex_);
+  first_access_unit_sent_ = false;
+  codec_config_sent_for_stream_ = false;
+  session_error_code_.clear();
+  session_user_message_.clear();
+  session_developer_message_.clear();
+  last_encode_error_.clear();
+  last_send_error_.clear();
+}
+
+void MirrorSession::SetSessionError(const std::string& error_code,
+                                    const std::string& user_message,
+                                    const std::string& developer_message) {
+  {
+    std::scoped_lock status_lock(status_mutex_);
+    session_error_code_ = error_code;
+    session_user_message_ = user_message;
+    session_developer_message_ = developer_message;
+  }
+  status_changed_.notify_all();
+}
+
+void MirrorSession::SetLastEncodeError(const std::string& error) {
+  std::scoped_lock status_lock(status_mutex_);
+  last_encode_error_ = error;
+}
+
+void MirrorSession::SetLastSendError(const std::string& error) {
+  std::scoped_lock status_lock(status_mutex_);
+  last_send_error_ = error;
+}
+
+void MirrorSession::MarkFirstAccessUnitSent() {
+  {
+    std::scoped_lock status_lock(status_mutex_);
+    first_access_unit_sent_ = true;
+  }
+  status_changed_.notify_all();
 }
 
 }  // namespace pctv

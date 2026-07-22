@@ -73,4 +73,16 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
       nativeVideoPathReady: false,
     );
   }
+
+  @override
+  Future<NativeSessionSnapshot> getSessionStatus() async {
+    return const NativeSessionSnapshot(
+      state: MirrorSessionState.negotiating,
+      userMessage: 'Control signaling is ready.',
+      captureReady: false,
+      encoderReady: false,
+      signalingReady: true,
+      nativeVideoPathReady: false,
+    );
+  }
 }

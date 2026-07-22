@@ -1,6 +1,7 @@
 #ifndef RUNNER_NATIVE_SESSION_SESSION_TYPES_H_
 #define RUNNER_NATIVE_SESSION_SESSION_TYPES_H_
 
+#include <cstdint>
 #include <string>
 
 namespace pctv {
@@ -14,6 +15,14 @@ struct NativeSnapshot {
   bool native_video_path_ready = false;
   std::string error_code;
   std::string developer_message;
+  std::uint64_t captured_frames = 0;
+  std::uint64_t encoded_frames = 0;
+  std::uint64_t codec_config_sent = 0;
+  std::uint64_t key_frames_sent = 0;
+  std::uint64_t packets_sent = 0;
+  std::uint64_t bytes_sent = 0;
+  std::string last_encode_error;
+  std::string last_send_error;
 };
 
 struct StartSessionOptions {
