@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+android/key.properties
+*.jks
+*.keystore
+windows_sender_verbose.log
+windows-native.log
+build/
+.dart_tool/
