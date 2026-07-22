@@ -1,0 +1,45 @@
+#ifndef RUNNER_NATIVE_TRANSPORT_VIDEO_TRANSPORT_H_
+#define RUNNER_NATIVE_TRANSPORT_VIDEO_TRANSPORT_H_
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace pctv {
+
+struct TransportResult {
+  bool ok = false;
+  std::string detail;
+};
+
+class VideoTransportClient {
+ public:
+  VideoTransportClient();
+  ~VideoTransportClient();
+
+  VideoTransportClient(const VideoTransportClient&) = delete;
+  VideoTransportClient& operator=(const VideoTransportClient&) = delete;
+
+  TransportResult Connect(const std::string& host,
+                          int port,
+                          const std::string& control_json);
+  TransportResult SendPacket(const std::vector<std::uint8_t>& packet);
+  void Close();
+  bool connected() const { return socket_ != UINTPTR_MAX; }
+
+ private:
+  TransportResult SendAll(const char* data, int length);
+
+  std::uintptr_t socket_ = UINTPTR_MAX;
+};
+
+std::vector<std::uint8_t> BuildH264CodecConfigPacket(std::uint32_t sequence);
+std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint32_t sequence,
+                                                std::uint64_t pts_us,
+                                                bool key_frame,
+                                                const std::uint8_t* data,
+                                                std::uint32_t size);
+
+}  // namespace pctv
+
+#endif  // RUNNER_NATIVE_TRANSPORT_VIDEO_TRANSPORT_H_

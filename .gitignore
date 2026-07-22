@@ -1,1 +1,6 @@
 /PC_TV_MIRROR_MASTER_PLAN.md
+
+# Android signing secrets
+key.properties
+*.jks
+*.keystore
