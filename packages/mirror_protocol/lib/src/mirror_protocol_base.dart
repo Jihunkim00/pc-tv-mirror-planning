@@ -59,8 +59,12 @@ abstract final class VideoPacketFlags {
 
 enum MirrorSessionState {
   idle('idle'),
+  starting('starting'),
+  listening('listening'),
   connecting('connecting'),
   negotiating('negotiating'),
+  waitingForSurface('waitingForSurface'),
+  waitingForKeyFrame('waitingForKeyFrame'),
   streaming('streaming'),
   stopping('stopping'),
   restoring('restoring'),
@@ -73,8 +77,12 @@ enum MirrorSessionState {
   static MirrorSessionState fromWireName(String value) {
     return switch (value) {
       'idle' => MirrorSessionState.idle,
+      'starting' => MirrorSessionState.starting,
+      'listening' => MirrorSessionState.listening,
       'connecting' => MirrorSessionState.connecting,
       'negotiating' => MirrorSessionState.negotiating,
+      'waitingForSurface' => MirrorSessionState.waitingForSurface,
+      'waitingForKeyFrame' => MirrorSessionState.waitingForKeyFrame,
       'streaming' => MirrorSessionState.streaming,
       'stopping' => MirrorSessionState.stopping,
       'restoring' => MirrorSessionState.restoring,
@@ -222,11 +230,11 @@ final class VideoProfile {
   });
 
   const VideoProfile.stageOne720p30()
-    : codec = VideoCodec.h264,
-      width = 1280,
-      height = 720,
-      fps = 30,
-      bitrateKbps = 4000;
+      : codec = VideoCodec.h264,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        bitrateKbps = 4000;
 
   final VideoCodec codec;
   final int width;
@@ -265,8 +273,8 @@ final class H264CodecConfig {
     required Uint8List pps,
     this.annexB = true,
     this.spsPpsInBand = true,
-  }) : sps = Uint8List.fromList(sps),
-       pps = Uint8List.fromList(pps);
+  })  : sps = Uint8List.fromList(sps),
+        pps = Uint8List.fromList(pps);
 
   static const int binaryHeaderLength = 24;
   static const int binaryLength = binaryHeaderLength;
@@ -282,9 +290,9 @@ final class H264CodecConfig {
   final bool spsPpsInBand;
 
   Uint8List encode() {
-    _checkUint16('width', width);
-    _checkUint16('height', height);
-    _checkUint16('fps', fps);
+    _checkRange('width', width, 16, 3840);
+    _checkRange('height', height, 16, 2160);
+    _checkRange('fps', fps, 1, 60);
     _checkUint32('bitrateKbps', bitrateKbps);
     _checkParameterSet('sps', sps, expectedNalType: 7);
     _checkParameterSet('pps', pps, expectedNalType: 8);
@@ -352,9 +360,9 @@ final class H264CodecConfig {
     _checkParameterSet('pps', pps, expectedNalType: 8);
 
     return H264CodecConfig(
-      width: data.getUint16(8),
-      height: data.getUint16(10),
-      fps: data.getUint16(12),
+      width: _checkedDecodedRange('width', data.getUint16(8), 16, 3840),
+      height: _checkedDecodedRange('height', data.getUint16(10), 16, 2160),
+      fps: _checkedDecodedRange('fps', data.getUint16(12), 1, 60),
       bitrateKbps: data.getUint32(16),
       sps: sps,
       pps: pps,
@@ -375,7 +383,7 @@ final class VideoPacket {
 
   static const int headerLength = 24;
   static const int lengthPrefixLength = 4;
-  static const int maxPayloadLength = 16 * 1024 * 1024;
+  static const int maxPayloadLength = 8 * 1024 * 1024;
   static const int _magic = 0x5054564D; // PTVM
 
   final VideoPacketType type;
@@ -676,6 +684,19 @@ void _checkUint16(String label, int value) {
   if (value < 0 || value > 0xFFFF) {
     throw RangeError.range(value, 0, 0xFFFF, label);
   }
+}
+
+void _checkRange(String label, int value, int min, int max) {
+  if (value < min || value > max) {
+    throw RangeError.range(value, min, max, label);
+  }
+}
+
+int _checkedDecodedRange(String label, int value, int min, int max) {
+  if (value < min || value > max) {
+    throw FormatException('$label is outside the supported range: $value');
+  }
+  return value;
 }
 
 void _checkUint32(String label, int value) {

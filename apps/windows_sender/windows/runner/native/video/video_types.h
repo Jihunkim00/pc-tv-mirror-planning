@@ -10,6 +10,7 @@ struct Nv12Frame {
   int width = 1280;
   int height = 720;
   std::uint64_t pts_us = 0;
+  int dropped_frames = 0;
   std::vector<std::uint8_t> data;
 };
 

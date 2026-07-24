@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <sstream>
+#include <utility>
 
 namespace pctv {
 namespace {
@@ -127,7 +128,7 @@ bool DisplayCapture::Start(const std::string& source_id, std::string* error) {
         winrt::put_abi(item_)));
 
     frame_pool_ = Direct3D11CaptureFramePool::CreateFreeThreaded(
-        interop_device_, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
+        interop_device_, DirectXPixelFormat::B8G8R8A8UIntNormalized, 1,
         item_.Size());
     frame_arrived_token_ =
         frame_pool_.FrameArrived([this](auto&&, auto&&) {
@@ -170,6 +171,16 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
     if (!capture_frame) {
       return false;
     }
+    int dropped_frames = 0;
+    while (true) {
+      auto newer_frame = frame_pool_.TryGetNextFrame();
+      if (!newer_frame) {
+        break;
+      }
+      capture_frame.Close();
+      capture_frame = std::move(newer_frame);
+      ++dropped_frames;
+    }
 
     auto surface = capture_frame.Surface();
     auto access =
@@ -198,6 +209,7 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
     ConvertMappedBgraToNv12(mapped, desc.Width, desc.Height, frame);
     d3d_context_->Unmap(staging_texture_.get(), 0);
     frame->pts_us = NowUs();
+    frame->dropped_frames = dropped_frames;
   } catch (const winrt::hresult_error& failure) {
     *error = HResultText("WGC frame copy", failure.code());
     return false;

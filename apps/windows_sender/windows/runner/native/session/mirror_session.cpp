@@ -8,6 +8,19 @@
 #include <winrt/base.h>
 
 namespace pctv {
+namespace {
+
+std::uint64_t NowUs() {
+  const auto now = std::chrono::steady_clock::now().time_since_epoch();
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(now).count());
+}
+
+double UsToMs(std::uint64_t value_us) {
+  return static_cast<double>(value_us) / 1000.0;
+}
+
+}  // namespace
 
 NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   Stop();
@@ -169,6 +182,10 @@ void MirrorSession::EncodeLoop() {
       continue;
     }
     captured_frames_.fetch_add(1);
+    if (frame.dropped_frames > 0) {
+      capture_dropped_frames_.fetch_add(
+          static_cast<std::uint64_t>(frame.dropped_frames));
+    }
 
     std::vector<EncodedAccessUnit> access_units;
     if (!encoder_.Encode(frame, &access_units, &error)) {
@@ -178,6 +195,18 @@ void MirrorSession::EncodeLoop() {
                       error);
       running_ = false;
       break;
+    }
+    const auto encode_done_us = NowUs();
+    const auto capture_to_encode_ms =
+        frame.pts_us <= encode_done_us ? UsToMs(encode_done_us - frame.pts_us)
+                                       : 0.0;
+    {
+      std::scoped_lock status_lock(status_mutex_);
+      last_capture_to_encode_ms_ = capture_to_encode_ms;
+      total_capture_to_encode_ms_ += capture_to_encode_ms;
+      if (capture_to_encode_ms > max_capture_to_encode_ms_) {
+        max_capture_to_encode_ms_ = capture_to_encode_ms;
+      }
     }
 
     for (const auto& access_unit : access_units) {
@@ -224,8 +253,22 @@ void MirrorSession::EncodeLoop() {
         }
         continue;
       }
-      packet_queue_.PushDropOldest(
-          {std::move(packet), true, access_unit.key_frame});
+      bool pushed = false;
+      const auto dropped = packet_queue_.PushDropOldestWhere(
+          {std::move(packet), true, access_unit.key_frame},
+          [](const QueuedVideoPacket& queued) {
+            return queued.access_unit && !queued.key_frame;
+          },
+          [](const QueuedVideoPacket& incoming) {
+            return incoming.access_unit && !incoming.key_frame;
+          },
+          &pushed);
+      if (dropped > 0) {
+        transport_dropped_frames_.fetch_add(dropped);
+      }
+      if (!pushed) {
+        transport_dropped_frames_.fetch_add(1);
+      }
     }
   }
   packet_queue_.Close();
@@ -246,6 +289,7 @@ void MirrorSession::SendLoop() {
     }
     packets_sent_.fetch_add(1);
     bytes_sent_.fetch_add(static_cast<std::uint64_t>(packet.bytes.size()));
+    send_completed_bytes_.fetch_add(static_cast<std::uint64_t>(packet.bytes.size()));
     if (packet.key_frame) {
       key_frames_sent_.fetch_add(1);
     }
@@ -281,6 +325,7 @@ bool MirrorSession::SendCodecConfig(const H264ParameterSets& parameter_sets) {
   codec_config_sent_.fetch_add(1);
   packets_sent_.fetch_add(1);
   bytes_sent_.fetch_add(static_cast<std::uint64_t>(config_packet.size()));
+  send_completed_bytes_.fetch_add(static_cast<std::uint64_t>(config_packet.size()));
   return true;
 }
 
@@ -298,6 +343,7 @@ bool MirrorSession::SendFirstAccessUnit(std::vector<std::uint8_t> packet,
 
   packets_sent_.fetch_add(1);
   bytes_sent_.fetch_add(static_cast<std::uint64_t>(packet.size()));
+  send_completed_bytes_.fetch_add(static_cast<std::uint64_t>(packet.size()));
   if (key_frame) {
     key_frames_sent_.fetch_add(1);
   }
@@ -330,11 +376,26 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.error_code = session_error_code_;
   snapshot.developer_message = session_developer_message_;
   snapshot.captured_frames = captured_frames_.load();
+  snapshot.capture_dropped_frames = capture_dropped_frames_.load();
+  snapshot.encoder_input_dropped_frames = encoder_input_dropped_frames_.load();
   snapshot.encoded_frames = encoded_frames_.load();
+  snapshot.transport_dropped_frames = transport_dropped_frames_.load();
   snapshot.codec_config_sent = codec_config_sent_.load();
   snapshot.key_frames_sent = key_frames_sent_.load();
   snapshot.packets_sent = packets_sent_.load();
   snapshot.bytes_sent = bytes_sent_.load();
+  snapshot.send_completed_bytes = send_completed_bytes_.load();
+  snapshot.queue_depth_capture = 0;
+  snapshot.queue_depth_encoder = 0;
+  snapshot.queue_depth_transport =
+      static_cast<int>(packet_queue_.Size());
+  snapshot.last_capture_to_encode_ms = last_capture_to_encode_ms_;
+  snapshot.average_capture_to_encode_ms =
+      captured_frames_.load() == 0
+          ? 0.0
+          : total_capture_to_encode_ms_ /
+                static_cast<double>(captured_frames_.load());
+  snapshot.max_capture_to_encode_ms = max_capture_to_encode_ms_;
   snapshot.last_encode_error = last_encode_error_;
   snapshot.last_send_error = last_send_error_;
   return snapshot;
@@ -357,11 +418,15 @@ NativeSnapshot MirrorSession::CurrentSnapshotLocked() {
 
 void MirrorSession::ResetCounters() {
   captured_frames_ = 0;
+  capture_dropped_frames_ = 0;
+  encoder_input_dropped_frames_ = 0;
   encoded_frames_ = 0;
+  transport_dropped_frames_ = 0;
   codec_config_sent_ = 0;
   key_frames_sent_ = 0;
   packets_sent_ = 0;
   bytes_sent_ = 0;
+  send_completed_bytes_ = 0;
   std::scoped_lock status_lock(status_mutex_);
   first_access_unit_sent_ = false;
   codec_config_sent_for_stream_ = false;
@@ -370,6 +435,9 @@ void MirrorSession::ResetCounters() {
   session_developer_message_.clear();
   last_encode_error_.clear();
   last_send_error_.clear();
+  last_capture_to_encode_ms_ = 0.0;
+  total_capture_to_encode_ms_ = 0.0;
+  max_capture_to_encode_ms_ = 0.0;
 }
 
 void MirrorSession::SetSessionError(const std::string& error_code,

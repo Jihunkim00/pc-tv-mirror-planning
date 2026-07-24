@@ -56,8 +56,14 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.native_video_path_ready);
   map[EncodableValue("capturedFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.captured_frames));
+  map[EncodableValue("captureDroppedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.capture_dropped_frames));
+  map[EncodableValue("encoderInputDroppedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoder_input_dropped_frames));
   map[EncodableValue("encodedFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.encoded_frames));
+  map[EncodableValue("transportDroppedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.transport_dropped_frames));
   map[EncodableValue("codecConfigSent")] =
       EncodableValue(static_cast<int64_t>(snapshot.codec_config_sent));
   map[EncodableValue("keyFramesSent")] =
@@ -66,6 +72,20 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(static_cast<int64_t>(snapshot.packets_sent));
   map[EncodableValue("bytesSent")] =
       EncodableValue(static_cast<int64_t>(snapshot.bytes_sent));
+  map[EncodableValue("sendCompletedBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.send_completed_bytes));
+  map[EncodableValue("queueDepthCapture")] =
+      EncodableValue(snapshot.queue_depth_capture);
+  map[EncodableValue("queueDepthEncoder")] =
+      EncodableValue(snapshot.queue_depth_encoder);
+  map[EncodableValue("queueDepthTransport")] =
+      EncodableValue(snapshot.queue_depth_transport);
+  map[EncodableValue("lastCaptureToEncodeMs")] =
+      EncodableValue(snapshot.last_capture_to_encode_ms);
+  map[EncodableValue("averageCaptureToEncodeMs")] =
+      EncodableValue(snapshot.average_capture_to_encode_ms);
+  map[EncodableValue("maxCaptureToEncodeMs")] =
+      EncodableValue(snapshot.max_capture_to_encode_ms);
   if (!snapshot.last_encode_error.empty()) {
     map[EncodableValue("lastEncodeError")] =
         EncodableValue(snapshot.last_encode_error);

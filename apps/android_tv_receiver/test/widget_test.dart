@@ -17,7 +17,11 @@ void main() {
 
     expect(nativeApi.startedPort, 50720);
     expect(find.text('Waiting for PC video frames'), findsOneWidget);
-    expect(find.text('State: negotiating'), findsOneWidget);
+    expect(find.text('State: listening'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -240));
+    await tester.pumpAndSettle();
+
     expect(find.text('h264 1280x720@30'), findsOneWidget);
   });
 
@@ -135,7 +139,7 @@ void main() {
     expect(_focusedDebugLabel(), 'Stop receiver');
   });
 
-  testWidgets('waiting label is hidden after the first rendered frame', (
+  testWidgets('waiting label is hidden after the first surface release', (
     tester,
   ) async {
     await _pumpReceiverApp(
@@ -145,6 +149,104 @@ void main() {
 
     expect(find.text('Waiting for PC video frames'), findsNothing);
     expect(find.text('State: streaming'), findsOneWidget);
+  });
+
+  testWidgets('video surface is constrained to a 16:9 viewport', (
+    tester,
+  ) async {
+    await _pumpReceiverApp(tester, _FakeReceiverNativeApi());
+
+    final aspectRatio = tester.widget<AspectRatio>(
+      find.descendant(
+        of: find.byKey(const Key('receiver.videoSurfaceFocusBoundary')),
+        matching: find.byType(AspectRatio),
+      ),
+    );
+
+    expect(aspectRatio.aspectRatio, 16 / 9);
+  });
+
+  test('parses receiver surface and codec diagnostics', () {
+    final snapshot = ReceiverSessionSnapshot.fromJson({
+      'state': 'streaming',
+      'userMessage': 'PC video is being released to the TV surface.',
+      'receiverPort': 50720,
+      'receiverBindAddress': '0.0.0.0',
+      'localIpv4Addresses': ['192.168.1.40'],
+      'decoderReady': true,
+      'surfaceRendererReady': true,
+      'releasedToSurfaceFrames': 4,
+      'codecCreateCount': 1,
+      'codecReleaseCount': 0,
+      'surfaceCreatedCount': 1,
+      'surfaceChangedCount': 2,
+      'surfaceDestroyedCount': 0,
+      'surfaceIsValid': true,
+      'surfaceWidth': 1280,
+      'surfaceHeight': 720,
+      'zOrderMode': 'mediaOverlay',
+      'firstSurfaceTestDrawSucceeded': true,
+      'sourceWidth': 1280,
+      'sourceHeight': 720,
+      'containerWidth': 1000,
+      'containerHeight': 700,
+      'renderedViewWidth': 1000,
+      'renderedViewHeight': 562,
+      'scaleMode': 'fitCenter',
+      'aspectRatioError': 0.001,
+      'configuredWidth': 1280,
+      'configuredHeight': 720,
+      'outputWidth': 1280,
+      'outputHeight': 720,
+      'outputFormatChangedCount': 1,
+      'outputCropLeft': 0,
+      'outputCropRight': 1279,
+      'outputCropTop': 0,
+      'outputCropBottom': 719,
+      'networkToDecoderInputMs': 1.5,
+      'decoderInputToOutputMs': 12.5,
+      'estimatedEndToEndLatencyMs': 120.0,
+      'latencyAverageMs': 100.0,
+      'latencyP95Ms': 180.0,
+      'maxReceiverQueueDepth': 3,
+      'staleAccessUnitsDropped': 2,
+      'lastFrameAgeMs': 40.0,
+    });
+
+    expect(snapshot.receiverBindAddress, '0.0.0.0');
+    expect(snapshot.localIpv4Addresses, ['192.168.1.40']);
+    expect(snapshot.releasedToSurfaceFrames, 4);
+    // Legacy compatibility only; this does not prove Surface latch/render.
+    // ignore: deprecated_member_use_from_same_package
+    expect(snapshot.renderedFrames, 4);
+    expect(snapshot.codecCreateCount, 1);
+    expect(snapshot.codecReleaseCount, 0);
+    expect(snapshot.surfaceCreatedCount, 1);
+    expect(snapshot.surfaceDestroyedCount, 0);
+    expect(snapshot.surfaceIsValid, isTrue);
+    expect(snapshot.surfaceWidth, 1280);
+    expect(snapshot.surfaceHeight, 720);
+    expect(snapshot.zOrderMode, 'mediaOverlay');
+    expect(snapshot.firstSurfaceTestDrawSucceeded, isTrue);
+    expect(snapshot.sourceWidth, 1280);
+    expect(snapshot.sourceHeight, 720);
+    expect(snapshot.containerWidth, 1000);
+    expect(snapshot.renderedViewHeight, 562);
+    expect(snapshot.scaleMode, 'fitCenter');
+    expect(snapshot.aspectRatioError, 0.001);
+    expect(snapshot.configuredWidth, 1280);
+    expect(snapshot.configuredHeight, 720);
+    expect(snapshot.outputWidth, 1280);
+    expect(snapshot.outputHeight, 720);
+    expect(snapshot.outputCropRight, 1279);
+    expect(snapshot.outputFormatChangedCount, 1);
+    expect(snapshot.networkToDecoderInputMs, 1.5);
+    expect(snapshot.decoderInputToOutputMs, 12.5);
+    expect(snapshot.estimatedEndToEndLatencyMs, 120.0);
+    expect(snapshot.latencyP95Ms, 180.0);
+    expect(snapshot.maxReceiverQueueDepth, 3);
+    expect(snapshot.staleAccessUnitsDropped, 2);
+    expect(snapshot.lastFrameAgeMs, 40.0);
   });
 
   testWidgets('focused receiver button survives parent rebuild', (
@@ -207,7 +309,7 @@ String? _focusedDebugLabel() {
 }
 
 final class _FakeReceiverNativeApi implements ReceiverNativeApi {
-  _FakeReceiverNativeApi({this.startState = MirrorSessionState.negotiating});
+  _FakeReceiverNativeApi({this.startState = MirrorSessionState.listening});
 
   final MirrorSessionState startState;
   int? startedPort;
@@ -236,7 +338,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      renderedFrames: startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
@@ -258,7 +362,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      renderedFrames: startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 }
@@ -268,7 +374,7 @@ ReceiverSessionSnapshot _snapshot({
   required String userMessage,
   required bool decoderReady,
   required bool surfaceRendererReady,
-  int renderedFrames = 0,
+  int releasedToSurfaceFrames = 0,
 }) {
   return ReceiverSessionSnapshot(
     state: state,
@@ -276,6 +382,6 @@ ReceiverSessionSnapshot _snapshot({
     receiverPort: 50720,
     decoderReady: decoderReady,
     surfaceRendererReady: surfaceRendererReady,
-    renderedFrames: renderedFrames,
+    releasedToSurfaceFrames: releasedToSurfaceFrames,
   );
 }

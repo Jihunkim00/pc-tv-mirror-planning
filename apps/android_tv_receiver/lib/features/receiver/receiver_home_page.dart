@@ -121,11 +121,16 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     return switch (state) {
       MirrorSessionState.streaming => _stopFocusNode,
       MirrorSessionState.idle ||
+      MirrorSessionState.starting ||
+      MirrorSessionState.listening ||
       MirrorSessionState.connecting ||
       MirrorSessionState.negotiating ||
+      MirrorSessionState.waitingForSurface ||
+      MirrorSessionState.waitingForKeyFrame ||
       MirrorSessionState.stopping ||
       MirrorSessionState.restoring ||
-      MirrorSessionState.failed => _restartFocusNode,
+      MirrorSessionState.failed =>
+        _restartFocusNode,
     };
   }
 
@@ -151,25 +156,24 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
             policy: OrderedTraversalPolicy(),
             child: Scaffold(
               body: SafeArea(
-                child: AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, _) => Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          flex: 5,
-                          child: _VideoSurface(
-                            showNativeSurface: widget.showNativeSurface,
-                            renderedFrames:
-                                _controller.snapshot?.renderedFrames ?? 0,
-                          ),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 5,
+                        child: _VideoSurface(
+                          showNativeSurface: widget.showNativeSurface,
+                          controller: _controller,
                         ),
-                        const SizedBox(width: 24),
-                        Expanded(
-                          flex: 3,
-                          child: _ReceiverStatusPanel(
+                      ),
+                      const SizedBox(width: 24),
+                      Expanded(
+                        flex: 3,
+                        child: AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, _) => _ReceiverStatusPanel(
                             controller: _controller,
                             restartFocusNode: _restartFocusNode,
                             stopFocusNode: _stopFocusNode,
@@ -177,8 +181,8 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                             onStop: _stopReceiver,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -215,11 +219,28 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
 class _VideoSurface extends StatelessWidget {
   const _VideoSurface({
     required this.showNativeSurface,
-    required this.renderedFrames,
+    required this.controller,
   });
 
+  static const String _surfaceZOrderMode = String.fromEnvironment(
+    'PC_TV_MIRROR_SURFACE_Z_ORDER',
+    defaultValue: 'onTop',
+  );
+  static const String _videoSurfaceBackend = String.fromEnvironment(
+    'PC_TV_MIRROR_VIDEO_SURFACE_BACKEND',
+    defaultValue: 'surfaceView',
+  );
+  static const bool _debugSurfaceColor = bool.fromEnvironment(
+    'PC_TV_MIRROR_DEBUG_SURFACE_COLOR',
+  );
+  static const Map<String, Object?> _creationParams = {
+    'backend': _videoSurfaceBackend,
+    'zOrderMode': _surfaceZOrderMode,
+    'debugSurfaceColor': _debugSurfaceColor,
+  };
+
   final bool showNativeSurface;
-  final int renderedFrames;
+  final ReceiverController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -238,36 +259,55 @@ class _VideoSurface extends StatelessWidget {
             color: Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (usePlatformView)
-                const AndroidView(viewType: 'pc_tv_mirror/video_surface')
-              else
-                const ColoredBox(color: Colors.black),
-              if (renderedFrames == 0)
-                Align(
-                  alignment: Alignment.bottomLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.72),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (usePlatformView)
+                    const AndroidView(
+                      key: ValueKey<String>('receiver.androidVideoSurface'),
+                      viewType: 'pc_tv_mirror/video_surface',
+                      creationParams: _creationParams,
+                      creationParamsCodec: StandardMessageCodec(),
+                    )
+                  else
+                    const ColoredBox(color: Colors.black),
+                  AnimatedBuilder(
+                    animation: controller,
+                    builder: (context, _) {
+                      final releasedFrames =
+                          controller.snapshot?.releasedToSurfaceFrames ?? 0;
+                      if (releasedFrames > 0) {
+                        return const SizedBox.shrink();
+                      }
+                      return Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              child: Text('Waiting for PC video frames'),
+                            ),
+                          ),
                         ),
-                        child: Text('Waiting for PC video frames'),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -294,6 +334,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final capabilities = controller.capabilities;
     final snapshot = controller.snapshot;
+    final outputCrop = _formatCrop(snapshot);
     final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -357,6 +398,10 @@ class _ReceiverStatusPanel extends StatelessWidget {
                 '${snapshot?.receiverPort ?? ReceiverController.defaultPort}',
           ),
           _MetricRow(
+            label: 'TV address',
+            value: _formatReceiverAddresses(snapshot),
+          ),
+          _MetricRow(
             label: 'Protocol',
             value: '${capabilities?.protocolVersion ?? 1}',
           ),
@@ -365,7 +410,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: capabilities == null
                 ? 'H.264 720p30'
                 : '${capabilities.videoCodecs.map((codec) => codec.wireName).join(', ')} '
-                      '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
+                    '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
           ),
           _MetricRow(
             label: 'Decoder',
@@ -404,12 +449,102 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: '${snapshot?.decoderOutputFrames ?? 0}',
           ),
           _MetricRow(
-            label: 'Rendered',
-            value: '${snapshot?.renderedFrames ?? 0}',
+            label: 'Released to surface',
+            value: '${snapshot?.releasedToSurfaceFrames ?? 0}',
           ),
           _MetricRow(
             label: 'Dropped',
             value: '${snapshot?.droppedFrames ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Codec create/release',
+            value:
+                '${snapshot?.codecCreateCount ?? 0}/${snapshot?.codecReleaseCount ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Surface lifecycle',
+            value:
+                '${snapshot?.surfaceCreatedCount ?? 0}/${snapshot?.surfaceChangedCount ?? 0}/${snapshot?.surfaceDestroyedCount ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Surface valid',
+            value: '${snapshot?.surfaceIsValid ?? false}',
+          ),
+          _MetricRow(
+            label: 'Surface size',
+            value:
+                '${snapshot?.surfaceWidth ?? 0}x${snapshot?.surfaceHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Surface z-order',
+            value: snapshot?.zOrderMode ?? 'unknown',
+          ),
+          _MetricRow(
+            label: 'Surface test draw',
+            value: '${snapshot?.firstSurfaceTestDrawSucceeded ?? false}',
+          ),
+          _MetricRow(
+            label: 'Scale mode',
+            value: snapshot?.scaleMode ?? 'fitCenter',
+          ),
+          _MetricRow(
+            label: 'Container',
+            value:
+                '${snapshot?.containerWidth ?? 0}x${snapshot?.containerHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Rendered view',
+            value:
+                '${snapshot?.renderedViewWidth ?? 0}x${snapshot?.renderedViewHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Aspect error',
+            value: (snapshot?.aspectRatioError ?? 0).toStringAsFixed(4),
+          ),
+          _MetricRow(
+            label: 'Configured size',
+            value:
+                '${snapshot?.configuredWidth ?? 0}x${snapshot?.configuredHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Output size',
+            value:
+                '${snapshot?.outputWidth ?? 0}x${snapshot?.outputHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Output format changes',
+            value: '${snapshot?.outputFormatChangedCount ?? 0}',
+          ),
+          if (outputCrop != null)
+            _MetricRow(label: 'Output crop', value: outputCrop),
+          _MetricRow(
+            label: 'Input latency',
+            value:
+                '${(snapshot?.networkToDecoderInputMs ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Decode latency',
+            value:
+                '${(snapshot?.decoderInputToOutputMs ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Estimated latency',
+            value:
+                '${(snapshot?.estimatedEndToEndLatencyMs ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Latency avg/p95',
+            value:
+                '${(snapshot?.latencyAverageMs ?? 0).toStringAsFixed(1)}/${(snapshot?.latencyP95Ms ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Receiver backlog',
+            value:
+                '${snapshot?.maxReceiverQueueDepth ?? 0} max, ${snapshot?.staleAccessUnitsDropped ?? 0} stale drops',
+          ),
+          _MetricRow(
+            label: 'Last frame age',
+            value: '${(snapshot?.lastFrameAgeMs ?? 0).toStringAsFixed(1)} ms',
           ),
           if (snapshot?.lastDecoderError != null)
             _MetricRow(label: 'Last error', value: snapshot!.lastDecoderError!),
@@ -426,6 +561,32 @@ class _ReceiverStatusPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatReceiverAddresses(ReceiverSessionSnapshot? snapshot) {
+  if (snapshot == null) {
+    return '0.0.0.0:${ReceiverController.defaultPort}';
+  }
+  if (snapshot.localIpv4Addresses.isEmpty) {
+    return '${snapshot.receiverBindAddress}:${snapshot.receiverPort}';
+  }
+  return snapshot.localIpv4Addresses
+      .map((address) => '$address:${snapshot.receiverPort}')
+      .join(', ');
+}
+
+String? _formatCrop(ReceiverSessionSnapshot? snapshot) {
+  if (snapshot == null ||
+      (snapshot.outputCropLeft == null &&
+          snapshot.outputCropRight == null &&
+          snapshot.outputCropTop == null &&
+          snapshot.outputCropBottom == null)) {
+    return null;
+  }
+  return 'l:${snapshot.outputCropLeft ?? '-'} '
+      'r:${snapshot.outputCropRight ?? '-'} '
+      't:${snapshot.outputCropTop ?? '-'} '
+      'b:${snapshot.outputCropBottom ?? '-'}';
 }
 
 class _StatusBadge extends StatelessWidget {

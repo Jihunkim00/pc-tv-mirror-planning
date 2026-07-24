@@ -154,6 +154,72 @@ void Log(const std::string& message) {
   OutputDebugStringA(line.c_str());
 }
 
+void WarnUnsupported(HRESULT hr, const char* option) {
+  std::ostringstream stream;
+  stream << option << " unsupported, HRESULT 0x" << std::hex << hr;
+  Log(stream.str());
+}
+
+void SetCodecApiBool(ICodecAPI* codec_api,
+                     const GUID& key,
+                     VARIANT_BOOL bool_value,
+                     const char* option) {
+  VARIANT value;
+  VariantInit(&value);
+  value.vt = VT_BOOL;
+  value.boolVal = bool_value;
+  const HRESULT hr = codec_api->SetValue(&key, &value);
+  VariantClear(&value);
+  if (FAILED(hr)) {
+    WarnUnsupported(hr, option);
+  }
+}
+
+void SetCodecApiU4(ICodecAPI* codec_api,
+                   const GUID& key,
+                   ULONG integer_value,
+                   const char* option) {
+  VARIANT value;
+  VariantInit(&value);
+  value.vt = VT_UI4;
+  value.ulVal = integer_value;
+  const HRESULT hr = codec_api->SetValue(&key, &value);
+  VariantClear(&value);
+  if (FAILED(hr)) {
+    WarnUnsupported(hr, option);
+  }
+}
+
+void ApplyLowLatencyOptions(IMFTransform* transform) {
+  winrt::com_ptr<IMFAttributes> attributes;
+  HRESULT hr = transform->QueryInterface(IID_PPV_ARGS(attributes.put()));
+  if (SUCCEEDED(hr)) {
+    hr = attributes->SetUINT32(MF_LOW_LATENCY, TRUE);
+    if (FAILED(hr)) {
+      WarnUnsupported(hr, "MF_LOW_LATENCY");
+    }
+  } else {
+    WarnUnsupported(hr, "IMFAttributes for MF_LOW_LATENCY");
+  }
+
+  winrt::com_ptr<ICodecAPI> codec_api;
+  hr = transform->QueryInterface(IID_PPV_ARGS(codec_api.put()));
+  if (FAILED(hr)) {
+    WarnUnsupported(hr, "ICodecAPI low latency options");
+    return;
+  }
+
+  SetCodecApiBool(codec_api.get(), CODECAPI_AVLowLatencyMode, VARIANT_TRUE,
+                  "CODECAPI_AVLowLatencyMode");
+  SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0,
+                "CODECAPI_AVEncMPVDefaultBPictureCount");
+  SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVGOPSize, 30,
+                "CODECAPI_AVEncMPVGOPSize");
+  SetCodecApiU4(codec_api.get(), CODECAPI_AVEncCommonRateControlMode,
+                eAVEncCommonRateControlMode_CBR,
+                "CODECAPI_AVEncCommonRateControlMode");
+}
+
 std::vector<std::uint8_t> ConvertLengthPrefixedToAnnexB(
     const std::vector<std::uint8_t>& bytes) {
   std::vector<std::uint8_t> output;
@@ -264,6 +330,8 @@ bool H264Encoder::Start(std::string* error) {
     Stop();
     return false;
   }
+
+  ApplyLowLatencyOptions(transform_.get());
 
   if (!ConfigureTypes(error)) {
     Stop();
@@ -557,9 +625,9 @@ bool H264Encoder::ReadAvailableOutput(
       Log(stream.str());
     }
 
-    output->push_back(
-        {static_cast<std::uint64_t>(sample_time / 10), key_frame,
-         std::move(annex_b)});
+    const auto output_pts_us =
+        first_pts_us_ + static_cast<std::uint64_t>(sample_time / 10);
+    output->push_back({output_pts_us, key_frame, std::move(annex_b)});
 
     if (output_buffer.pSample != sample.get()) {
       output_buffer.pSample->Release();

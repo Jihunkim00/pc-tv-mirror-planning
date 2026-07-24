@@ -35,6 +35,28 @@ std::string LastWsaError(const char* operation) {
   return stream.str();
 }
 
+std::string ConnectFailureDetail(int error_code) {
+  switch (error_code) {
+    case WSAECONNREFUSED:
+      return "connection refused by receiver";
+    case WSAETIMEDOUT:
+      return "connection timed out";
+    case WSAEHOSTUNREACH:
+    case WSAENETUNREACH:
+      return "receiver network is unreachable";
+    default: {
+      std::ostringstream stream;
+      stream << "connect failed with WSA error " << error_code;
+      return stream.str();
+    }
+  }
+}
+
+bool LooksLikeSessionAnswer(const std::string& response) {
+  return response.find("\"type\":\"session.answer\"") != std::string::npos &&
+         response.find("\"protocolVersion\":1") != std::string::npos;
+}
+
 void WriteU16(std::vector<std::uint8_t>& bytes,
               std::size_t offset,
               std::uint16_t value) {
@@ -109,6 +131,7 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
     return {false, "getaddrinfo failed for receiver host"};
   }
 
+  int last_connect_error = WSAECONNREFUSED;
   for (addrinfo* candidate = address_list; candidate != nullptr;
        candidate = candidate->ai_next) {
     const SOCKET candidate_socket =
@@ -118,6 +141,10 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
       continue;
     }
     socket_ = static_cast<std::uintptr_t>(candidate_socket);
+
+    const char no_delay = 1;
+    setsockopt(candidate_socket, IPPROTO_TCP, TCP_NODELAY,
+               reinterpret_cast<const char*>(&no_delay), sizeof(no_delay));
 
     DWORD timeout_ms = 3000;
     setsockopt(candidate_socket, SOL_SOCKET, SO_RCVTIMEO,
@@ -130,6 +157,7 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
       break;
     }
 
+    last_connect_error = WSAGetLastError();
     closesocket(candidate_socket);
     socket_ = kInvalidSocketValue;
   }
@@ -137,7 +165,7 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
   freeaddrinfo(address_list);
 
   if (socket_ == kInvalidSocketValue) {
-    const auto detail = LastWsaError("connect");
+    const auto detail = ConnectFailureDetail(last_connect_error);
     WSACleanup();
     return {false, detail};
   }
@@ -163,6 +191,10 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
       break;
     }
     response.push_back(byte[0]);
+  }
+  if (!LooksLikeSessionAnswer(response)) {
+    Close();
+    return {false, "protocol mismatch: receiver did not return session.answer v1"};
   }
 
   return {true, response};

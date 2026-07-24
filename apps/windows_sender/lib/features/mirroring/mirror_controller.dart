@@ -33,8 +33,12 @@ class MirrorController extends ChangeNotifier {
   bool get canStart => !_busy && _selectedDisplayId != null && !isRunning;
   bool get canStop => !_busy && isRunning;
   bool get isRunning =>
+      _state == MirrorSessionState.starting ||
+      _state == MirrorSessionState.listening ||
       _state == MirrorSessionState.connecting ||
       _state == MirrorSessionState.negotiating ||
+      _state == MirrorSessionState.waitingForSurface ||
+      _state == MirrorSessionState.waitingForKeyFrame ||
       _state == MirrorSessionState.streaming;
 
   Future<void> loadDisplays() async {
@@ -74,6 +78,9 @@ class MirrorController extends ChangeNotifier {
     required String receiverHost,
     required int receiverPort,
   }) async {
+    if (_busy || isRunning) {
+      return;
+    }
     final sourceId = _selectedDisplayId;
     if (sourceId == null) {
       _state = MirrorSessionState.failed;
@@ -119,6 +126,9 @@ class MirrorController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    if (_busy) {
+      return;
+    }
     final sessionId = _activeSessionId;
     if (sessionId == null) {
       _state = MirrorSessionState.idle;
@@ -152,8 +162,7 @@ class MirrorController extends ChangeNotifier {
     _snapshot = snapshot;
     _state = snapshot.state;
     _userMessage = snapshot.userMessage;
-    _developerMessage =
-        snapshot.lastEncodeError ??
+    _developerMessage = snapshot.lastEncodeError ??
         snapshot.lastSendError ??
         snapshot.developerMessage;
     notifyListeners();

@@ -7,6 +7,23 @@ final _sps = Uint8List.fromList([0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1F]);
 final _pps = Uint8List.fromList([0, 0, 0, 1, 0x68, 0xCE, 0x06, 0xE2]);
 
 void main() {
+  group('MirrorSessionState', () {
+    test('parses STAGE 1 receiver lifecycle states', () {
+      expect(
+        MirrorSessionState.fromWireName('listening'),
+        MirrorSessionState.listening,
+      );
+      expect(
+        MirrorSessionState.fromWireName('waitingForSurface'),
+        MirrorSessionState.waitingForSurface,
+      );
+      expect(
+        MirrorSessionState.fromWireName('waitingForKeyFrame'),
+        MirrorSessionState.waitingForKeyFrame,
+      );
+    });
+  });
+
   group('ReceiverCapabilities', () {
     test('round-trips versioned H.264 decoder capabilities', () {
       const capabilities = ReceiverCapabilities(
@@ -137,7 +154,8 @@ void main() {
         bitrateKbps: 4000,
         sps: _sps,
         pps: _pps,
-      ).encode()..[23] = 0x40;
+      ).encode()
+        ..[23] = 0x40;
 
       expect(() => H264CodecConfig.decode(wrongLength), throwsFormatException);
 
@@ -151,6 +169,18 @@ void main() {
           pps: _pps,
         ).encode(),
         throwsFormatException,
+      );
+
+      expect(
+        () => H264CodecConfig(
+          width: 8,
+          height: 720,
+          fps: 30,
+          bitrateKbps: 4000,
+          sps: _sps,
+          pps: _pps,
+        ).encode(),
+        throwsRangeError,
       );
     });
   });
@@ -229,6 +259,32 @@ void main() {
       final wrongPayloadLength = Uint8List.fromList(packet)..[27] = 9;
       expect(
         () => VideoPacket.decodeLengthPrefixed(wrongPayloadLength),
+        throwsFormatException,
+      );
+    });
+
+    test('enforces the 8MB STAGE 1 access unit limit', () {
+      expect(VideoPacket.maxPayloadLength, 8 * 1024 * 1024);
+      expect(
+        () => VideoPacket(
+          type: VideoPacketType.accessUnit,
+          sequenceNumber: 1,
+          ptsUs: 1,
+          payload: Uint8List(VideoPacket.maxPayloadLength + 1),
+        ).encodeLengthPrefixed(),
+        throwsRangeError,
+      );
+
+      final oversizedLength = Uint8List(
+        VideoPacket.lengthPrefixLength + VideoPacket.headerLength,
+      );
+      final data = ByteData.sublistView(oversizedLength);
+      data.setUint32(
+        0,
+        VideoPacket.headerLength + VideoPacket.maxPayloadLength + 1,
+      );
+      expect(
+        () => VideoPacket.decodeLengthPrefixed(oversizedLength),
         throwsFormatException,
       );
     });

@@ -29,6 +29,9 @@ class ReceiverController extends ChangeNotifier {
   bool get busy => _busy;
 
   Future<void> initialize() async {
+    if (_busy) {
+      return;
+    }
     _setBusy(true);
     try {
       _capabilities = await _nativeApi.getCapabilities();
@@ -47,6 +50,9 @@ class ReceiverController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    if (_busy) {
+      return;
+    }
     _setBusy(true);
     try {
       final snapshot = await _nativeApi.stopReceiver();

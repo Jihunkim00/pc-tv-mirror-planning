@@ -88,11 +88,21 @@ final class NativeSessionSnapshot {
     required this.signalingReady,
     required this.nativeVideoPathReady,
     this.capturedFrames = 0,
+    this.captureDroppedFrames = 0,
+    this.encoderInputDroppedFrames = 0,
     this.encodedFrames = 0,
+    this.transportDroppedFrames = 0,
     this.codecConfigSent = 0,
     this.keyFramesSent = 0,
     this.packetsSent = 0,
     this.bytesSent = 0,
+    this.sendCompletedBytes = 0,
+    this.queueDepthCapture = 0,
+    this.queueDepthEncoder = 0,
+    this.queueDepthTransport = 0,
+    this.lastCaptureToEncodeMs = 0,
+    this.averageCaptureToEncodeMs = 0,
+    this.maxCaptureToEncodeMs = 0,
     this.lastEncodeError,
     this.lastSendError,
     this.errorCode,
@@ -106,11 +116,21 @@ final class NativeSessionSnapshot {
   final bool signalingReady;
   final bool nativeVideoPathReady;
   final int capturedFrames;
+  final int captureDroppedFrames;
+  final int encoderInputDroppedFrames;
   final int encodedFrames;
+  final int transportDroppedFrames;
   final int codecConfigSent;
   final int keyFramesSent;
   final int packetsSent;
   final int bytesSent;
+  final int sendCompletedBytes;
+  final int queueDepthCapture;
+  final int queueDepthEncoder;
+  final int queueDepthTransport;
+  final double lastCaptureToEncodeMs;
+  final double averageCaptureToEncodeMs;
+  final double maxCaptureToEncodeMs;
   final String? lastEncodeError;
   final String? lastSendError;
   final MirrorErrorCode? errorCode;
@@ -126,11 +146,30 @@ final class NativeSessionSnapshot {
       signalingReady: _readBool(json, 'signalingReady'),
       nativeVideoPathReady: _readBool(json, 'nativeVideoPathReady'),
       capturedFrames: _readOptionalInt(json, 'capturedFrames'),
+      captureDroppedFrames: _readOptionalInt(json, 'captureDroppedFrames'),
+      encoderInputDroppedFrames: _readOptionalInt(
+        json,
+        'encoderInputDroppedFrames',
+      ),
       encodedFrames: _readOptionalInt(json, 'encodedFrames'),
+      transportDroppedFrames: _readOptionalInt(json, 'transportDroppedFrames'),
       codecConfigSent: _readOptionalInt(json, 'codecConfigSent'),
       keyFramesSent: _readOptionalInt(json, 'keyFramesSent'),
       packetsSent: _readOptionalInt(json, 'packetsSent'),
       bytesSent: _readOptionalInt(json, 'bytesSent'),
+      sendCompletedBytes: _readOptionalInt(json, 'sendCompletedBytes'),
+      queueDepthCapture: _readOptionalInt(json, 'queueDepthCapture'),
+      queueDepthEncoder: _readOptionalInt(json, 'queueDepthEncoder'),
+      queueDepthTransport: _readOptionalInt(json, 'queueDepthTransport'),
+      lastCaptureToEncodeMs: _readOptionalDouble(
+        json,
+        'lastCaptureToEncodeMs',
+      ),
+      averageCaptureToEncodeMs: _readOptionalDouble(
+        json,
+        'averageCaptureToEncodeMs',
+      ),
+      maxCaptureToEncodeMs: _readOptionalDouble(json, 'maxCaptureToEncodeMs'),
       lastEncodeError: json['lastEncodeError'] as String?,
       lastSendError: json['lastSendError'] as String?,
       errorCode: errorCode == null
@@ -176,4 +215,18 @@ int _readOptionalInt(Map<String, Object?> json, String key) {
     return value;
   }
   throw FormatException('Expected int for $key');
+}
+
+double _readOptionalDouble(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return 0;
+  }
+  if (value is double) {
+    return value;
+  }
+  if (value is int) {
+    return value.toDouble();
+  }
+  throw FormatException('Expected number for $key');
 }

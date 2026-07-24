@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
@@ -22,8 +24,9 @@ class _MirroringPageState extends State<MirroringPage> {
   void initState() {
     super.initState();
     _controller = MirrorController(widget.nativeApi)..loadDisplays();
-    _hostController = TextEditingController(text: '127.0.0.1');
+    _hostController = TextEditingController();
     _portController = TextEditingController(text: '50720');
+    _loadLastReceiverHost();
   }
 
   @override
@@ -88,12 +91,74 @@ class _MirroringPageState extends State<MirroringPage> {
   }
 
   Future<void> _start() async {
+    final host = _hostController.text.trim();
+    if (!_isValidIpv4(host)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid TV IPv4 address.')),
+      );
+      return;
+    }
     final port = int.tryParse(_portController.text.trim()) ?? 50720;
     await _controller.start(
-      receiverHost: _hostController.text.trim(),
+      receiverHost: host,
       receiverPort: port,
     );
+    if (_controller.state != MirrorSessionState.failed) {
+      await _saveLastReceiverHost(host);
+    }
   }
+
+  Future<void> _loadLastReceiverHost() async {
+    final file = _settingsFile();
+    try {
+      if (!await file.exists()) {
+        return;
+      }
+      final host = (await file.readAsString()).trim();
+      if (mounted && _isValidIpv4(host)) {
+        _hostController.text = host;
+      }
+    } catch (_) {
+      // Local settings are best-effort only; the user can type the TV IP.
+    }
+  }
+
+  Future<void> _saveLastReceiverHost(String host) async {
+    try {
+      final file = _settingsFile();
+      await file.parent.create(recursive: true);
+      await file.writeAsString(host);
+    } catch (_) {
+      // Keep the active session path independent from settings persistence.
+    }
+  }
+}
+
+bool _isValidIpv4(String value) {
+  final parts = value.split('.');
+  if (parts.length != 4) {
+    return false;
+  }
+  for (final part in parts) {
+    if (part.isEmpty || (part.length > 1 && part.startsWith('0'))) {
+      return false;
+    }
+    final number = int.tryParse(part);
+    if (number == null || number < 0 || number > 255) {
+      return false;
+    }
+  }
+  return true;
+}
+
+File _settingsFile() {
+  final base = Platform.environment['APPDATA'];
+  final root = base == null || base.isEmpty
+      ? Directory.systemTemp.path
+      : '$base${Platform.pathSeparator}PC TV Mirror';
+  return File(
+    '$root${Platform.pathSeparator}windows_sender_last_receiver_ip.txt',
+  );
 }
 
 class _DisplayPanel extends StatelessWidget {
@@ -260,6 +325,7 @@ class _SessionPanel extends StatelessWidget {
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
               labelText: 'Receiver IP',
+              hintText: 'Example: 192.168.1.40',
             ),
           ),
           const SizedBox(height: 10),
@@ -330,14 +396,42 @@ class _SenderCounters extends StatelessWidget {
         child: Column(
           children: [
             _MetricRow(label: 'Captured', value: '${snapshot.capturedFrames}'),
+            _MetricRow(
+              label: 'Capture dropped',
+              value: '${snapshot.captureDroppedFrames}',
+            ),
             _MetricRow(label: 'Encoded', value: '${snapshot.encodedFrames}'),
+            _MetricRow(
+              label: 'Encoder input dropped',
+              value: '${snapshot.encoderInputDroppedFrames}',
+            ),
             _MetricRow(
               label: 'Config sent',
               value: '${snapshot.codecConfigSent}',
             ),
             _MetricRow(label: 'Key frames', value: '${snapshot.keyFramesSent}'),
+            _MetricRow(
+              label: 'Transport dropped',
+              value: '${snapshot.transportDroppedFrames}',
+            ),
             _MetricRow(label: 'Packets', value: '${snapshot.packetsSent}'),
             _MetricRow(label: 'Bytes', value: '${snapshot.bytesSent}'),
+            _MetricRow(
+              label: 'Send completed',
+              value: '${snapshot.sendCompletedBytes}',
+            ),
+            _MetricRow(
+              label: 'Queue depth',
+              value: '${snapshot.queueDepthCapture}/'
+                  '${snapshot.queueDepthEncoder}/'
+                  '${snapshot.queueDepthTransport}',
+            ),
+            _MetricRow(
+              label: 'Capture -> encode',
+              value: '${snapshot.lastCaptureToEncodeMs.toStringAsFixed(1)} ms '
+                  '(avg ${snapshot.averageCaptureToEncodeMs.toStringAsFixed(1)}, '
+                  'max ${snapshot.maxCaptureToEncodeMs.toStringAsFixed(1)})',
+            ),
           ],
         ),
       ),
