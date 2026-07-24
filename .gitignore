@@ -4,3 +4,6 @@
 key.properties
 *.jks
 *.keystore
+.idea/
+**/build/
+*.log
