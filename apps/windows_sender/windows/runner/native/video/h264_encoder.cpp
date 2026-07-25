@@ -160,10 +160,36 @@ void WarnUnsupported(HRESULT hr, const char* option) {
   Log(stream.str());
 }
 
+void AppendOption(std::string* target, const std::string& option) {
+  if (target == nullptr) {
+    return;
+  }
+  if (!target->empty()) {
+    *target += ", ";
+  }
+  *target += option;
+}
+
+std::string WideToUtf8(const wchar_t* value) {
+  if (value == nullptr || value[0] == L'\0') {
+    return {};
+  }
+  const int size = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0,
+                                      nullptr, nullptr);
+  if (size <= 1) {
+    return {};
+  }
+  std::string output(static_cast<std::size_t>(size - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value, -1, output.data(), size, nullptr,
+                      nullptr);
+  return output;
+}
+
 void SetCodecApiBool(ICodecAPI* codec_api,
                      const GUID& key,
                      VARIANT_BOOL bool_value,
-                     const char* option) {
+                     const char* option,
+                     H264EncoderDiagnostics* diagnostics) {
   VARIANT value;
   VariantInit(&value);
   value.vt = VT_BOOL;
@@ -172,13 +198,17 @@ void SetCodecApiBool(ICodecAPI* codec_api,
   VariantClear(&value);
   if (FAILED(hr)) {
     WarnUnsupported(hr, option);
+    AppendOption(&diagnostics->unsupported_encoder_options, option);
+  } else {
+    AppendOption(&diagnostics->low_latency_options_applied, option);
   }
 }
 
 void SetCodecApiU4(ICodecAPI* codec_api,
                    const GUID& key,
                    ULONG integer_value,
-                   const char* option) {
+                   const char* option,
+                   H264EncoderDiagnostics* diagnostics) {
   VARIANT value;
   VariantInit(&value);
   value.vt = VT_UI4;
@@ -187,37 +217,56 @@ void SetCodecApiU4(ICodecAPI* codec_api,
   VariantClear(&value);
   if (FAILED(hr)) {
     WarnUnsupported(hr, option);
+    AppendOption(&diagnostics->unsupported_encoder_options, option);
+  } else {
+    AppendOption(&diagnostics->low_latency_options_applied, option);
   }
 }
 
-void ApplyLowLatencyOptions(IMFTransform* transform) {
+void ApplyLowLatencyOptions(IMFTransform* transform,
+                            H264EncoderDiagnostics* diagnostics) {
   winrt::com_ptr<IMFAttributes> attributes;
   HRESULT hr = transform->QueryInterface(IID_PPV_ARGS(attributes.put()));
   if (SUCCEEDED(hr)) {
+    UINT32 d3d11_aware = FALSE;
+    if (SUCCEEDED(attributes->GetUINT32(MF_SA_D3D11_AWARE, &d3d11_aware))) {
+      diagnostics->encoder_d3d11_aware = d3d11_aware != FALSE;
+    }
+    UINT32 async_mft = FALSE;
+    if (SUCCEEDED(attributes->GetUINT32(MF_TRANSFORM_ASYNC, &async_mft))) {
+      diagnostics->selected_encoder_async = async_mft != FALSE;
+    }
     hr = attributes->SetUINT32(MF_LOW_LATENCY, TRUE);
     if (FAILED(hr)) {
       WarnUnsupported(hr, "MF_LOW_LATENCY");
+      AppendOption(&diagnostics->unsupported_encoder_options, "MF_LOW_LATENCY");
+    } else {
+      AppendOption(&diagnostics->low_latency_options_applied, "MF_LOW_LATENCY");
     }
   } else {
     WarnUnsupported(hr, "IMFAttributes for MF_LOW_LATENCY");
+    AppendOption(&diagnostics->unsupported_encoder_options,
+                 "IMFAttributes for MF_LOW_LATENCY");
   }
 
   winrt::com_ptr<ICodecAPI> codec_api;
   hr = transform->QueryInterface(IID_PPV_ARGS(codec_api.put()));
   if (FAILED(hr)) {
     WarnUnsupported(hr, "ICodecAPI low latency options");
+    AppendOption(&diagnostics->unsupported_encoder_options,
+                 "ICodecAPI low latency options");
     return;
   }
 
   SetCodecApiBool(codec_api.get(), CODECAPI_AVLowLatencyMode, VARIANT_TRUE,
-                  "CODECAPI_AVLowLatencyMode");
+                  "CODECAPI_AVLowLatencyMode", diagnostics);
   SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0,
-                "CODECAPI_AVEncMPVDefaultBPictureCount");
+                "CODECAPI_AVEncMPVDefaultBPictureCount", diagnostics);
   SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVGOPSize, 30,
-                "CODECAPI_AVEncMPVGOPSize");
+                "CODECAPI_AVEncMPVGOPSize", diagnostics);
   SetCodecApiU4(codec_api.get(), CODECAPI_AVEncCommonRateControlMode,
                 eAVEncCommonRateControlMode_CBR,
-                "CODECAPI_AVEncCommonRateControlMode");
+                "CODECAPI_AVEncCommonRateControlMode", diagnostics);
 }
 
 std::vector<std::uint8_t> ConvertLengthPrefixedToAnnexB(
@@ -317,6 +366,8 @@ H264Encoder::~H264Encoder() {
 
 bool H264Encoder::Start(std::string* error) {
   Stop();
+  diagnostics_ = H264EncoderDiagnostics{};
+  encoder_backpressure_count_ = 0;
 
   HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
   if (Failed(hr, "MFStartup", error)) {
@@ -324,18 +375,29 @@ bool H264Encoder::Start(std::string* error) {
   }
   mf_started_ = true;
 
-  hr = CoCreateInstance(CLSID_CMSH264EncoderMFT, nullptr, CLSCTX_INPROC_SERVER,
-                        IID_PPV_ARGS(transform_.put()));
-  if (Failed(hr, "CoCreateInstance(CMSH264EncoderMFT)", error)) {
-    Stop();
-    return false;
+  std::string hardware_error;
+  if (CreateHardwareEncoder(&hardware_error)) {
+    ApplyLowLatencyOptions(transform_.get(), &diagnostics_);
+    if (!ConfigureTypes(error)) {
+      Log("Hardware H.264 encoder rejected 720p30 NV12 input; falling back: " +
+          *error);
+      transform_ = nullptr;
+      diagnostics_ = H264EncoderDiagnostics{};
+      AppendOption(&diagnostics_.unsupported_encoder_options, hardware_error);
+    }
   }
 
-  ApplyLowLatencyOptions(transform_.get());
+  if (!transform_) {
+    if (!CreateSoftwareEncoder(error)) {
+      Stop();
+      return false;
+    }
+    ApplyLowLatencyOptions(transform_.get(), &diagnostics_);
 
-  if (!ConfigureTypes(error)) {
-    Stop();
-    return false;
+    if (!ConfigureTypes(error)) {
+      Stop();
+      return false;
+    }
   }
 
   transform_->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
@@ -393,6 +455,14 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   }
 
   hr = transform_->ProcessInput(0, sample.get(), 0);
+  if (hr == MF_E_NOTACCEPTING) {
+    ++encoder_backpressure_count_;
+    diagnostics_.encoder_backpressure_count = encoder_backpressure_count_;
+    if (!ReadAvailableOutput(output, error)) {
+      return false;
+    }
+    hr = transform_->ProcessInput(0, sample.get(), 0);
+  }
   if (Failed(hr, "IMFTransform::ProcessInput", error)) {
     return false;
   }
@@ -414,6 +484,80 @@ void H264Encoder::Stop() {
     MFShutdown();
     mf_started_ = false;
   }
+}
+
+bool H264Encoder::CreateHardwareEncoder(std::string* error) {
+  MFT_REGISTER_TYPE_INFO output_info{};
+  output_info.guidMajorType = MFMediaType_Video;
+  output_info.guidSubtype = MFVideoFormat_H264;
+
+  IMFActivate** activates = nullptr;
+  UINT32 count = 0;
+  const HRESULT hr = MFTEnumEx(
+      MFT_CATEGORY_VIDEO_ENCODER,
+      MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, nullptr,
+      &output_info, &activates, &count);
+  if (FAILED(hr) || count == 0 || activates == nullptr) {
+    if (error != nullptr) {
+      *error = FAILED(hr) ? HResultText("MFTEnumEx(H.264 hardware)", hr)
+                          : "No hardware H.264 encoder MFT was registered";
+    }
+    if (activates != nullptr) {
+      CoTaskMemFree(activates);
+    }
+    return false;
+  }
+
+  bool created = false;
+  for (UINT32 index = 0; index < count && !created; ++index) {
+    IMFActivate* activate = activates[index];
+    LPWSTR friendly_name = nullptr;
+    UINT32 name_length = 0;
+    std::string name = "Hardware H.264 encoder MFT";
+    if (SUCCEEDED(activate->GetAllocatedString(
+            MFT_FRIENDLY_NAME_Attribute, &friendly_name, &name_length))) {
+      const auto utf8_name = WideToUtf8(friendly_name);
+      if (!utf8_name.empty()) {
+        name = utf8_name;
+      }
+      CoTaskMemFree(friendly_name);
+    }
+
+    winrt::com_ptr<IMFTransform> candidate;
+    const HRESULT activate_hr =
+        activate->ActivateObject(IID_PPV_ARGS(candidate.put()));
+    if (SUCCEEDED(activate_hr)) {
+      transform_ = std::move(candidate);
+      diagnostics_.selected_encoder_name = name;
+      diagnostics_.selected_encoder_hardware = true;
+      created = true;
+      Log("Selected hardware H.264 encoder: " + name);
+    } else if (error != nullptr) {
+      *error = HResultText("ActivateObject(H.264 hardware encoder)",
+                           activate_hr);
+    }
+  }
+
+  for (UINT32 index = 0; index < count; ++index) {
+    if (activates[index] != nullptr) {
+      activates[index]->Release();
+    }
+  }
+  CoTaskMemFree(activates);
+  return created;
+}
+
+bool H264Encoder::CreateSoftwareEncoder(std::string* error) {
+  const HRESULT hr =
+      CoCreateInstance(CLSID_CMSH264EncoderMFT, nullptr, CLSCTX_INPROC_SERVER,
+                       IID_PPV_ARGS(transform_.put()));
+  if (Failed(hr, "CoCreateInstance(CMSH264EncoderMFT)", error)) {
+    return false;
+  }
+  diagnostics_.selected_encoder_name = "Microsoft H.264 Encoder MFT";
+  diagnostics_.selected_encoder_hardware = false;
+  Log("Selected software H.264 encoder fallback: Microsoft H.264 Encoder MFT");
+  return true;
 }
 
 bool H264Encoder::ConfigureTypes(std::string* error) {

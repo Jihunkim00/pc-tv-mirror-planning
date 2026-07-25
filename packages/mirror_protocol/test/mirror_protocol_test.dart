@@ -42,16 +42,20 @@ void main() {
       expect(copy.deviceId, capabilities.deviceId);
       expect(copy.videoCodecs, [VideoCodec.h264]);
       expect(copy.lowLatencyDecoder, isTrue);
+      expect(copy.supportedPerformanceProfiles, [
+        PerformanceProfile.lowLatency720p30,
+        PerformanceProfile.compatibility720p30,
+      ]);
     });
   });
 
   group('StreamStartRequest', () {
-    test('encodes the STAGE 1 video-only profile', () {
+    test('encodes the STAGE 2 low-latency 720p30 video-only profile', () {
       const request = StreamStartRequest(
         sessionId: 'session-1',
         sourceType: SourceType.display,
         sourceId: r'\\.\DISPLAY1',
-        video: VideoProfile.stageOne720p30(),
+        video: VideoProfile.lowLatency720p30(),
       );
 
       final json = request.toJson();
@@ -65,8 +69,16 @@ void main() {
         'height': 720,
         'fps': 30,
         'bitrateKbps': 4000,
+        'performanceProfile': 'lowLatency720p30',
       });
       expect(StreamStartRequest.fromJson(json).video.codec, VideoCodec.h264);
+    });
+
+    test('keeps STAGE 1 profile alias backward-compatible', () {
+      const profile = VideoProfile.stageOne720p30();
+
+      expect(profile.performanceProfile, PerformanceProfile.lowLatency720p30);
+      expect(profile.bitrateKbps, 4000);
     });
 
     test('rejects incompatible protocol versions', () {
@@ -186,10 +198,12 @@ void main() {
   });
 
   group('VideoPacket', () {
-    test('round-trips a length-prefixed Annex B access unit', () {
+    test(
+        'round-trips a length-prefixed Annex B access unit with uint64 sequence',
+        () {
       final packet = VideoPacket(
         type: VideoPacketType.accessUnit,
-        sequenceNumber: 42,
+        sequenceNumber: 0x10000002A,
         ptsUs: 33333,
         flags: VideoPacketFlags.keyFrame,
         payload: Uint8List.fromList([0, 0, 0, 1, 0x65, 0x88]),
@@ -200,10 +214,28 @@ void main() {
       );
 
       expect(copy.type, VideoPacketType.accessUnit);
+      expect(copy.sequenceNumber, 0x10000002A);
+      expect(copy.ptsUs, 33333);
+      expect(copy.isKeyFrame, isTrue);
+      expect(copy.flags & VideoPacketFlags.extendedHeader, isNonZero);
+      expect(copy.payload, [0, 0, 0, 1, 0x65, 0x88]);
+    });
+
+    test('decodes legacy 24-byte packet headers without sequence or PTS crash',
+        () {
+      final legacy = _legacyAccessUnitPacket(
+        sequenceNumber: 42,
+        ptsUs: 33333,
+        flags: VideoPacketFlags.keyFrame,
+        payload: Uint8List.fromList([0, 0, 0, 1, 0x65]),
+      );
+
+      final copy = VideoPacket.decodeLengthPrefixed(legacy);
+
       expect(copy.sequenceNumber, 42);
       expect(copy.ptsUs, 33333);
       expect(copy.isKeyFrame, isTrue);
-      expect(copy.payload, [0, 0, 0, 1, 0x65, 0x88]);
+      expect(copy.flags & VideoPacketFlags.extendedHeader, 0);
     });
 
     test('round-trips a codec config packet', () {
@@ -256,7 +288,7 @@ void main() {
         throwsFormatException,
       );
 
-      final wrongPayloadLength = Uint8List.fromList(packet)..[27] = 9;
+      final wrongPayloadLength = Uint8List.fromList(packet)..[31] = 9;
       expect(
         () => VideoPacket.decodeLengthPrefixed(wrongPayloadLength),
         throwsFormatException,
@@ -289,4 +321,29 @@ void main() {
       );
     });
   });
+}
+
+Uint8List _legacyAccessUnitPacket({
+  required int sequenceNumber,
+  required int ptsUs,
+  required int flags,
+  required Uint8List payload,
+}) {
+  final packetLength = VideoPacket.legacyHeaderLength + payload.length;
+  final bytes = Uint8List(VideoPacket.lengthPrefixLength + packetLength);
+  final data = ByteData.sublistView(bytes);
+  data.setUint32(0, packetLength);
+  data.setUint32(4, 0x5054564D);
+  data.setUint8(8, mirrorProtocolVersion);
+  data.setUint8(9, VideoPacketType.accessUnit.wireValue);
+  data.setUint16(10, flags);
+  data.setUint64(12, ptsUs);
+  data.setUint32(20, sequenceNumber);
+  data.setUint32(24, payload.length);
+  bytes.setRange(
+    VideoPacket.lengthPrefixLength + VideoPacket.legacyHeaderLength,
+    bytes.length,
+    payload,
+  );
+  return bytes;
 }

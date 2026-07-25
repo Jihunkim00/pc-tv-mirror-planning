@@ -24,10 +24,14 @@ class ReceiverHomePage extends StatefulWidget {
 class _ReceiverHomePageState extends State<ReceiverHomePage> {
   late final ReceiverController _controller;
   late final FocusNode _restartFocusNode;
+  late final FocusNode _fullscreenFocusNode;
   late final FocusNode _stopFocusNode;
   MirrorSessionState? _lastRestoredState;
   bool _focusRestoreScheduled = false;
   int _focusRestoreRetryCount = 0;
+  bool _fullscreenMode = false;
+  bool _autoFullscreen = true;
+  String _scaleMode = 'fit';
 
   static const Map<ShortcutActivator, Intent> _tvRemoteShortcuts = {
     SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
@@ -44,20 +48,35 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   void initState() {
     super.initState();
     _restartFocusNode = FocusNode(debugLabel: 'Restart receiver');
+    _fullscreenFocusNode = FocusNode(debugLabel: 'Fullscreen');
     _stopFocusNode = FocusNode(debugLabel: 'Stop receiver');
-    _controller = ReceiverController(widget.nativeApi)
-      ..addListener(_scheduleFocusRestore)
-      ..initialize();
+    _controller = ReceiverController(widget.nativeApi);
+    _controller.addListener(_handleControllerChanged);
+    _controller.initialize();
     _scheduleFocusRestore();
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_scheduleFocusRestore);
+    _controller.removeListener(_handleControllerChanged);
+    _setFullscreenSystemUi(false);
     _controller.dispose();
     _restartFocusNode.dispose();
+    _fullscreenFocusNode.dispose();
     _stopFocusNode.dispose();
     super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    _scheduleFocusRestore();
+    final snapshot = _controller.snapshot;
+    if (_autoFullscreen &&
+        widget.showNativeSurface &&
+        !_fullscreenMode &&
+        _controller.state == MirrorSessionState.streaming &&
+        (snapshot?.releasedToSurfaceFrames ?? 0) > 0) {
+      _enterFullscreen();
+    }
   }
 
   void _restartReceiver() {
@@ -67,7 +86,44 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
 
   void _stopReceiver() {
     _controller.stop();
+    if (_fullscreenMode) {
+      _exitFullscreen();
+    }
     _scheduleFocusRestore();
+  }
+
+  void _enterFullscreen() {
+    if (_fullscreenMode || !mounted) {
+      return;
+    }
+    setState(() {
+      _fullscreenMode = true;
+    });
+    _setFullscreenSystemUi(true);
+  }
+
+  void _exitFullscreen() {
+    if (!_fullscreenMode || !mounted) {
+      return;
+    }
+    setState(() {
+      _fullscreenMode = false;
+    });
+    _setFullscreenSystemUi(false);
+    _scheduleFocusRestore();
+  }
+
+  Future<void> _setFullscreenSystemUi(bool enabled) async {
+    if (enabled) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      await SystemChrome.setPreferredOrientations(const []);
+    }
   }
 
   void _scheduleFocusRestore() {
@@ -88,7 +144,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   void _restoreFocusForState() {
     final state = _controller.state;
     final preferredNode = _preferredFocusNodeForState(state);
-    final controls = [_restartFocusNode, _stopFocusNode];
+    final controls = [_restartFocusNode, _fullscreenFocusNode, _stopFocusNode];
     final controlsHaveFocus = controls.any((node) => node.hasFocus);
     final previousRestoredState = _lastRestoredState;
     final stateChanged = previousRestoredState != state;
@@ -119,7 +175,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
 
   FocusNode _preferredFocusNodeForState(MirrorSessionState state) {
     return switch (state) {
-      MirrorSessionState.streaming => _stopFocusNode,
+      MirrorSessionState.streaming => _fullscreenFocusNode,
       MirrorSessionState.idle ||
       MirrorSessionState.starting ||
       MirrorSessionState.listening ||
@@ -129,8 +185,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
       MirrorSessionState.waitingForKeyFrame ||
       MirrorSessionState.stopping ||
       MirrorSessionState.restoring ||
-      MirrorSessionState.failed =>
-        _restartFocusNode,
+      MirrorSessionState.failed => _restartFocusNode,
     };
   }
 
@@ -146,7 +201,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   @override
   Widget build(BuildContext context) {
     return PopScope<void>(
-      canPop: true,
+      canPop: !_fullscreenMode,
       child: Focus(
         skipTraversal: true,
         onKeyEvent: _handleTvRemoteKey,
@@ -155,37 +210,61 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
           child: FocusTraversalGroup(
             policy: OrderedTraversalPolicy(),
             child: Scaffold(
-              body: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: 5,
-                        child: _VideoSurface(
-                          showNativeSurface: widget.showNativeSurface,
-                          controller: _controller,
+              backgroundColor: Colors.black,
+              body: _fullscreenMode
+                  ? _VideoSurface(
+                      showNativeSurface: widget.showNativeSurface,
+                      controller: _controller,
+                      scaleMode: _scaleMode,
+                      fullscreen: true,
+                    )
+                  : SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.all(28),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: _VideoSurface(
+                                showNativeSurface: widget.showNativeSurface,
+                                controller: _controller,
+                                scaleMode: _scaleMode,
+                              ),
+                            ),
+                            const SizedBox(width: 24),
+                            Expanded(
+                              flex: 3,
+                              child: AnimatedBuilder(
+                                animation: _controller,
+                                builder: (context, _) => _ReceiverStatusPanel(
+                                  controller: _controller,
+                                  restartFocusNode: _restartFocusNode,
+                                  fullscreenFocusNode: _fullscreenFocusNode,
+                                  stopFocusNode: _stopFocusNode,
+                                  autoFullscreen: _autoFullscreen,
+                                  scaleMode: _scaleMode,
+                                  fullscreenEnabled: _fullscreenMode,
+                                  onRestart: _restartReceiver,
+                                  onEnterFullscreen: _enterFullscreen,
+                                  onStop: _stopReceiver,
+                                  onAutoFullscreenChanged: (value) {
+                                    setState(() {
+                                      _autoFullscreen = value;
+                                    });
+                                  },
+                                  onScaleModeChanged: (value) {
+                                    setState(() {
+                                      _scaleMode = value;
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 24),
-                      Expanded(
-                        flex: 3,
-                        child: AnimatedBuilder(
-                          animation: _controller,
-                          builder: (context, _) => _ReceiverStatusPanel(
-                            controller: _controller,
-                            restartFocusNode: _restartFocusNode,
-                            stopFocusNode: _stopFocusNode,
-                            onRestart: _restartReceiver,
-                            onStop: _stopReceiver,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+                    ),
             ),
           ),
         ),
@@ -194,20 +273,49 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   }
 
   KeyEventResult _handleTvRemoteKey(FocusNode node, KeyEvent event) {
+    final key = event.logicalKey;
+    final isToggleKey =
+        key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    final isBackKey =
+        key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.browserBack ||
+        key == LogicalKeyboardKey.escape;
+    if (_fullscreenMode) {
+      if (event is KeyUpEvent && (isBackKey || isToggleKey)) {
+        _exitFullscreen();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.mediaPlayPause) {
+        return KeyEventResult.handled;
+      }
+      return isBackKey || isToggleKey
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
+    }
+
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    final key = event.logicalKey;
     if (key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.arrowRight) {
-      if (_restartFocusNode.hasFocus && _stopFocusNode.canRequestFocus) {
+      if (_restartFocusNode.hasFocus && _fullscreenFocusNode.canRequestFocus) {
+        _fullscreenFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (_fullscreenFocusNode.hasFocus && _stopFocusNode.canRequestFocus) {
         _stopFocusNode.requestFocus();
         return KeyEventResult.handled;
       }
     }
     if (key == LogicalKeyboardKey.arrowUp ||
         key == LogicalKeyboardKey.arrowLeft) {
-      if (_stopFocusNode.hasFocus && _restartFocusNode.canRequestFocus) {
+      if (_stopFocusNode.hasFocus && _fullscreenFocusNode.canRequestFocus) {
+        _fullscreenFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (_fullscreenFocusNode.hasFocus && _restartFocusNode.canRequestFocus) {
         _restartFocusNode.requestFocus();
         return KeyEventResult.handled;
       }
@@ -220,6 +328,8 @@ class _VideoSurface extends StatelessWidget {
   const _VideoSurface({
     required this.showNativeSurface,
     required this.controller,
+    required this.scaleMode,
+    this.fullscreen = false,
   });
 
   static const String _surfaceZOrderMode = String.fromEnvironment(
@@ -233,84 +343,90 @@ class _VideoSurface extends StatelessWidget {
   static const bool _debugSurfaceColor = bool.fromEnvironment(
     'PC_TV_MIRROR_DEBUG_SURFACE_COLOR',
   );
-  static const Map<String, Object?> _creationParams = {
-    'backend': _videoSurfaceBackend,
-    'zOrderMode': _surfaceZOrderMode,
-    'debugSurfaceColor': _debugSurfaceColor,
-  };
-
   final bool showNativeSurface;
   final ReceiverController controller;
+  final String scaleMode;
+  final bool fullscreen;
 
   @override
   Widget build(BuildContext context) {
     final usePlatformView =
         showNativeSurface && defaultTargetPlatform == TargetPlatform.android;
+    final creationParams = <String, Object?>{
+      'backend': _videoSurfaceBackend,
+      'zOrderMode': _surfaceZOrderMode,
+      'debugSurfaceColor': _debugSurfaceColor,
+      'scaleMode': scaleMode,
+    };
+    final video = Stack(
+      fit: StackFit.expand,
+      children: [
+        if (usePlatformView)
+          AndroidView(
+            key: ValueKey<String>('receiver.androidVideoSurface.$scaleMode'),
+            viewType: 'pc_tv_mirror/video_surface',
+            creationParams: creationParams,
+            creationParamsCodec: const StandardMessageCodec(),
+          )
+        else
+          const ColoredBox(color: Colors.black),
+        if (!fullscreen)
+          AnimatedBuilder(
+            animation: controller,
+            builder: (context, _) {
+              final releasedFrames =
+                  controller.snapshot?.releasedToSurfaceFrames ?? 0;
+              if (releasedFrames > 0) {
+                return const SizedBox.shrink();
+              }
+              return Align(
+                alignment: Alignment.bottomLeft,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text('Waiting for PC video frames'),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
     return Focus(
       key: const Key('receiver.videoSurfaceFocusBoundary'),
       canRequestFocus: false,
       descendantsAreFocusable: false,
       descendantsAreTraversable: false,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-        child: Center(
-          child: AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (usePlatformView)
-                    const AndroidView(
-                      key: ValueKey<String>('receiver.androidVideoSurface'),
-                      viewType: 'pc_tv_mirror/video_surface',
-                      creationParams: _creationParams,
-                      creationParamsCodec: StandardMessageCodec(),
-                    )
-                  else
-                    const ColoredBox(color: Colors.black),
-                  AnimatedBuilder(
-                    animation: controller,
-                    builder: (context, _) {
-                      final releasedFrames =
-                          controller.snapshot?.releasedToSurfaceFrames ?? 0;
-                      if (releasedFrames > 0) {
-                        return const SizedBox.shrink();
-                      }
-                      return Align(
-                        alignment: Alignment.bottomLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.72),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              child: Text('Waiting for PC video frames'),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+      child: fullscreen
+          ? ColoredBox(color: Colors.black, child: video)
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
+              ),
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: video,
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -319,16 +435,30 @@ class _ReceiverStatusPanel extends StatelessWidget {
   const _ReceiverStatusPanel({
     required this.controller,
     required this.restartFocusNode,
+    required this.fullscreenFocusNode,
     required this.stopFocusNode,
+    required this.autoFullscreen,
+    required this.scaleMode,
+    required this.fullscreenEnabled,
     required this.onRestart,
+    required this.onEnterFullscreen,
     required this.onStop,
+    required this.onAutoFullscreenChanged,
+    required this.onScaleModeChanged,
   });
 
   final ReceiverController controller;
   final FocusNode restartFocusNode;
+  final FocusNode fullscreenFocusNode;
   final FocusNode stopFocusNode;
+  final bool autoFullscreen;
+  final String scaleMode;
+  final bool fullscreenEnabled;
   final VoidCallback onRestart;
+  final VoidCallback onEnterFullscreen;
   final VoidCallback onStop;
+  final ValueChanged<bool> onAutoFullscreenChanged;
+  final ValueChanged<String> onScaleModeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +502,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
               autofocus: controller.state != MirrorSessionState.streaming,
               enabled: !controller.busy,
               onPressed: onRestart,
-              onNextFocus: stopFocusNode.requestFocus,
+              onNextFocus: fullscreenFocusNode.requestFocus,
               icon: Icons.refresh,
               label: 'Restart receiver',
             ),
@@ -381,15 +511,47 @@ class _ReceiverStatusPanel extends StatelessWidget {
           FocusTraversalOrder(
             order: const NumericFocusOrder(2),
             child: TvFocusButton(
+              key: const Key('receiver.fullscreenButton'),
+              focusNode: fullscreenFocusNode,
+              autofocus: controller.state == MirrorSessionState.streaming,
+              enabled: !controller.busy && !fullscreenEnabled,
+              onPressed: onEnterFullscreen,
+              onPreviousFocus: restartFocusNode.requestFocus,
+              onNextFocus: stopFocusNode.requestFocus,
+              icon: Icons.fullscreen,
+              label: 'Fullscreen',
+            ),
+          ),
+          const SizedBox(height: 10),
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(3),
+            child: TvFocusButton(
               key: const Key('receiver.stopButton'),
               focusNode: stopFocusNode,
-              autofocus: controller.state == MirrorSessionState.streaming,
               enabled: !controller.busy,
               onPressed: onStop,
-              onPreviousFocus: restartFocusNode.requestFocus,
+              onPreviousFocus: fullscreenFocusNode.requestFocus,
               icon: Icons.stop,
               label: 'Stop receiver',
             ),
+          ),
+          const SizedBox(height: 18),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: autoFullscreen,
+              onChanged: onAutoFullscreenChanged,
+              title: const Text('Auto fullscreen'),
+            ),
+          ),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'fit', label: Text('Fit')),
+              ButtonSegment(value: 'fill', label: Text('Fill')),
+            ],
+            selected: {scaleMode},
+            onSelectionChanged: (values) => onScaleModeChanged(values.first),
           ),
           const SizedBox(height: 18),
           _MetricRow(
@@ -410,7 +572,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: capabilities == null
                 ? 'H.264 720p30'
                 : '${capabilities.videoCodecs.map((codec) => codec.wireName).join(', ')} '
-                    '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
+                      '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
           ),
           _MetricRow(
             label: 'Decoder',
@@ -423,6 +585,69 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: snapshot?.surfaceRendererReady == true
                 ? 'SurfaceView ready'
                 : 'Pending',
+          ),
+          const SizedBox(height: 18),
+          Text('Performance', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          _MetricRow(
+            label: 'Summary',
+            value: snapshot?.bottleneckSummary ?? 'warming_up',
+          ),
+          _MetricRow(
+            label: 'Receive / Decode / Present',
+            value:
+                '${(snapshot?.receivedAccessUnitFps ?? 0).toStringAsFixed(1)} / '
+                '${(snapshot?.decoderOutputFps ?? 0).toStringAsFixed(1)} / '
+                '${(snapshot?.releasedToSurfaceFps ?? 0).toStringAsFixed(1)} fps',
+          ),
+          _MetricRow(
+            label: 'Present p95',
+            value:
+                '${(snapshot?.presentedFrameIntervalP95Ms ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Latency avg/p95',
+            value:
+                '${(snapshot?.latencyAverageMs ?? 0).toStringAsFixed(1)}/'
+                '${(snapshot?.latencyP95Ms ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Renderer',
+            value: snapshot?.rendererMode ?? 'lowLatencyPaced',
+          ),
+          _MetricRow(
+            label: 'Queue',
+            value:
+                '${snapshot?.receiverQueueDepth ?? 0}/${snapshot?.maxReceiverQueueDepth ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Drops',
+            value:
+                'stale ${snapshot?.staleAccessUnitsDropped ?? 0}, late ${snapshot?.lateOutputBuffersDropped ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Sequence gaps',
+            value: '${snapshot?.frameSequenceGaps ?? 0}',
+          ),
+          const SizedBox(height: 18),
+          Text('Presentation', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          _MetricRow(label: 'Fullscreen', value: '$fullscreenEnabled'),
+          _MetricRow(label: 'Auto fullscreen', value: '$autoFullscreen'),
+          _MetricRow(label: 'Scale mode', value: scaleMode),
+          _MetricRow(
+            label: 'Display',
+            value:
+                '${snapshot?.containerWidth ?? 0}x${snapshot?.containerHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Video view',
+            value:
+                '${snapshot?.renderedViewWidth ?? 0}x${snapshot?.renderedViewHeight ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Aspect error',
+            value: (snapshot?.aspectRatioError ?? 0).toStringAsFixed(4),
           ),
           const SizedBox(height: 18),
           Text('Diagnostics', style: Theme.of(context).textTheme.titleMedium),
@@ -441,20 +666,13 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: '${snapshot?.keyFramesReceived ?? 0}',
           ),
           _MetricRow(
-            label: 'Decoder input',
-            value: '${snapshot?.decoderInputFrames ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Decoder output',
-            value: '${snapshot?.decoderOutputFrames ?? 0}',
+            label: 'Decoder input/output',
+            value:
+                '${snapshot?.decoderInputFrames ?? 0}/${snapshot?.decoderOutputFrames ?? 0}',
           ),
           _MetricRow(
             label: 'Released to surface',
             value: '${snapshot?.releasedToSurfaceFrames ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Dropped',
-            value: '${snapshot?.droppedFrames ?? 0}',
           ),
           _MetricRow(
             label: 'Codec create/release',
@@ -480,72 +698,13 @@ class _ReceiverStatusPanel extends StatelessWidget {
             value: snapshot?.zOrderMode ?? 'unknown',
           ),
           _MetricRow(
-            label: 'Surface test draw',
-            value: '${snapshot?.firstSurfaceTestDrawSucceeded ?? false}',
-          ),
-          _MetricRow(
-            label: 'Scale mode',
-            value: snapshot?.scaleMode ?? 'fitCenter',
-          ),
-          _MetricRow(
-            label: 'Container',
+            label: 'Configured/output',
             value:
-                '${snapshot?.containerWidth ?? 0}x${snapshot?.containerHeight ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Rendered view',
-            value:
-                '${snapshot?.renderedViewWidth ?? 0}x${snapshot?.renderedViewHeight ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Aspect error',
-            value: (snapshot?.aspectRatioError ?? 0).toStringAsFixed(4),
-          ),
-          _MetricRow(
-            label: 'Configured size',
-            value:
-                '${snapshot?.configuredWidth ?? 0}x${snapshot?.configuredHeight ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Output size',
-            value:
+                '${snapshot?.configuredWidth ?? 0}x${snapshot?.configuredHeight ?? 0} / '
                 '${snapshot?.outputWidth ?? 0}x${snapshot?.outputHeight ?? 0}',
-          ),
-          _MetricRow(
-            label: 'Output format changes',
-            value: '${snapshot?.outputFormatChangedCount ?? 0}',
           ),
           if (outputCrop != null)
             _MetricRow(label: 'Output crop', value: outputCrop),
-          _MetricRow(
-            label: 'Input latency',
-            value:
-                '${(snapshot?.networkToDecoderInputMs ?? 0).toStringAsFixed(1)} ms',
-          ),
-          _MetricRow(
-            label: 'Decode latency',
-            value:
-                '${(snapshot?.decoderInputToOutputMs ?? 0).toStringAsFixed(1)} ms',
-          ),
-          _MetricRow(
-            label: 'Estimated latency',
-            value:
-                '${(snapshot?.estimatedEndToEndLatencyMs ?? 0).toStringAsFixed(1)} ms',
-          ),
-          _MetricRow(
-            label: 'Latency avg/p95',
-            value:
-                '${(snapshot?.latencyAverageMs ?? 0).toStringAsFixed(1)}/${(snapshot?.latencyP95Ms ?? 0).toStringAsFixed(1)} ms',
-          ),
-          _MetricRow(
-            label: 'Receiver backlog',
-            value:
-                '${snapshot?.maxReceiverQueueDepth ?? 0} max, ${snapshot?.staleAccessUnitsDropped ?? 0} stale drops',
-          ),
-          _MetricRow(
-            label: 'Last frame age',
-            value: '${(snapshot?.lastFrameAgeMs ?? 0).toStringAsFixed(1)} ms',
-          ),
           if (snapshot?.lastDecoderError != null)
             _MetricRow(label: 'Last error', value: snapshot!.lastDecoderError!),
           const SizedBox(height: 18),

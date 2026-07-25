@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <sstream>
 
@@ -21,7 +22,8 @@ constexpr std::uint8_t kPacketTypeCodecConfig = 1;
 constexpr std::uint8_t kPacketTypeAccessUnit = 2;
 constexpr std::uint16_t kFlagKeyFrame = 1 << 0;
 constexpr std::uint16_t kFlagCodecConfig = 1 << 1;
-constexpr std::uint32_t kPacketHeaderLength = 24;
+constexpr std::uint16_t kFlagExtendedHeader = 1 << 2;
+constexpr std::uint32_t kPacketHeaderLength = 28;
 constexpr std::uint32_t kConfigHeaderLength = 24;
 constexpr std::uint32_t kStageOneWidth = 1280;
 constexpr std::uint32_t kStageOneHeight = 720;
@@ -86,17 +88,17 @@ void WritePacketHeader(std::vector<std::uint8_t>& bytes,
                        std::uint8_t packet_type,
                        std::uint16_t flags,
                        std::uint64_t pts_us,
-                       std::uint32_t sequence,
+                       std::uint64_t sequence,
                        std::uint32_t payload_size) {
   const std::uint32_t packet_length = kPacketHeaderLength + payload_size;
   WriteU32(bytes, 0, packet_length);
   WriteU32(bytes, 4, kPacketMagic);
   bytes[8] = kProtocolVersion;
   bytes[9] = packet_type;
-  WriteU16(bytes, 10, flags);
+  WriteU16(bytes, 10, flags | kFlagExtendedHeader);
   WriteU64(bytes, 12, pts_us);
-  WriteU32(bytes, 20, sequence);
-  WriteU32(bytes, 24, payload_size);
+  WriteU64(bytes, 20, sequence);
+  WriteU32(bytes, 28, payload_size);
 }
 
 }  // namespace
@@ -220,20 +222,30 @@ void VideoTransportClient::Close() {
 }
 
 TransportResult VideoTransportClient::SendAll(const char* data, int length) {
+  const auto started = std::chrono::steady_clock::now();
   int offset = 0;
+  std::uint32_t send_calls = 0;
   while (offset < length) {
     const int sent =
         send(static_cast<SOCKET>(socket_), data + offset, length - offset, 0);
     if (sent == SOCKET_ERROR || sent == 0) {
       return {false, LastWsaError("send")};
     }
+    ++send_calls;
     offset += sent;
   }
-  return {true, {}};
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  return {true,
+          {},
+          send_calls,
+          static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::microseconds>(elapsed)
+                  .count()),
+          static_cast<std::uint32_t>(length)};
 }
 
 std::vector<std::uint8_t> BuildH264CodecConfigPacket(
-    std::uint32_t sequence,
+    std::uint64_t sequence,
     const H264ParameterSets& parameter_sets) {
   if (!parameter_sets.complete() || parameter_sets.sps.size() > 0xFFFF ||
       parameter_sets.pps.size() > 0xFFFF) {
@@ -270,7 +282,7 @@ std::vector<std::uint8_t> BuildH264CodecConfigPacket(
   return bytes;
 }
 
-std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint32_t sequence,
+std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint64_t sequence,
                                                 std::uint64_t pts_us,
                                                 bool key_frame,
                                                 const std::uint8_t* data,

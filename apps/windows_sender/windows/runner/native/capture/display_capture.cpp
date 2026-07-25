@@ -164,6 +164,7 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
     *error = "waiting for WGC frame failed";
     return false;
   }
+  const auto capture_callback_us = NowUs();
   ResetEvent(frame_event_);
 
   try {
@@ -206,9 +207,17 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
       return false;
     }
 
+    const auto convert_started_us = NowUs();
     ConvertMappedBgraToNv12(mapped, desc.Width, desc.Height, frame);
+    const auto converted_us = NowUs();
     d3d_context_->Unmap(staging_texture_.get(), 0);
-    frame->pts_us = NowUs();
+    frame->pts_us = capture_callback_us;
+    frame->capture_callback_us = capture_callback_us;
+    frame->convert_started_us = convert_started_us;
+    frame->converted_us = converted_us;
+    frame->convert_duration_us =
+        converted_us >= convert_started_us ? converted_us - convert_started_us
+                                           : 0;
     frame->dropped_frames = dropped_frames;
   } catch (const winrt::hresult_error& failure) {
     *error = HResultText("WGC frame copy", failure.code());
@@ -274,7 +283,7 @@ void DisplayCapture::ConvertMappedBgraToNv12(
     Nv12Frame* frame) {
   frame->width = kOutputWidth;
   frame->height = kOutputHeight;
-  frame->data.assign(kOutputWidth * kOutputHeight * 3 / 2, 0);
+  frame->data.resize(kOutputWidth * kOutputHeight * 3 / 2);
 
   auto* y_plane = frame->data.data();
   auto* uv_plane = y_plane + kOutputWidth * kOutputHeight;

@@ -92,7 +92,7 @@ class MirrorController extends ChangeNotifier {
     _setBusy(true);
     _state = MirrorSessionState.connecting;
     _userMessage = 'Preparing the native video path.';
-    _appendLog('Starting STAGE 1 video session.');
+    _appendLog('Starting lowLatency720p30 video session.');
     notifyListeners();
 
     final sessionId = 'stage1-${DateTime.now().microsecondsSinceEpoch}';
@@ -100,7 +100,7 @@ class MirrorController extends ChangeNotifier {
       sessionId: sessionId,
       sourceType: SourceType.display,
       sourceId: sourceId,
-      video: const VideoProfile.stageOne720p30(),
+      video: const VideoProfile.lowLatency720p30(),
     );
 
     try {

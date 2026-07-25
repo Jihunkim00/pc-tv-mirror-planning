@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <cstdint>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -93,6 +94,16 @@ class BoundedQueue {
   std::size_t Size() const {
     std::scoped_lock lock(mutex_);
     return items_.size();
+  }
+
+  template <typename Measure>
+  std::uint64_t Sum(Measure measure) const {
+    std::scoped_lock lock(mutex_);
+    std::uint64_t total = 0;
+    for (const auto& item : items_) {
+      total += static_cast<std::uint64_t>(measure(item));
+    }
+    return total;
   }
 
  private:
