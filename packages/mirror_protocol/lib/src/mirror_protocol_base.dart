@@ -81,7 +81,8 @@ abstract final class VideoPacketFlags {
 
 enum PerformanceProfile {
   lowLatency720p30('lowLatency720p30'),
-  compatibility720p30('compatibility720p30');
+  compatibility720p30('compatibility720p30'),
+  highQuality1080p30('highQuality1080p30');
 
   const PerformanceProfile(this.wireName);
 
@@ -91,6 +92,7 @@ enum PerformanceProfile {
     return switch (value) {
       'lowLatency720p30' => PerformanceProfile.lowLatency720p30,
       'compatibility720p30' => PerformanceProfile.compatibility720p30,
+      'highQuality1080p30' => PerformanceProfile.highQuality1080p30,
       _ => throw FormatException('Unsupported performance profile: $value'),
     };
   }
@@ -105,6 +107,10 @@ enum MirrorSessionState {
   waitingForSurface('waitingForSurface'),
   waitingForKeyFrame('waitingForKeyFrame'),
   streaming('streaming'),
+  paused('paused'),
+  resuming('resuming'),
+  disconnected('disconnected'),
+  error('error'),
   stopping('stopping'),
   restoring('restoring'),
   failed('failed');
@@ -123,6 +129,10 @@ enum MirrorSessionState {
       'waitingForSurface' => MirrorSessionState.waitingForSurface,
       'waitingForKeyFrame' => MirrorSessionState.waitingForKeyFrame,
       'streaming' => MirrorSessionState.streaming,
+      'paused' => MirrorSessionState.paused,
+      'resuming' => MirrorSessionState.resuming,
+      'disconnected' => MirrorSessionState.disconnected,
+      'error' => MirrorSessionState.error,
       'stopping' => MirrorSessionState.stopping,
       'restoring' => MirrorSessionState.restoring,
       'failed' => MirrorSessionState.failed,
@@ -218,6 +228,7 @@ final class ReceiverCapabilities {
     this.supportedPerformanceProfiles = const [
       PerformanceProfile.lowLatency720p30,
       PerformanceProfile.compatibility720p30,
+      PerformanceProfile.highQuality1080p30,
     ],
     this.protocolVersion = mirrorProtocolVersion,
   });
@@ -271,6 +282,7 @@ final class ReceiverCapabilities {
           ? const [
               PerformanceProfile.lowLatency720p30,
               PerformanceProfile.compatibility720p30,
+              PerformanceProfile.highQuality1080p30,
             ]
           : profileNames
                 .map(PerformanceProfile.fromWireName)
@@ -302,7 +314,7 @@ final class VideoProfile {
       width = 1280,
       height = 720,
       fps = 30,
-      bitrateKbps = 4000,
+      bitrateKbps = 6000,
       performanceProfile = PerformanceProfile.lowLatency720p30;
 
   const VideoProfile.compatibility720p30()
@@ -312,6 +324,14 @@ final class VideoProfile {
       fps = 30,
       bitrateKbps = 3000,
       performanceProfile = PerformanceProfile.compatibility720p30;
+
+  const VideoProfile.highQuality1080p30()
+    : codec = VideoCodec.h264,
+      width = 1920,
+      height = 1080,
+      fps = 30,
+      bitrateKbps = 7500,
+      performanceProfile = PerformanceProfile.highQuality1080p30;
 
   final VideoCodec codec;
   final int width;
@@ -808,6 +828,149 @@ final class StreamStopRequest {
     _ensureType(json, 'stream.stop');
     _ensureProtocolVersion(json);
     return StreamStopRequest(sessionId: _readString(json, 'sessionId'));
+  }
+}
+
+enum PlaybackCommandKind {
+  pause('pause'),
+  resume('resume');
+
+  const PlaybackCommandKind(this.wireName);
+
+  final String wireName;
+
+  static PlaybackCommandKind fromWireName(String value) {
+    return switch (value) {
+      'pause' => PlaybackCommandKind.pause,
+      'resume' => PlaybackCommandKind.resume,
+      _ => throw FormatException('Unsupported playback command: $value'),
+    };
+  }
+}
+
+final class PlaybackCommand {
+  const PlaybackCommand({
+    required this.sessionId,
+    required this.commandId,
+    required this.command,
+    required this.receiverTimestampUs,
+    this.reason = 'remote_key',
+    this.requestedBy = 'receiver_remote',
+    this.protocolVersion = mirrorProtocolVersion,
+  });
+
+  final int protocolVersion;
+  final String sessionId;
+  final int commandId;
+  final PlaybackCommandKind command;
+  final int receiverTimestampUs;
+  final String reason;
+  final String requestedBy;
+
+  Map<String, Object?> toJson() {
+    _checkUint64('commandId', commandId);
+    _checkUint64('receiverTimestampUs', receiverTimestampUs);
+    return {
+      'type': 'PLAYBACK_COMMAND',
+      'protocolVersion': protocolVersion,
+      'sessionId': sessionId,
+      'commandId': commandId,
+      'command': command.wireName,
+      'receiverTimestampUs': receiverTimestampUs,
+      'reason': reason,
+      'requestedBy': requestedBy,
+    };
+  }
+
+  factory PlaybackCommand.fromJson(Map<String, Object?> json) {
+    _ensureType(json, 'PLAYBACK_COMMAND');
+    _ensureProtocolVersion(json);
+    return PlaybackCommand(
+      sessionId: _readString(json, 'sessionId'),
+      commandId: _readInt(json, 'commandId'),
+      command: PlaybackCommandKind.fromWireName(_readString(json, 'command')),
+      receiverTimestampUs: _readInt(json, 'receiverTimestampUs'),
+      reason: _readOptionalString(json, 'reason', defaultValue: 'remote_key'),
+      requestedBy: _readOptionalString(
+        json,
+        'requestedBy',
+        defaultValue: 'receiver_remote',
+      ),
+    );
+  }
+}
+
+final class PlaybackCommandAck {
+  const PlaybackCommandAck({
+    required this.commandId,
+    required this.command,
+    required this.senderState,
+    this.protocolVersion = mirrorProtocolVersion,
+  });
+
+  final int protocolVersion;
+  final int commandId;
+  final PlaybackCommandKind command;
+  final String senderState;
+
+  Map<String, Object?> toJson() {
+    _checkUint64('commandId', commandId);
+    return {
+      'type': 'PLAYBACK_COMMAND_ACK',
+      'protocolVersion': protocolVersion,
+      'command': command.wireName,
+      'commandId': commandId,
+      'senderState': senderState,
+    };
+  }
+
+  factory PlaybackCommandAck.fromJson(Map<String, Object?> json) {
+    _ensureType(json, 'PLAYBACK_COMMAND_ACK');
+    _ensureProtocolVersion(json);
+    return PlaybackCommandAck(
+      command: PlaybackCommandKind.fromWireName(_readString(json, 'command')),
+      commandId: _readInt(json, 'commandId'),
+      senderState: _readString(json, 'senderState'),
+    );
+  }
+}
+
+final class PlaybackCommandError {
+  const PlaybackCommandError({
+    required this.commandId,
+    required this.command,
+    required this.errorCode,
+    required this.message,
+    this.protocolVersion = mirrorProtocolVersion,
+  });
+
+  final int protocolVersion;
+  final int commandId;
+  final PlaybackCommandKind command;
+  final String errorCode;
+  final String message;
+
+  Map<String, Object?> toJson() {
+    _checkUint64('commandId', commandId);
+    return {
+      'type': 'PLAYBACK_COMMAND_ERROR',
+      'protocolVersion': protocolVersion,
+      'command': command.wireName,
+      'commandId': commandId,
+      'errorCode': errorCode,
+      'message': message,
+    };
+  }
+
+  factory PlaybackCommandError.fromJson(Map<String, Object?> json) {
+    _ensureType(json, 'PLAYBACK_COMMAND_ERROR');
+    _ensureProtocolVersion(json);
+    return PlaybackCommandError(
+      command: PlaybackCommandKind.fromWireName(_readString(json, 'command')),
+      commandId: _readInt(json, 'commandId'),
+      errorCode: _readString(json, 'errorCode'),
+      message: _readString(json, 'message'),
+    );
   }
 }
 

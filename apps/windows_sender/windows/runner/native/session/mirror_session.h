@@ -26,6 +26,7 @@ class MirrorSession {
   NativeSnapshot Start(const StartSessionOptions& options);
   NativeSnapshot Stop();
   NativeSnapshot Snapshot();
+  NativeSnapshot SetPcLocalAudioMuteRequested(bool requested);
 
  private:
   struct QueuedVideoPacket {
@@ -47,6 +48,18 @@ class MirrorSession {
   void EncodeLoop();
   void AudioLoop();
   void SendLoop();
+  void ControlLoop();
+  void HandlePlaybackCommandLine(const std::string& line);
+  void ApplyPause(std::uint64_t command_id, const std::string& command);
+  void ApplyResume(std::uint64_t command_id, const std::string& command);
+  void SendPlaybackAck(std::uint64_t command_id,
+                       const std::string& command,
+                       const std::string& sender_state);
+  void SendPlaybackError(std::uint64_t command_id,
+                         const std::string& command,
+                         const std::string& error_code,
+                         const std::string& message);
+  bool IsPaused() const { return paused_.load(); }
   bool SendCodecConfig(const H264ParameterSets& parameter_sets);
   bool SendFirstAccessUnit(std::vector<std::uint8_t> packet,
                            bool key_frame,
@@ -76,6 +89,13 @@ class MirrorSession {
   std::thread encode_thread_;
   std::thread audio_thread_;
   std::thread send_thread_;
+  std::thread control_thread_;
+  VideoStreamConfig video_config_;
+  double target_fps_ = 30.0;
+  std::uint64_t target_frame_interval_us_ = 33'333;
+  std::atomic_bool paused_{false};
+  std::atomic_bool audio_config_requested_{false};
+  std::atomic_bool pc_local_audio_mute_requested_{false};
   std::atomic_uint64_t next_sequence_{1};
   std::atomic_uint64_t next_audio_sequence_{1};
   std::atomic_uint64_t captured_frames_{0};
@@ -84,6 +104,7 @@ class MirrorSession {
   std::atomic_uint64_t conversion_backpressure_dropped_frames_{0};
   std::atomic_uint64_t encoder_backpressure_dropped_frames_{0};
   std::atomic_uint64_t transport_backpressure_dropped_frames_{0};
+  std::atomic_uint64_t stale_video_dropped_frames_{0};
   std::atomic_uint64_t shutdown_dropped_frames_{0};
   std::atomic_uint64_t capture_dropped_frames_{0};
   std::atomic_uint64_t conversion_dropped_frames_{0};
@@ -102,6 +123,12 @@ class MirrorSession {
   std::atomic_uint64_t encoded_audio_packets_{0};
   std::atomic_uint64_t sent_audio_packets_{0};
   std::atomic_uint64_t audio_dropped_packets_{0};
+  std::atomic_uint64_t pause_requests_received_{0};
+  std::atomic_uint64_t resume_requests_received_{0};
+  std::atomic_uint64_t playback_command_acks_sent_{0};
+  std::atomic_uint64_t playback_command_errors_sent_{0};
+  std::atomic_uint64_t resume_codec_config_resends_{0};
+  std::atomic_uint64_t last_playback_command_id_{0};
   std::uint64_t next_admission_deadline_us_ = 0;
   std::deque<std::uint64_t> capture_callback_events_us_;
   std::deque<std::uint64_t> captured_events_us_;
@@ -115,6 +142,7 @@ class MirrorSession {
   std::deque<std::uint64_t> cadence_dropped_events_us_;
   std::deque<std::uint64_t> encoder_busy_dropped_events_us_;
   std::deque<std::uint64_t> conversion_busy_dropped_events_us_;
+  std::deque<std::uint64_t> stale_video_dropped_events_us_;
   std::deque<std::uint64_t> socket_send_call_events_us_;
   std::deque<std::uint64_t> audio_capture_events_us_;
   std::deque<std::pair<std::uint64_t, double>> capture_to_convert_samples_;
@@ -130,7 +158,7 @@ class MirrorSession {
   double total_capture_to_encode_ms_ = 0.0;
   double max_capture_to_encode_ms_ = 0.0;
   bool first_access_unit_sent_ = false;
-  bool codec_config_sent_for_stream_ = false;
+  std::atomic_bool codec_config_sent_for_stream_{false};
   std::string session_error_code_;
   std::string session_user_message_;
   std::string session_developer_message_;

@@ -11,6 +11,8 @@ abstract interface class ReceiverNativeApi {
   Future<ReceiverSessionSnapshot> getReceiverStatus();
 
   Future<ReceiverSessionSnapshot> setAudioMuted(bool muted);
+
+  Future<ReceiverSessionSnapshot> sendPlaybackCommand(String command);
 }
 
 final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
@@ -58,6 +60,15 @@ final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
     final result = await _channel.invokeMapMethod<Object?, Object?>(
       'setAudioMuted',
       {'muted': muted},
+    );
+    return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
+  }
+
+  @override
+  Future<ReceiverSessionSnapshot> sendPlaybackCommand(String command) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'sendPlaybackCommand',
+      {'command': command},
     );
     return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
   }
@@ -162,6 +173,13 @@ final class ReceiverSessionSnapshot {
     this.audioSampleRate = 0,
     this.audioChannels = 0,
     this.audioLastError,
+    this.connectionId = 0,
+    this.sessionId = '',
+    this.playbackState = 'disconnected',
+    this.pauseCommandPending = false,
+    this.resumeCommandPending = false,
+    this.playbackCommandAcksReceived = 0,
+    this.playbackCommandErrorsReceived = 0,
     this.fullscreenEnabled = false,
     this.autoFullscreen = true,
     this.lastDecoderError,
@@ -265,6 +283,13 @@ final class ReceiverSessionSnapshot {
   final int audioSampleRate;
   final int audioChannels;
   final String? audioLastError;
+  final int connectionId;
+  final String sessionId;
+  final String playbackState;
+  final bool pauseCommandPending;
+  final bool resumeCommandPending;
+  final int playbackCommandAcksReceived;
+  final int playbackCommandErrorsReceived;
   final bool fullscreenEnabled;
   final bool autoFullscreen;
   final String? lastDecoderError;
@@ -481,6 +506,23 @@ final class ReceiverSessionSnapshot {
       audioSampleRate: _readOptionalInt(json, 'audioSampleRate'),
       audioChannels: _readOptionalInt(json, 'audioChannels'),
       audioLastError: json['audioLastError'] as String?,
+      connectionId: _readOptionalInt(json, 'connectionId'),
+      sessionId: _readOptionalString(json, 'sessionId', defaultValue: ''),
+      playbackState: _readOptionalString(
+        json,
+        'playbackState',
+        defaultValue: 'disconnected',
+      ),
+      pauseCommandPending: _readOptionalBool(json, 'pauseCommandPending'),
+      resumeCommandPending: _readOptionalBool(json, 'resumeCommandPending'),
+      playbackCommandAcksReceived: _readOptionalInt(
+        json,
+        'playbackCommandAcksReceived',
+      ),
+      playbackCommandErrorsReceived: _readOptionalInt(
+        json,
+        'playbackCommandErrorsReceived',
+      ),
       fullscreenEnabled: _readOptionalBool(json, 'fullscreenEnabled'),
       autoFullscreen: _readOptionalBool(
         json,

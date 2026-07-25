@@ -72,6 +72,10 @@ class MainActivity : FlutterActivity() {
                     receiverServer.setAudioMuted(call.argument<Boolean>("muted") ?: false)
                     result.success(receiverServer.getStatus())
                 }
+                "sendPlaybackCommand" -> {
+                    val command = call.argument<String>("command") ?: ""
+                    result.success(receiverServer.sendPlaybackCommand(command))
+                }
                 else -> result.notImplemented()
             }
         }
@@ -123,7 +127,7 @@ class MainActivity : FlutterActivity() {
                 receiverControlsChannel?.invokeMethod(
                     "remoteAction",
                     mapOf(
-                        "action" to "exitFullscreen",
+                        "action" to if (isBackKey) "exitFullscreen" else "playPause",
                         "source" to if (isBackKey) "back" else "dpadCenter",
                     ),
                 )
@@ -145,13 +149,14 @@ class MainActivity : FlutterActivity() {
             "deviceId" to "android-tv-${Build.MODEL ?: "unknown"}",
             "deviceName" to (Build.MODEL ?: "Android TV"),
             "videoCodecs" to listOf("h264"),
-            "maxWidth" to 1280,
-            "maxHeight" to 720,
+            "maxWidth" to 1920,
+            "maxHeight" to 1080,
             "maxFps" to 30,
             "lowLatencyDecoder" to h264DecoderAvailable,
             "supportedPerformanceProfiles" to listOf(
                 PERFORMANCE_PROFILE_LOW_LATENCY_720P30,
                 PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
+                PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
             ),
         )
     }
@@ -165,6 +170,7 @@ private const val SCALE_MODE_FILL = "fill"
 private const val SCALE_MODE_FIT_CENTER = "fitCenter"
 private const val PERFORMANCE_PROFILE_LOW_LATENCY_720P30 = "lowLatency720p30"
 private const val PERFORMANCE_PROFILE_COMPATIBILITY_720P30 = "compatibility720p30"
+private const val PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 = "highQuality1080p30"
 private const val MAX_PACKET_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_ACCESS_UNIT_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_CODEC_CONFIG_PAYLOAD = 24 + 64 * 1024 + 64 * 1024
@@ -179,7 +185,7 @@ private const val INITIAL_PLAYOUT_DELAY_NS = 30_000_000L
 private const val MAX_SCHEDULED_DELAY_NS = 66_000_000L
 private const val LATE_DROP_THRESHOLD_NS = 100_000_000L
 private const val BACKLOG_RECOVERY_THRESHOLD_NS = 150_000_000L
-private const val ROLLING_WINDOW_US = 2_000_000L
+private const val ROLLING_WINDOW_US = 5_000_000L
 private const val AUDIO_SAMPLE_RATE = 48000
 private const val AUDIO_CHANNELS = 2
 private const val MAX_AUDIO_ACCESS_UNIT_QUEUE_DEPTH = 8
@@ -217,10 +223,30 @@ private class StageOneReceiverServer(
     @Volatile
     private var boundPort = DEFAULT_PORT
 
+    @Volatile
+    private var connectionId = 0L
+
+    @Volatile
+    private var currentSessionId = ""
+
+    @Volatile
+    private var playbackState = "disconnected"
+
+    @Volatile
+    private var pauseCommandPending = false
+
+    @Volatile
+    private var resumeCommandPending = false
+
+    private val socketWriteLock = java.lang.Object()
+    private val nextCommandId = AtomicLong(1)
+
     private val bytesReceived = AtomicLong(0)
     private val configPacketsReceived = AtomicLong(0)
     private val accessUnitsReceived = AtomicLong(0)
     private val keyFramesReceived = AtomicLong(0)
+    private val playbackCommandAcksReceived = AtomicLong(0)
+    private val playbackCommandErrorsReceived = AtomicLong(0)
 
     @Volatile
     private var lastPacketError: String? = null
@@ -271,6 +297,10 @@ private class StageOneReceiverServer(
         clientSocket = null
         clientConnected = false
         serverSocket = null
+        currentSessionId = ""
+        playbackState = "disconnected"
+        pauseCommandPending = false
+        resumeCommandPending = false
         decoder.releaseCodec()
         audioDecoder.release()
         lastPacketError = null
@@ -291,6 +321,60 @@ private class StageOneReceiverServer(
 
     fun setAudioMuted(muted: Boolean) {
         audioDecoder.setMuted(muted)
+    }
+
+    fun sendPlaybackCommand(command: String): Map<String, Any> {
+        val normalized = when (command) {
+            "pause", "resume" -> command
+            else -> {
+                recordPacketError("Unsupported playback command: $command")
+                return snapshot(receiverPort = boundPort)
+            }
+        }
+        val socket = clientSocket
+        if (!running || socket == null || !clientConnected) {
+            recordPacketError("No active sender connection for playback $normalized.")
+            return snapshot(receiverPort = boundPort)
+        }
+
+        val commandId = nextCommandId.getAndIncrement()
+        if (normalized == "pause") {
+            pauseCommandPending = true
+            resumeCommandPending = false
+            playbackState = "paused"
+            decoder.setPaused(true)
+            audioDecoder.setPlaybackPaused(true)
+        } else {
+            resumeCommandPending = true
+            pauseCommandPending = false
+            playbackState = "resuming"
+            decoder.setPaused(false)
+            audioDecoder.setPlaybackPaused(false)
+        }
+
+        val message = JSONObject()
+            .put("type", "PLAYBACK_COMMAND")
+            .put("protocolVersion", 1)
+            .put("sessionId", currentSessionId)
+            .put("commandId", commandId)
+            .put("command", normalized)
+            .put("receiverTimestampUs", elapsedRealtimeUs())
+            .put("reason", "remote_key")
+            .put("requestedBy", "receiver_remote")
+        return try {
+            synchronized(socketWriteLock) {
+                writeJsonLine(socket, message)
+            }
+            snapshot(receiverPort = boundPort)
+        } catch (error: IOException) {
+            if (normalized == "pause") {
+                pauseCommandPending = false
+            } else {
+                resumeCommandPending = false
+            }
+            recordPacketError(error.message ?: "Playback command send failed.")
+            snapshot(receiverPort = boundPort)
+        }
     }
 
     fun onVideoLayout(metrics: VideoLayoutMetrics) {
@@ -328,11 +412,19 @@ private class StageOneReceiverServer(
                 closeQuietly(clientSocket)
                 clientSocket = client
                 clientConnected = true
+                connectionId += 1
+                playbackState = "connecting"
+                pauseCommandPending = false
+                resumeCommandPending = false
                 try {
                     handleClient(client)
                 } finally {
                     clientConnected = false
                     clientSocket = null
+                    currentSessionId = ""
+                    if (running) {
+                        playbackState = "disconnected"
+                    }
                 }
             } catch (error: SocketException) {
                 if (running) {
@@ -351,16 +443,18 @@ private class StageOneReceiverServer(
             socket.tcpNoDelay = true
             val input = socket.getInputStream()
             val request = readUtf8Line(input, 64 * 1024)
-            val requestType = try {
-                parseControlRequestType(request)
+            val controlRequest = try {
+                parseControlRequest(request)
             } catch (error: IllegalArgumentException) {
                 recordPacketError(error.message ?: "Invalid control request.")
                 return
             }
+            currentSessionId = controlRequest.sessionId
 
-            if (requestType == ControlRequestType.STREAM_STOP) {
+            if (controlRequest.type == ControlRequestType.STREAM_STOP) {
                 decoder.releaseCodec()
                 audioDecoder.release()
+                playbackState = "disconnected"
                 writeJsonLine(socket, receiverStoppedResponse())
                 return
             }
@@ -372,23 +466,29 @@ private class StageOneReceiverServer(
                     surfaceRendererReady = decoder.hasSurface,
                 ),
             )
+            playbackState = "waitingForKeyFrame"
             readVideoPackets(input)
         }
     }
 
     private fun readVideoPackets(input: InputStream) {
         while (running) {
-            val packet = try {
-                VideoPacket.readFrom(input) ?: break
+            val message = try {
+                readWireMessage(input) ?: break
             } catch (_: EOFException) {
                 break
             } catch (error: IOException) {
-                recordPacketError(error.message ?: "Video packet read failed.")
+                recordPacketError(error.message ?: "Wire message read failed.")
                 break
             } catch (error: IllegalArgumentException) {
-                recordPacketError(error.message ?: "Invalid video packet.")
+                recordPacketError(error.message ?: "Invalid wire message.")
                 break
             }
+            if (message is WireMessage.ControlLine) {
+                handlePlaybackControlLine(message.json)
+                continue
+            }
+            val packet = (message as WireMessage.Packet).packet
             bytesReceived.addAndGet(packet.wireLength.toLong())
 
             when (packet.type) {
@@ -408,6 +508,9 @@ private class StageOneReceiverServer(
                             "Received H.264 config SPS=${config.sps.size} PPS=${config.pps.size}",
                         )
                         decoder.configure(config)
+                        if (playbackState != "paused") {
+                            playbackState = "waitingForKeyFrame"
+                        }
                     }
                 }
                 VideoPacketType.ACCESS_UNIT -> {
@@ -428,6 +531,8 @@ private class StageOneReceiverServer(
                     )
                     if (!queued) {
                         Log.w("PC_TV_MIRROR", "Dropped access unit ${packet.sequenceNumber}")
+                    } else if (packet.isKeyFrame && playbackState != "paused") {
+                        playbackState = "streaming"
                     }
                 }
                 VideoPacketType.END_OF_STREAM -> {
@@ -444,6 +549,9 @@ private class StageOneReceiverServer(
                     if (config != null) {
                         lastPacketError = null
                         audioDecoder.configure(config)
+                        if (playbackState == "resuming") {
+                            playbackState = "waitingForKeyFrame"
+                        }
                     }
                 }
                 VideoPacketType.AUDIO_ACCESS_UNIT -> {
@@ -458,6 +566,45 @@ private class StageOneReceiverServer(
                     audioDecoder.release()
                 }
             }
+        }
+    }
+
+    private fun handlePlaybackControlLine(line: String) {
+        val json = try {
+            JSONObject(line)
+        } catch (error: Exception) {
+            recordPacketError(error.message ?: "Invalid playback control JSON.")
+            return
+        }
+        val version = json.optInt("protocolVersion", -1)
+        if (version != 1) {
+            recordPacketError("Unsupported playback control protocol version: $version")
+            return
+        }
+        when (json.optString("type")) {
+            "PLAYBACK_COMMAND_ACK" -> {
+                playbackCommandAcksReceived.incrementAndGet()
+                val command = json.optString("command")
+                if (command == "pause") {
+                    pauseCommandPending = false
+                    playbackState = "paused"
+                    decoder.setPaused(true)
+                    audioDecoder.setPlaybackPaused(true)
+                } else if (command == "resume") {
+                    resumeCommandPending = false
+                    playbackState = "resuming"
+                    decoder.setPaused(false)
+                    audioDecoder.setPlaybackPaused(false)
+                }
+                lastPacketError = null
+            }
+            "PLAYBACK_COMMAND_ERROR" -> {
+                playbackCommandErrorsReceived.incrementAndGet()
+                pauseCommandPending = false
+                resumeCommandPending = false
+                recordPacketError(json.optString("message", "Playback command failed."))
+            }
+            else -> recordPacketError("Unsupported playback control message: ${json.optString("type")}")
         }
     }
 
@@ -478,6 +625,8 @@ private class StageOneReceiverServer(
         val activeState = state ?: when {
             !running -> "idle"
             activeErrorCode != null -> "failed"
+            playbackState == "paused" -> "paused"
+            playbackState == "resuming" -> "resuming"
             !clientConnected -> "listening"
             !decoderSnapshot.surfaceIsValid -> "waitingForSurface"
             decoderSnapshot.releasedToSurfaceFrames >= 1 -> "streaming"
@@ -489,6 +638,8 @@ private class StageOneReceiverServer(
             "waitingForSurface" -> "Waiting for the TV video surface."
             "waitingForKeyFrame" -> "Waiting for the first decodable key frame."
             "streaming" -> "PC video is being released to the TV surface."
+            "paused" -> "Playback is paused. The last TV frame is held."
+            "resuming" -> "Waiting for a fresh key frame after resume."
             "failed" -> "The receiver video path reported an error."
             else -> "Waiting for PC video frames."
         }
@@ -498,6 +649,13 @@ private class StageOneReceiverServer(
             "receiverPort" to receiverPort,
             "receiverBindAddress" to BIND_ADDRESS,
             "localIpv4Addresses" to localIpv4Addresses(),
+            "connectionId" to connectionId,
+            "sessionId" to currentSessionId,
+            "playbackState" to playbackState,
+            "pauseCommandPending" to pauseCommandPending,
+            "resumeCommandPending" to resumeCommandPending,
+            "playbackCommandAcksReceived" to playbackCommandAcksReceived.get(),
+            "playbackCommandErrorsReceived" to playbackCommandErrorsReceived.get(),
             "decoderReady" to decoderReady,
             "surfaceRendererReady" to surfaceRendererReady,
             "bytesReceived" to bytesReceived.get(),
@@ -614,6 +772,12 @@ private class StageOneReceiverServer(
         configPacketsReceived.set(0)
         accessUnitsReceived.set(0)
         keyFramesReceived.set(0)
+        playbackCommandAcksReceived.set(0)
+        playbackCommandErrorsReceived.set(0)
+        pauseCommandPending = false
+        resumeCommandPending = false
+        playbackState = "disconnected"
+        currentSessionId = ""
         lastPacketError = null
         lastErrorCode = null
         decoder.resetDiagnostics()
@@ -836,6 +1000,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     private var audioDecoderName = "unknown"
     private var audioState = "muted"
     private var muted = false
+    private var playbackPaused = false
     private var running = true
     private var receivedAudioPackets = 0L
     private var audioDecoderInputPackets = 0L
@@ -899,12 +1064,34 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             muted = value
             if (value) {
                 audioTrack?.pause()
-            } else if (audioTrack != null) {
+            } else if (audioTrack != null && !playbackPaused) {
                 audioTrack?.play()
                 if (audioState != "failed") {
                     audioState = "playing"
                 }
             }
+        }
+    }
+
+    fun setPlaybackPaused(value: Boolean) {
+        synchronized(lock) {
+            playbackPaused = value
+            audioQueue.clear()
+            if (value) {
+                audioTrack?.pause()
+                audioState = "paused"
+            } else {
+                audioTrack?.flush()
+                audioTrackBasePlaybackHead = null
+                audioTrackBasePtsUs = null
+                if (audioTrack != null && !muted) {
+                    audioTrack?.play()
+                    audioState = "resuming"
+                } else if (audioState != "failed") {
+                    audioState = if (muted) "muted" else "idle"
+                }
+            }
+            lock.notifyAll()
         }
     }
 
@@ -922,7 +1109,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             firstQueuedAudioPtsUs = null
             audioTrackBasePlaybackHead = null
             audioTrackBasePtsUs = null
-            audioState = if (muted) "muted" else "idle"
+            audioState = if (playbackPaused) "paused" else if (muted) "muted" else "idle"
             lock.notifyAll()
         }
     }
@@ -946,8 +1133,16 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                 newCodec.start()
                 codec = newCodec
                 audioTrack = createAudioTrack(value)
-                audioTrack?.play()
-                audioState = if (muted) "muted" else "playing"
+                if (!muted && !playbackPaused) {
+                    audioTrack?.play()
+                }
+                audioState = if (playbackPaused) {
+                    "paused"
+                } else if (muted) {
+                    "muted"
+                } else {
+                    "playing"
+                }
                 lastAudioError = null
             } catch (error: Exception) {
                 audioState = "failed"
@@ -971,6 +1166,10 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             }
             if (previous == null || sequenceNumber > previous) {
                 lastAudioSequence = sequenceNumber
+            }
+            if (playbackPaused) {
+                audioDroppedPackets += 1
+                return@synchronized false
             }
             if (codec == null) {
                 audioDroppedPackets += 1
@@ -1000,7 +1199,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     fun release() {
         synchronized(lock) {
             releaseLocked("audio release")
-            audioState = if (muted) "muted" else "idle"
+            audioState = if (playbackPaused) "paused" else if (muted) "muted" else "idle"
         }
     }
 
@@ -1188,6 +1387,7 @@ private class StageOneVideoDecoder(
     private var configFingerprint: H264ConfigFingerprint? = null
     private var configuredFingerprint: H264ConfigFingerprint? = null
     private var codecSurfaceId: Int? = null
+    private var paused = false
     private val accessUnitQueue = ArrayDeque<QueuedAccessUnit>()
     private var decoderWorkerRunning = true
     private val receivedAccessUnitCounter = RollingEventWindow()
@@ -1415,6 +1615,7 @@ private class StageOneVideoDecoder(
             syncMaster = "videoLocal"
             firstPacingPtsUs = null
             firstLocalRenderTimeNs = null
+            paused = false
             lastDecoderError = null
             needsKeyFrame = true
             config = null
@@ -1428,6 +1629,18 @@ private class StageOneVideoDecoder(
     fun updateVideoLayout(metrics: VideoLayoutMetrics) {
         synchronized(lock) {
             layoutMetrics = metrics
+        }
+    }
+
+    fun setPaused(value: Boolean) {
+        synchronized(lock) {
+            paused = value
+            accessUnitQueue.clear()
+            receiverQueueDepth = 0
+            needsKeyFrame = true
+            resetPacingLocked()
+            rendererMode = if (value) "paused" else "resuming"
+            lock.notifyAll()
         }
     }
 
@@ -1534,6 +1747,10 @@ private class StageOneVideoDecoder(
             )
             config = value
             configFingerprint = newFingerprint
+            layoutMetrics = layoutMetrics.copy(
+                sourceWidth = value.width,
+                sourceHeight = value.height,
+            )
 
             if (!changed && codec != null && configuredFingerprint == newFingerprint) {
                 lastDecoderError = null
@@ -1560,6 +1777,10 @@ private class StageOneVideoDecoder(
         return synchronized(lock) {
             receivedAccessUnitCounter.record(arrivalUs)
             recordFrameSequenceLocked(sequenceNumber)
+            if (paused) {
+                droppedFrames += 1
+                return@synchronized false
+            }
             if (needsKeyFrame && !keyFrame) {
                 droppedFrames += 1
                 lastDecoderError = "Waiting for an IDR frame after decoder configuration."
@@ -1647,6 +1868,10 @@ private class StageOneVideoDecoder(
                 lastDecoderError = "Dropped queued non-key access unit while waiting for IDR."
                 return
             }
+            if (paused) {
+                droppedFrames += 1
+                return
+            }
             val activeCodec = codec
             if (activeCodec == null) {
                 droppedFrames += 1
@@ -1685,9 +1910,10 @@ private class StageOneVideoDecoder(
                 decoderInputFrames += 1
                 decoderInputCounter.record(decoderInputUs)
                 recordDecoderInputLocked(unit.ptsUs, unit.arrivalUs, decoderInputUs)
-                if (unit.keyFrame) {
-                    needsKeyFrame = false
-                }
+            if (unit.keyFrame) {
+                needsKeyFrame = false
+                rendererMode = "lowLatencyPaced"
+            }
                 drainOutputLocked(activeCodec)
                 lastDecoderError = null
             } catch (error: MediaCodec.CodecException) {
@@ -1775,7 +2001,7 @@ private class StageOneVideoDecoder(
                 activeConfig.height,
             )
             format.setInteger(MediaFormat.KEY_FRAME_RATE, activeConfig.fps)
-            format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 2 * 1024 * 1024)
+            format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 4 * 1024 * 1024)
             format.setByteBuffer("csd-0", ByteBuffer.wrap(activeConfig.sps))
             format.setByteBuffer("csd-1", ByteBuffer.wrap(activeConfig.pps))
             applyOptionalDecoderLowLatencyFormatOptions(format)
@@ -1972,6 +2198,16 @@ private class StageOneVideoDecoder(
         }
         avSyncAverageMs = if (avSyncSamples.isEmpty()) 0.0 else avSyncSamples.average()
         avSyncP95Ms = percentile95(avSyncSamples.toList())
+    }
+
+    private fun resetPacingLocked() {
+        firstPacingPtsUs = null
+        firstLocalRenderTimeNs = null
+        avSyncSamples.clear()
+        avSyncOffsetMs = 0.0
+        avSyncAverageMs = 0.0
+        avSyncP95Ms = 0.0
+        syncMaster = "videoLocal"
     }
 
     private fun recordDecoderOutputLocked(ptsUs: Long) {
@@ -2485,6 +2721,16 @@ private enum class ControlRequestType {
     STREAM_STOP,
 }
 
+private data class ControlRequest(
+    val type: ControlRequestType,
+    val sessionId: String,
+)
+
+private sealed class WireMessage {
+    data class Packet(val packet: VideoPacket) : WireMessage()
+    data class ControlLine(val json: String) : WireMessage()
+}
+
 private const val MEDIA_FORMAT_KEY_CROP_LEFT = "crop-left"
 private const val MEDIA_FORMAT_KEY_CROP_RIGHT = "crop-right"
 private const val MEDIA_FORMAT_KEY_CROP_TOP = "crop-top"
@@ -2510,6 +2756,10 @@ private data class VideoPacket(
 
         fun readFrom(input: InputStream): VideoPacket? {
             val lengthBytes = readFullyOrNull(input, 4) ?: return null
+            return readFromLengthPrefix(lengthBytes, input)
+        }
+
+        fun readFromLengthPrefix(lengthBytes: ByteArray, input: InputStream): VideoPacket {
             val packetLength = ByteBuffer.wrap(lengthBytes)
                 .order(ByteOrder.BIG_ENDIAN)
                 .int
@@ -2587,6 +2837,31 @@ private data class VideoPacket(
             )
         }
     }
+}
+
+private fun readWireMessage(input: InputStream): WireMessage? {
+    val firstBytes = readFullyOrNull(input, 4) ?: return null
+    if ((firstBytes[0].toInt() and 0xFF) == '{'.code) {
+        val bytes = ArrayList<Byte>()
+        for (value in firstBytes) {
+            if (value.toInt() == '\n'.code) {
+                return WireMessage.ControlLine(bytes.toByteArray().toString(StandardCharsets.UTF_8))
+            }
+            bytes.add(value)
+        }
+        while (bytes.size < 64 * 1024) {
+            val next = input.read()
+            if (next < 0) {
+                throw EOFException()
+            }
+            if (next == '\n'.code) {
+                return WireMessage.ControlLine(bytes.toByteArray().toString(StandardCharsets.UTF_8))
+            }
+            bytes.add(next.toByte())
+        }
+        throw IllegalArgumentException("control line is larger than the configured limit")
+    }
+    return WireMessage.Packet(VideoPacket.readFromLengthPrefix(firstBytes, input))
 }
 
 private data class H264StreamConfig(
@@ -2934,7 +3209,7 @@ private fun writeJsonLine(socket: Socket, json: JSONObject) {
     socket.getOutputStream().flush()
 }
 
-private fun parseControlRequestType(value: String): ControlRequestType {
+private fun parseControlRequest(value: String): ControlRequest {
     val json = try {
         JSONObject(value)
     } catch (_: Exception) {
@@ -2945,9 +3220,17 @@ private fun parseControlRequestType(value: String): ControlRequestType {
     return when (val type = json.optString("type")) {
         "stream.start" -> {
             validatePerformanceProfile(json)
-            ControlRequestType.STREAM_START
+            ControlRequest(
+                type = ControlRequestType.STREAM_START,
+                sessionId = json.optString("sessionId"),
+            )
         }
-        "stream.stop" -> ControlRequestType.STREAM_STOP
+        "stream.stop" -> {
+            ControlRequest(
+                type = ControlRequestType.STREAM_STOP,
+                sessionId = json.optString("sessionId"),
+            )
+        }
         else -> throw IllegalArgumentException("unsupported control request type: $type")
     }
 }
@@ -2960,7 +3243,8 @@ private fun validatePerformanceProfile(json: JSONObject) {
     )
     require(
         profile == PERFORMANCE_PROFILE_LOW_LATENCY_720P30 ||
-            profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
+            profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30 ||
+            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
     ) {
         "unsupported performance profile: $profile"
     }

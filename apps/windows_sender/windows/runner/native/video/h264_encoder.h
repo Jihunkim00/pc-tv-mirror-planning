@@ -6,6 +6,7 @@
 #include <mfidl.h>
 #include <mftransform.h>
 
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -46,12 +47,16 @@ class H264Encoder {
   H264Encoder(const H264Encoder&) = delete;
   H264Encoder& operator=(const H264Encoder&) = delete;
 
-  bool Start(std::string* error);
+  bool Start(const VideoStreamConfig& config, std::string* error);
+  bool Start(std::string* error) {
+    return Start(VideoStreamConfig{}, error);
+  }
   bool Encode(const Nv12Frame& frame,
               std::vector<EncodedAccessUnit>* output,
               bool* input_accepted,
               bool* backpressure_dropped,
               std::string* error);
+  void RequestKeyFrame();
   void Stop();
   H264ParameterSets parameter_sets() const { return parameter_sets_; }
   H264EncoderDiagnostics diagnostics() const;
@@ -71,6 +76,7 @@ class H264Encoder {
       const std::vector<std::uint8_t>& encoded) const;
 
   winrt::com_ptr<IMFTransform> transform_;
+  VideoStreamConfig config_;
   std::vector<std::uint8_t> sequence_header_;
   H264ParameterSets parameter_sets_;
   H264EncoderDiagnostics diagnostics_;
@@ -80,7 +86,7 @@ class H264Encoder {
   std::uint64_t first_pts_us_ = 0;
   std::uint64_t encoder_backpressure_count_ = 0;
   std::uint64_t encoder_backpressure_dropped_frames_ = 0;
-  bool force_next_key_frame_ = false;
+  std::atomic_bool force_next_key_frame_{false};
   bool mf_started_ = false;
 };
 

@@ -55,6 +55,9 @@ class _MirroringPageState extends State<MirroringPage> {
                   onStart: _start,
                   onStop: _controller.stop,
                   onSystemAudioChanged: _controller.setSystemAudioEnabled,
+                  onPcLocalAudioMuteChanged:
+                      _controller.setPcLocalAudioMuteRequested,
+                  onVideoProfileChanged: _controller.setVideoProfile,
                 );
 
                 return Padding(
@@ -279,6 +282,8 @@ class _SessionPanel extends StatelessWidget {
     required this.onStart,
     required this.onStop,
     required this.onSystemAudioChanged,
+    required this.onPcLocalAudioMuteChanged,
+    required this.onVideoProfileChanged,
   });
 
   final MirrorController controller;
@@ -288,9 +293,20 @@ class _SessionPanel extends StatelessWidget {
   final VoidCallback onStart;
   final VoidCallback onStop;
   final ValueChanged<bool> onSystemAudioChanged;
+  final ValueChanged<bool> onPcLocalAudioMuteChanged;
+  final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
 
   @override
   Widget build(BuildContext context) {
+    final pcMuteUnsupported =
+        controller.pcLocalAudioMuteRequested &&
+        !(controller.snapshot?.pcLocalAudioMuteSupported ?? false);
+    final pcMuteSubtitle = pcMuteUnsupported
+        ? 'Unavailable: separate PC/TV audio routing is not configured'
+        : controller.pcLocalAudioMuteRequested
+        ? 'PC muted - TV audio continues'
+        : 'PC audio on - TV audio continues';
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainer,
@@ -305,7 +321,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 3 session',
+                  'Stage 4 session',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
@@ -339,6 +355,34 @@ class _SessionPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          DropdownButtonFormField<SenderVideoProfile>(
+            initialValue: controller.videoProfile,
+            isExpanded: true,
+            items: SenderVideoProfile.values
+                .map(
+                  (profile) => DropdownMenuItem(
+                    value: profile,
+                    child: Text(
+                      profile.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: controller.isRunning
+                ? null
+                : (value) {
+                    if (value != null) {
+                      onVideoProfileChanged(value);
+                    }
+                  },
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Video profile',
+            ),
+          ),
+          const SizedBox(height: 8),
           Material(
             type: MaterialType.transparency,
             child: SwitchListTile(
@@ -347,6 +391,19 @@ class _SessionPanel extends StatelessWidget {
               onChanged: controller.isRunning ? null : onSystemAudioChanged,
               title: const Text('System audio'),
               secondary: const Icon(Icons.volume_up),
+            ),
+          ),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: controller.pcLocalAudioMuteRequested,
+              onChanged: controller.busy || !controller.systemAudioEnabled
+                  ? null
+                  : onPcLocalAudioMuteChanged,
+              title: const Text('Mute PC speakers'),
+              subtitle: Text(pcMuteSubtitle),
+              secondary: const Icon(Icons.speaker),
             ),
           ),
           const SizedBox(height: 16),
@@ -413,6 +470,12 @@ class _SenderCounters extends StatelessWidget {
               title: 'Capture',
               rows: [
                 _MetricRow(
+                  label: 'Profile',
+                  value:
+                      '${snapshot.selectedProfile} - ${snapshot.outputResolution} - '
+                      '${snapshot.currentBitrateKbps} kbps',
+                ),
+                _MetricRow(
                   label: 'Target / actual',
                   value:
                       '${snapshot.targetFps.toStringAsFixed(1)} / '
@@ -427,6 +490,11 @@ class _SenderCounters extends StatelessWidget {
                   label: 'Interval p95',
                   value:
                       '${snapshot.captureFrameIntervalP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Target interval',
+                  value:
+                      '${snapshot.targetFrameIntervalMs.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
                   label: 'Replaced / cadence',
@@ -511,6 +579,11 @@ class _SenderCounters extends StatelessWidget {
                   value: '${snapshot.sentVideoFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
+                  label: 'Send interval p95',
+                  value:
+                      '${snapshot.sendFrameIntervalP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
                   label: 'Send duration',
                   value:
                       '${snapshot.accessUnitSendDurationAverageMs.toStringAsFixed(1)}/'
@@ -528,6 +601,18 @@ class _SenderCounters extends StatelessWidget {
                 _MetricRow(
                   label: 'Queue depth',
                   value: '${snapshot.queueDepthTransport}',
+                ),
+                _MetricRow(
+                  label: 'Queue wait avg/p95',
+                  value:
+                      '${snapshot.videoQueueWaitAverageMs.toStringAsFixed(1)}/'
+                      '${snapshot.videoQueueWaitP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Stale video drops',
+                  value:
+                      '${snapshot.staleVideoDroppedFrames} '
+                      '(${snapshot.staleVideoDroppedFps.toStringAsFixed(1)} fps)',
                 ),
               ],
             ),
@@ -580,6 +665,52 @@ class _SenderCounters extends StatelessWidget {
                     label: 'Audio error',
                     value: snapshot.audioLastError,
                   ),
+                _MetricRow(
+                  label: 'Mute PC speakers',
+                  value:
+                      'requested ${snapshot.pcLocalAudioMuteRequested}, '
+                      'supported ${snapshot.pcLocalAudioMuteSupported}, '
+                      'applied ${snapshot.pcLocalAudioMuteApplied}, '
+                      'original ${snapshot.pcLocalAudioOriginalMuteState}',
+                ),
+                _MetricRow(
+                  label: 'TV audio path',
+                  value:
+                      'stream ${snapshot.tvAudioStreaming}, '
+                      'cap ${snapshot.audioCaptureActive}, '
+                      'enc ${snapshot.audioEncoderActive}, '
+                      'net ${snapshot.audioTransportActive}',
+                ),
+                _MetricRow(
+                  label: 'Audio routing',
+                  value: snapshot.audioRoutingMode,
+                ),
+                if (snapshot.audioMuteUnsupportedReason.isNotEmpty)
+                  _MetricRow(
+                    label: 'Speaker route error',
+                    value: snapshot.audioMuteUnsupportedReason,
+                  ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricSection(
+              title: 'Playback control',
+              rows: [
+                _MetricRow(label: 'State', value: snapshot.playbackState),
+                _MetricRow(
+                  label: 'Pause / resume',
+                  value:
+                      '${snapshot.pauseRequestsReceived} / ${snapshot.resumeRequestsReceived}',
+                ),
+                _MetricRow(
+                  label: 'ACK / error',
+                  value:
+                      '${snapshot.playbackCommandAcksSent} / ${snapshot.playbackCommandErrorsSent}',
+                ),
+                _MetricRow(
+                  label: 'Resume config resend',
+                  value: '${snapshot.resumeCodecConfigResends}',
+                ),
               ],
             ),
             const Divider(height: 18),
@@ -601,7 +732,8 @@ class _SenderCounters extends StatelessWidget {
               value:
                   'conv ${snapshot.conversionBackpressureDroppedFrames}, '
                   'enc ${snapshot.encoderBackpressureDroppedFrames}, '
-                  'net ${snapshot.transportBackpressureDroppedFrames}',
+                  'net ${snapshot.transportBackpressureDroppedFrames}, '
+                  'stale ${snapshot.staleVideoDroppedFrames}',
             ),
             _MetricRow(
               label: 'Config sent',

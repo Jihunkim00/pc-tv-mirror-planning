@@ -27,6 +27,8 @@ class ReceiverController extends ChangeNotifier {
   String get statusMessage => _statusMessage;
   List<String> get log => List.unmodifiable(_log);
   bool get busy => _busy;
+  bool get pauseCommandPending => _snapshot?.pauseCommandPending ?? false;
+  bool get resumeCommandPending => _snapshot?.resumeCommandPending ?? false;
 
   Future<void> initialize() async {
     if (_busy) {
@@ -74,6 +76,26 @@ class ReceiverController extends ChangeNotifier {
       _applySnapshot(snapshot, notify: true);
     } catch (error) {
       _appendLog('Audio mute update failed: $error');
+      notifyListeners();
+    }
+  }
+
+  Future<void> pausePlayback() async {
+    await _sendPlaybackCommand('pause');
+  }
+
+  Future<void> resumePlayback() async {
+    await _sendPlaybackCommand('resume');
+  }
+
+  Future<void> _sendPlaybackCommand(String command) async {
+    try {
+      final snapshot = await _nativeApi.sendPlaybackCommand(command);
+      _applySnapshot(snapshot);
+      _appendLog('Playback $command requested.');
+      notifyListeners();
+    } catch (error) {
+      _appendLog('Playback $command failed: $error');
       notifyListeners();
     }
   }

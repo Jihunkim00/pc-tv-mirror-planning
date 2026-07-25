@@ -11,6 +11,8 @@ abstract interface class MirrorNativeApi {
   Future<NativeSessionSnapshot> stopSession(String sessionId);
 
   Future<NativeSessionSnapshot> getSessionStatus();
+
+  Future<NativeSessionSnapshot> setPcLocalAudioMuteRequested(bool requested);
 }
 
 final class MethodChannelMirrorNativeApi implements MirrorNativeApi {
@@ -56,6 +58,17 @@ final class MethodChannelMirrorNativeApi implements MirrorNativeApi {
     );
     return NativeSessionSnapshot.fromJson(_asJsonMap(result));
   }
+
+  @override
+  Future<NativeSessionSnapshot> setPcLocalAudioMuteRequested(
+    bool requested,
+  ) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'setPcLocalAudioMuteRequested',
+      {'requested': requested},
+    );
+    return NativeSessionSnapshot.fromJson(_asJsonMap(result));
+  }
 }
 
 final class StartMirrorSessionRequest {
@@ -63,11 +76,13 @@ final class StartMirrorSessionRequest {
     required this.receiverHost,
     required this.receiverPort,
     required this.streamRequest,
+    this.pcLocalAudioMuteRequested = false,
   });
 
   final String receiverHost;
   final int receiverPort;
   final StreamStartRequest streamRequest;
+  final bool pcLocalAudioMuteRequested;
 
   Map<String, Object?> toNativeArguments() {
     return {
@@ -76,6 +91,13 @@ final class StartMirrorSessionRequest {
       'sourceId': streamRequest.sourceId,
       'requestJson': jsonEncode(streamRequest.toJson()),
       'audioEnabled': streamRequest.audio?.enabled ?? false,
+      'videoWidth': streamRequest.video.width,
+      'videoHeight': streamRequest.video.height,
+      'videoFps': streamRequest.video.fps,
+      'videoBitrateKbps': streamRequest.video.bitrateKbps,
+      'videoPerformanceProfile':
+          streamRequest.video.performanceProfile.wireName,
+      'pcLocalAudioMuteRequested': pcLocalAudioMuteRequested,
     };
   }
 }
@@ -106,17 +128,21 @@ final class NativeSessionSnapshot {
     this.captureFrameIntervalP95Ms = 0,
     this.encodeFrameIntervalAverageMs = 0,
     this.sendFrameIntervalAverageMs = 0,
+    this.sendFrameIntervalP95Ms = 0,
     this.captureToConvertAverageMs = 0,
     this.convertToEncodeAverageMs = 0,
     this.encodeDurationAverageMs = 0,
     this.encodeDurationP95Ms = 0,
     this.encodeToSendAverageMs = 0,
+    this.videoQueueWaitAverageMs = 0,
+    this.videoQueueWaitP95Ms = 0,
     this.capturedFrames = 0,
     this.captureReplacedFrames = 0,
     this.cadenceSkippedFrames = 0,
     this.conversionBackpressureDroppedFrames = 0,
     this.encoderBackpressureDroppedFrames = 0,
     this.transportBackpressureDroppedFrames = 0,
+    this.staleVideoDroppedFrames = 0,
     this.shutdownDroppedFrames = 0,
     this.totalDroppedFrames = 0,
     this.captureDroppedFrames = 0,
@@ -144,6 +170,11 @@ final class NativeSessionSnapshot {
     this.averageCaptureToEncodeMs = 0,
     this.maxCaptureToEncodeMs = 0,
     this.admittedToEncodedRatio = 0,
+    this.selectedProfile = 'lowLatency720p30',
+    this.outputResolution = '1280x720',
+    this.currentBitrateKbps = 6000,
+    this.targetFrameIntervalMs = 33.333,
+    this.staleVideoDroppedFps = 0,
     this.selectedEncoderName = 'unknown',
     this.selectedEncoderHardware = false,
     this.selectedEncoderAsync = false,
@@ -191,6 +222,25 @@ final class NativeSessionSnapshot {
     this.audioCpuTimeMs = 0,
     this.packetWriterVideoWaitMs = 0,
     this.packetWriterAudioWaitMs = 0,
+    this.playbackState = 'idle',
+    this.pauseRequestsReceived = 0,
+    this.resumeRequestsReceived = 0,
+    this.playbackCommandAcksSent = 0,
+    this.playbackCommandErrorsSent = 0,
+    this.resumeCodecConfigResends = 0,
+    this.localSpeakerMuteMode = 'pcAndTv',
+    this.localSpeakerMuteState = 'disabled',
+    this.localSpeakerMuteLastError = '',
+    this.pcLocalAudioMuteRequested = false,
+    this.pcLocalAudioMuteSupported = false,
+    this.pcLocalAudioMuteApplied = false,
+    this.pcLocalAudioOriginalMuteState = false,
+    this.tvAudioStreaming = false,
+    this.audioCaptureActive = false,
+    this.audioEncoderActive = false,
+    this.audioTransportActive = false,
+    this.audioRoutingMode = 'defaultRenderEndpointLoopback',
+    this.audioMuteUnsupportedReason = '',
     this.errorCode,
     this.developerMessage,
   });
@@ -219,17 +269,21 @@ final class NativeSessionSnapshot {
   final double captureFrameIntervalP95Ms;
   final double encodeFrameIntervalAverageMs;
   final double sendFrameIntervalAverageMs;
+  final double sendFrameIntervalP95Ms;
   final double captureToConvertAverageMs;
   final double convertToEncodeAverageMs;
   final double encodeDurationAverageMs;
   final double encodeDurationP95Ms;
   final double encodeToSendAverageMs;
+  final double videoQueueWaitAverageMs;
+  final double videoQueueWaitP95Ms;
   final int capturedFrames;
   final int captureReplacedFrames;
   final int cadenceSkippedFrames;
   final int conversionBackpressureDroppedFrames;
   final int encoderBackpressureDroppedFrames;
   final int transportBackpressureDroppedFrames;
+  final int staleVideoDroppedFrames;
   final int shutdownDroppedFrames;
   final int totalDroppedFrames;
   final int captureDroppedFrames;
@@ -257,6 +311,11 @@ final class NativeSessionSnapshot {
   final double averageCaptureToEncodeMs;
   final double maxCaptureToEncodeMs;
   final double admittedToEncodedRatio;
+  final String selectedProfile;
+  final String outputResolution;
+  final int currentBitrateKbps;
+  final double targetFrameIntervalMs;
+  final double staleVideoDroppedFps;
   final String selectedEncoderName;
   final bool selectedEncoderHardware;
   final bool selectedEncoderAsync;
@@ -304,6 +363,25 @@ final class NativeSessionSnapshot {
   final double audioCpuTimeMs;
   final double packetWriterVideoWaitMs;
   final double packetWriterAudioWaitMs;
+  final String playbackState;
+  final int pauseRequestsReceived;
+  final int resumeRequestsReceived;
+  final int playbackCommandAcksSent;
+  final int playbackCommandErrorsSent;
+  final int resumeCodecConfigResends;
+  final String localSpeakerMuteMode;
+  final String localSpeakerMuteState;
+  final String localSpeakerMuteLastError;
+  final bool pcLocalAudioMuteRequested;
+  final bool pcLocalAudioMuteSupported;
+  final bool pcLocalAudioMuteApplied;
+  final bool pcLocalAudioOriginalMuteState;
+  final bool tvAudioStreaming;
+  final bool audioCaptureActive;
+  final bool audioEncoderActive;
+  final bool audioTransportActive;
+  final String audioRoutingMode;
+  final String audioMuteUnsupportedReason;
   final MirrorErrorCode? errorCode;
   final String? developerMessage;
 
@@ -349,6 +427,10 @@ final class NativeSessionSnapshot {
         json,
         'sendFrameIntervalAverageMs',
       ),
+      sendFrameIntervalP95Ms: _readOptionalDouble(
+        json,
+        'sendFrameIntervalP95Ms',
+      ),
       captureToConvertAverageMs: _readOptionalDouble(
         json,
         'captureToConvertAverageMs',
@@ -363,6 +445,11 @@ final class NativeSessionSnapshot {
       ),
       encodeDurationP95Ms: _readOptionalDouble(json, 'encodeDurationP95Ms'),
       encodeToSendAverageMs: _readOptionalDouble(json, 'encodeToSendAverageMs'),
+      videoQueueWaitAverageMs: _readOptionalDouble(
+        json,
+        'videoQueueWaitAverageMs',
+      ),
+      videoQueueWaitP95Ms: _readOptionalDouble(json, 'videoQueueWaitP95Ms'),
       capturedFrames: _readOptionalInt(json, 'capturedFrames'),
       captureReplacedFrames: _readOptionalInt(json, 'captureReplacedFrames'),
       cadenceSkippedFrames: _readOptionalInt(json, 'cadenceSkippedFrames'),
@@ -377,6 +464,10 @@ final class NativeSessionSnapshot {
       transportBackpressureDroppedFrames: _readOptionalInt(
         json,
         'transportBackpressureDroppedFrames',
+      ),
+      staleVideoDroppedFrames: _readOptionalInt(
+        json,
+        'staleVideoDroppedFrames',
       ),
       shutdownDroppedFrames: _readOptionalInt(json, 'shutdownDroppedFrames'),
       totalDroppedFrames: _readOptionalInt(json, 'totalDroppedFrames'),
@@ -432,6 +523,27 @@ final class NativeSessionSnapshot {
         json,
         'admittedToEncodedRatio',
       ),
+      selectedProfile: _readOptionalString(
+        json,
+        'selectedProfile',
+        defaultValue: 'lowLatency720p30',
+      ),
+      outputResolution: _readOptionalString(
+        json,
+        'outputResolution',
+        defaultValue: '1280x720',
+      ),
+      currentBitrateKbps: _readOptionalInt(
+        json,
+        'currentBitrateKbps',
+        defaultValue: 6000,
+      ),
+      targetFrameIntervalMs: _readOptionalDouble(
+        json,
+        'targetFrameIntervalMs',
+        defaultValue: 33.333,
+      ),
+      staleVideoDroppedFps: _readOptionalDouble(json, 'staleVideoDroppedFps'),
       selectedEncoderName: _readOptionalString(json, 'selectedEncoderName'),
       selectedEncoderHardware: _readOptionalBool(
         json,
@@ -544,6 +656,70 @@ final class NativeSessionSnapshot {
         json,
         'packetWriterAudioWaitMs',
       ),
+      playbackState: _readOptionalString(
+        json,
+        'playbackState',
+        defaultValue: 'idle',
+      ),
+      pauseRequestsReceived: _readOptionalInt(json, 'pauseRequestsReceived'),
+      resumeRequestsReceived: _readOptionalInt(json, 'resumeRequestsReceived'),
+      playbackCommandAcksSent: _readOptionalInt(
+        json,
+        'playbackCommandAcksSent',
+      ),
+      playbackCommandErrorsSent: _readOptionalInt(
+        json,
+        'playbackCommandErrorsSent',
+      ),
+      resumeCodecConfigResends: _readOptionalInt(
+        json,
+        'resumeCodecConfigResends',
+      ),
+      localSpeakerMuteMode: _readOptionalString(
+        json,
+        'localSpeakerMuteMode',
+        defaultValue: 'pcAndTv',
+      ),
+      localSpeakerMuteState: _readOptionalString(
+        json,
+        'localSpeakerMuteState',
+        defaultValue: 'disabled',
+      ),
+      localSpeakerMuteLastError: _readOptionalString(
+        json,
+        'localSpeakerMuteLastError',
+        defaultValue: '',
+      ),
+      pcLocalAudioMuteRequested: _readOptionalBool(
+        json,
+        'pcLocalAudioMuteRequested',
+      ),
+      pcLocalAudioMuteSupported: _readOptionalBool(
+        json,
+        'pcLocalAudioMuteSupported',
+      ),
+      pcLocalAudioMuteApplied: _readOptionalBool(
+        json,
+        'pcLocalAudioMuteApplied',
+      ),
+      pcLocalAudioOriginalMuteState: _readOptionalBool(
+        json,
+        'pcLocalAudioOriginalMuteState',
+      ),
+      tvAudioStreaming: _readOptionalBool(json, 'tvAudioStreaming'),
+      audioCaptureActive: _readOptionalBool(json, 'audioCaptureActive'),
+      audioEncoderActive: _readOptionalBool(json, 'audioEncoderActive'),
+      audioTransportActive: _readOptionalBool(json, 'audioTransportActive'),
+      audioRoutingMode: _readOptionalString(
+        json,
+        'audioRoutingMode',
+        defaultValue: 'defaultRenderEndpointLoopback',
+      ),
+      audioMuteUnsupportedReason: _readOptionalString(
+        json,
+        'audioMuteUnsupportedReason',
+        defaultValue: '',
+      ),
       errorCode: errorCode == null
           ? null
           : MirrorErrorCode.fromWireName(_readString(json, 'errorCode')),
@@ -578,10 +754,14 @@ bool _readBool(Map<String, Object?> json, String key) {
   throw FormatException('Expected bool for $key');
 }
 
-int _readOptionalInt(Map<String, Object?> json, String key) {
+int _readOptionalInt(
+  Map<String, Object?> json,
+  String key, {
+  int defaultValue = 0,
+}) {
   final value = json[key];
   if (value == null) {
-    return 0;
+    return defaultValue;
   }
   if (value is int) {
     return value;

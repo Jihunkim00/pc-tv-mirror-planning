@@ -34,8 +34,11 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   int _focusRestoreRetryCount = 0;
   bool _fullscreenMode = false;
   bool _autoFullscreen = true;
+  bool _autoFullscreenEnteredForSession = false;
+  bool _userExitedFullscreen = false;
   String _scaleMode = 'fit';
   int _lastRemoteActionMs = 0;
+  int? _lastConnectionId;
 
   static const MethodChannel _receiverControlsChannel = MethodChannel(
     'pc_tv_mirror/receiver_controls',
@@ -82,12 +85,20 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   void _handleControllerChanged() {
     _scheduleFocusRestore();
     final snapshot = _controller.snapshot;
+    final connectionId = snapshot?.connectionId ?? 0;
+    if (_lastConnectionId != connectionId) {
+      _lastConnectionId = connectionId;
+      _autoFullscreenEnteredForSession = false;
+      _userExitedFullscreen = false;
+    }
     if (_autoFullscreen &&
+        !_autoFullscreenEnteredForSession &&
+        !_userExitedFullscreen &&
         widget.showNativeSurface &&
         !_fullscreenMode &&
         _controller.state == MirrorSessionState.streaming &&
         (snapshot?.releasedToSurfaceFrames ?? 0) > 0) {
-      _enterFullscreen();
+      _enterFullscreen(automatic: true);
     }
   }
 
@@ -104,23 +115,32 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     _scheduleFocusRestore();
   }
 
-  void _enterFullscreen() {
+  void _enterFullscreen({bool automatic = false, bool explicit = false}) {
     if (_fullscreenMode || !mounted) {
       return;
     }
     setState(() {
       _fullscreenMode = true;
+      if (automatic) {
+        _autoFullscreenEnteredForSession = true;
+      }
+      if (explicit) {
+        _userExitedFullscreen = false;
+      }
     });
     _sendFullscreenStateToNative(true);
     _setFullscreenSystemUi(true);
   }
 
-  void _exitFullscreen() {
+  void _exitFullscreen({bool userInitiatedBack = false}) {
     if (!_fullscreenMode || !mounted) {
       return;
     }
     setState(() {
       _fullscreenMode = false;
+      if (userInitiatedBack) {
+        _userExitedFullscreen = true;
+      }
     });
     _sendFullscreenStateToNative(false);
     _setFullscreenSystemUi(false);
@@ -139,15 +159,32 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     }
     _lastRemoteActionMs = nowMs;
     if (action == 'exitFullscreen' && _fullscreenMode) {
-      _exitFullscreen();
+      _exitFullscreen(userInitiatedBack: true);
+    } else if (action == 'playPause' && _fullscreenMode) {
+      unawaited(_togglePlaybackPause());
     } else if (action == 'toggleFullscreen') {
-      if (_fullscreenMode) {
-        _exitFullscreen();
-      } else if (_controller.state == MirrorSessionState.streaming) {
-        _enterFullscreen();
+      if (!_fullscreenMode && _canEnterFullscreen) {
+        _enterFullscreen(explicit: true);
       }
     }
     return null;
+  }
+
+  bool get _canEnterFullscreen {
+    return _controller.state == MirrorSessionState.streaming ||
+        _controller.state == MirrorSessionState.paused ||
+        _controller.state == MirrorSessionState.resuming;
+  }
+
+  Future<void> _togglePlaybackPause() async {
+    if (_controller.pauseCommandPending || _controller.resumeCommandPending) {
+      return;
+    }
+    if (_controller.state == MirrorSessionState.streaming) {
+      await _controller.pausePlayback();
+    } else if (_controller.state == MirrorSessionState.paused) {
+      await _controller.resumePlayback();
+    }
   }
 
   void _sendFullscreenStateToNative(bool enabled) {
@@ -220,7 +257,9 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
 
   FocusNode _preferredFocusNodeForState(MirrorSessionState state) {
     return switch (state) {
-      MirrorSessionState.streaming => _fullscreenFocusNode,
+      MirrorSessionState.streaming ||
+      MirrorSessionState.paused ||
+      MirrorSessionState.resuming => _fullscreenFocusNode,
       MirrorSessionState.idle ||
       MirrorSessionState.starting ||
       MirrorSessionState.listening ||
@@ -228,6 +267,8 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
       MirrorSessionState.negotiating ||
       MirrorSessionState.waitingForSurface ||
       MirrorSessionState.waitingForKeyFrame ||
+      MirrorSessionState.disconnected ||
+      MirrorSessionState.error ||
       MirrorSessionState.stopping ||
       MirrorSessionState.restoring ||
       MirrorSessionState.failed => _restartFocusNode,
@@ -290,10 +331,14 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                                   fullscreenFocusNode: _fullscreenFocusNode,
                                   stopFocusNode: _stopFocusNode,
                                   autoFullscreen: _autoFullscreen,
+                                  autoFullscreenEnteredForSession:
+                                      _autoFullscreenEnteredForSession,
+                                  userExitedFullscreen: _userExitedFullscreen,
                                   scaleMode: _scaleMode,
                                   fullscreenEnabled: _fullscreenMode,
                                   onRestart: _restartReceiver,
-                                  onEnterFullscreen: _enterFullscreen,
+                                  onEnterFullscreen: () =>
+                                      _enterFullscreen(explicit: true),
                                   onStop: _stopReceiver,
                                   onAutoFullscreenChanged: (value) {
                                     setState(() {
@@ -330,8 +375,12 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
         key == LogicalKeyboardKey.browserBack ||
         key == LogicalKeyboardKey.escape;
     if (_fullscreenMode) {
-      if (event is KeyUpEvent && (isBackKey || isToggleKey)) {
-        _exitFullscreen();
+      if (event is KeyUpEvent && isBackKey) {
+        _exitFullscreen(userInitiatedBack: true);
+        return KeyEventResult.handled;
+      }
+      if (event is KeyUpEvent && isToggleKey) {
+        unawaited(_togglePlaybackPause());
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.mediaPlayPause) {
@@ -486,6 +535,8 @@ class _ReceiverStatusPanel extends StatelessWidget {
     required this.fullscreenFocusNode,
     required this.stopFocusNode,
     required this.autoFullscreen,
+    required this.autoFullscreenEnteredForSession,
+    required this.userExitedFullscreen,
     required this.scaleMode,
     required this.fullscreenEnabled,
     required this.onRestart,
@@ -500,6 +551,8 @@ class _ReceiverStatusPanel extends StatelessWidget {
   final FocusNode fullscreenFocusNode;
   final FocusNode stopFocusNode;
   final bool autoFullscreen;
+  final bool autoFullscreenEnteredForSession;
+  final bool userExitedFullscreen;
   final String scaleMode;
   final bool fullscreenEnabled;
   final VoidCallback onRestart;
@@ -547,7 +600,10 @@ class _ReceiverStatusPanel extends StatelessWidget {
             child: TvFocusButton(
               key: const Key('receiver.restartButton'),
               focusNode: restartFocusNode,
-              autofocus: controller.state != MirrorSessionState.streaming,
+              autofocus:
+                  controller.state != MirrorSessionState.streaming &&
+                  controller.state != MirrorSessionState.paused &&
+                  controller.state != MirrorSessionState.resuming,
               enabled: !controller.busy,
               onPressed: onRestart,
               onNextFocus: fullscreenFocusNode.requestFocus,
@@ -561,7 +617,10 @@ class _ReceiverStatusPanel extends StatelessWidget {
             child: TvFocusButton(
               key: const Key('receiver.fullscreenButton'),
               focusNode: fullscreenFocusNode,
-              autofocus: controller.state == MirrorSessionState.streaming,
+              autofocus:
+                  controller.state == MirrorSessionState.streaming ||
+                  controller.state == MirrorSessionState.paused ||
+                  controller.state == MirrorSessionState.resuming,
               enabled: !controller.busy && !fullscreenEnabled,
               onPressed: onEnterFullscreen,
               onPreviousFocus: restartFocusNode.requestFocus,
@@ -734,6 +793,18 @@ class _ReceiverStatusPanel extends StatelessWidget {
           const SizedBox(height: 8),
           _MetricRow(label: 'Fullscreen', value: '$fullscreenEnabled'),
           _MetricRow(label: 'Auto fullscreen', value: '$autoFullscreen'),
+          _MetricRow(
+            label: 'Auto entered',
+            value: '$autoFullscreenEnteredForSession',
+          ),
+          _MetricRow(label: 'User exited', value: '$userExitedFullscreen'),
+          _MetricRow(
+            label: 'Playback',
+            value:
+                '${snapshot?.playbackState ?? controller.state.wireName} '
+                'pause ${snapshot?.pauseCommandPending ?? false} '
+                'resume ${snapshot?.resumeCommandPending ?? false}',
+          ),
           _MetricRow(label: 'Scale mode', value: scaleMode),
           _MetricRow(
             label: 'Display',

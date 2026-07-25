@@ -254,6 +254,13 @@ void main() {
       'audioCodec': 'audio/mp4a-latm',
       'audioSampleRate': 48000,
       'audioChannels': 2,
+      'connectionId': 3,
+      'sessionId': 'session-3',
+      'playbackState': 'streaming',
+      'pauseCommandPending': false,
+      'resumeCommandPending': false,
+      'playbackCommandAcksReceived': 2,
+      'playbackCommandErrorsReceived': 0,
     });
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
@@ -307,6 +314,10 @@ void main() {
     expect(snapshot.audioDecoderName, 'c2.android.aac.decoder');
     expect(snapshot.audioBufferedDurationMs, 96.0);
     expect(snapshot.audioTrackWrittenFrames, 8192);
+    expect(snapshot.connectionId, 3);
+    expect(snapshot.sessionId, 'session-3');
+    expect(snapshot.playbackState, 'streaming');
+    expect(snapshot.playbackCommandAcksReceived, 2);
     expect(snapshot.bottleneckSummary, 'healthy_27_plus');
   });
 
@@ -376,6 +387,8 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
   int? startedPort;
   int startCalls = 0;
   int stopCalls = 0;
+  int pauseCalls = 0;
+  int resumeCalls = 0;
 
   @override
   Future<ReceiverCapabilities> getCapabilities() async {
@@ -383,8 +396,8 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       deviceId: 'android-tv-dev',
       deviceName: 'Android TV Dev',
       videoCodecs: [VideoCodec.h264],
-      maxWidth: 1280,
-      maxHeight: 720,
+      maxWidth: 1920,
+      maxHeight: 1080,
       maxFps: 30,
       lowLatencyDecoder: true,
     );
@@ -399,9 +412,8 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
-          ? 1
-          : 0,
+      releasedToSurfaceFrames:
+          startState == MirrorSessionState.streaming ? 1 : 0,
     );
   }
 
@@ -423,9 +435,8 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
-          ? 1
-          : 0,
+      releasedToSurfaceFrames:
+          startState == MirrorSessionState.streaming ? 1 : 0,
     );
   }
 
@@ -436,9 +447,30 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
-          ? 1
-          : 0,
+      releasedToSurfaceFrames:
+          startState == MirrorSessionState.streaming ? 1 : 0,
+    );
+  }
+
+  @override
+  Future<ReceiverSessionSnapshot> sendPlaybackCommand(String command) async {
+    if (command == 'pause') {
+      pauseCalls += 1;
+      return _snapshot(
+        state: MirrorSessionState.paused,
+        userMessage: 'Playback paused.',
+        decoderReady: true,
+        surfaceRendererReady: true,
+        releasedToSurfaceFrames: 1,
+      );
+    }
+    resumeCalls += 1;
+    return _snapshot(
+      state: MirrorSessionState.resuming,
+      userMessage: 'Playback resuming.',
+      decoderReady: true,
+      surfaceRendererReady: true,
+      releasedToSurfaceFrames: 1,
     );
   }
 }

@@ -29,6 +29,8 @@ class VideoTransportClient {
                           int port,
                           const std::string& control_json);
   TransportResult SendPacket(const std::vector<std::uint8_t>& packet);
+  TransportResult SendControlLine(const std::string& json_line);
+  bool ReceiveControlLine(std::string* json_line, std::string* error);
   void Close();
   bool connected() const { return socket_ != UINTPTR_MAX; }
 
@@ -40,7 +42,8 @@ class VideoTransportClient {
 
 std::vector<std::uint8_t> BuildH264CodecConfigPacket(
     std::uint64_t sequence,
-    const H264ParameterSets& parameter_sets);
+    const H264ParameterSets& parameter_sets,
+    const VideoStreamConfig& config);
 std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint64_t sequence,
                                                 std::uint64_t pts_us,
                                                 bool key_frame,

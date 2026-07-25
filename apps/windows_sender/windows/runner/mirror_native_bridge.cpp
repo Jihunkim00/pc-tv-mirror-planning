@@ -95,6 +95,8 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.encode_frame_interval_average_ms);
   map[EncodableValue("sendFrameIntervalAverageMs")] =
       EncodableValue(snapshot.send_frame_interval_average_ms);
+  map[EncodableValue("sendFrameIntervalP95Ms")] =
+      EncodableValue(snapshot.send_frame_interval_p95_ms);
   map[EncodableValue("captureToConvertAverageMs")] =
       EncodableValue(snapshot.capture_to_convert_average_ms);
   map[EncodableValue("convertToEncodeAverageMs")] =
@@ -105,6 +107,10 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.encode_duration_p95_ms);
   map[EncodableValue("encodeToSendAverageMs")] =
       EncodableValue(snapshot.encode_to_send_average_ms);
+  map[EncodableValue("videoQueueWaitAverageMs")] =
+      EncodableValue(snapshot.video_queue_wait_average_ms);
+  map[EncodableValue("videoQueueWaitP95Ms")] =
+      EncodableValue(snapshot.video_queue_wait_p95_ms);
   map[EncodableValue("capturedFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.captured_frames));
   map[EncodableValue("captureReplacedFrames")] =
@@ -120,6 +126,8 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
   map[EncodableValue("transportBackpressureDroppedFrames")] =
       EncodableValue(
           static_cast<int64_t>(snapshot.transport_backpressure_dropped_frames));
+  map[EncodableValue("staleVideoDroppedFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.stale_video_dropped_frames));
   map[EncodableValue("shutdownDroppedFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.shutdown_dropped_frames));
   map[EncodableValue("totalDroppedFrames")] =
@@ -176,6 +184,16 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.max_capture_to_encode_ms);
   map[EncodableValue("admittedToEncodedRatio")] =
       EncodableValue(snapshot.admitted_to_encoded_ratio);
+  map[EncodableValue("selectedProfile")] =
+      EncodableValue(snapshot.selected_profile);
+  map[EncodableValue("outputResolution")] =
+      EncodableValue(snapshot.output_resolution);
+  map[EncodableValue("currentBitrateKbps")] =
+      EncodableValue(snapshot.current_bitrate_kbps);
+  map[EncodableValue("targetFrameIntervalMs")] =
+      EncodableValue(snapshot.target_frame_interval_ms);
+  map[EncodableValue("staleVideoDroppedFps")] =
+      EncodableValue(snapshot.stale_video_dropped_fps);
   map[EncodableValue("selectedEncoderName")] =
       EncodableValue(snapshot.selected_encoder_name);
   map[EncodableValue("selectedEncoderHardware")] =
@@ -274,6 +292,45 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.packet_writer_video_wait_ms);
   map[EncodableValue("packetWriterAudioWaitMs")] =
       EncodableValue(snapshot.packet_writer_audio_wait_ms);
+  map[EncodableValue("playbackState")] =
+      EncodableValue(snapshot.playback_state);
+  map[EncodableValue("pauseRequestsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.pause_requests_received));
+  map[EncodableValue("resumeRequestsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.resume_requests_received));
+  map[EncodableValue("playbackCommandAcksSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.playback_command_acks_sent));
+  map[EncodableValue("playbackCommandErrorsSent")] =
+      EncodableValue(
+          static_cast<int64_t>(snapshot.playback_command_errors_sent));
+  map[EncodableValue("resumeCodecConfigResends")] =
+      EncodableValue(static_cast<int64_t>(snapshot.resume_codec_config_resends));
+  map[EncodableValue("localSpeakerMuteMode")] =
+      EncodableValue(snapshot.local_speaker_mute_mode);
+  map[EncodableValue("localSpeakerMuteState")] =
+      EncodableValue(snapshot.local_speaker_mute_state);
+  map[EncodableValue("localSpeakerMuteLastError")] =
+      EncodableValue(snapshot.local_speaker_mute_last_error);
+  map[EncodableValue("pcLocalAudioMuteRequested")] =
+      EncodableValue(snapshot.pc_local_audio_mute_requested);
+  map[EncodableValue("pcLocalAudioMuteSupported")] =
+      EncodableValue(snapshot.pc_local_audio_mute_supported);
+  map[EncodableValue("pcLocalAudioMuteApplied")] =
+      EncodableValue(snapshot.pc_local_audio_mute_applied);
+  map[EncodableValue("pcLocalAudioOriginalMuteState")] =
+      EncodableValue(snapshot.pc_local_audio_original_mute_state);
+  map[EncodableValue("tvAudioStreaming")] =
+      EncodableValue(snapshot.tv_audio_streaming);
+  map[EncodableValue("audioCaptureActive")] =
+      EncodableValue(snapshot.audio_capture_active);
+  map[EncodableValue("audioEncoderActive")] =
+      EncodableValue(snapshot.audio_encoder_active);
+  map[EncodableValue("audioTransportActive")] =
+      EncodableValue(snapshot.audio_transport_active);
+  map[EncodableValue("audioRoutingMode")] =
+      EncodableValue(snapshot.audio_routing_mode);
+  map[EncodableValue("audioMuteUnsupportedReason")] =
+      EncodableValue(snapshot.audio_mute_unsupported_reason);
   if (!snapshot.error_code.empty()) {
     map[EncodableValue("errorCode")] = EncodableValue(snapshot.error_code);
   }
@@ -308,6 +365,18 @@ class MirrorNativeBridge {
       return;
     }
 
+    if (call.method_name() == "setPcLocalAudioMuteRequested") {
+      const auto* args = std::get_if<EncodableMap>(call.arguments());
+      if (args == nullptr) {
+        result->Error("INVALID_ARGUMENTS",
+                      "setPcLocalAudioMuteRequested expects an object");
+        return;
+      }
+      result->Success(ToEncodable(session_.SetPcLocalAudioMuteRequested(
+          ReadBool(*args, "requested", false))));
+      return;
+    }
+
     result->NotImplemented();
   }
 
@@ -326,6 +395,19 @@ class MirrorNativeBridge {
     options.request_json = ReadString(*args, "requestJson");
     options.source_id = ReadString(*args, "sourceId");
     options.audio_enabled = ReadBool(*args, "audioEnabled", true);
+    options.pc_local_audio_mute_requested = ReadBool(
+        *args, "pcLocalAudioMuteRequested",
+        ReadBool(*args, "tvOnlyAudioRequested", false));
+    options.video.width = ReadInt(*args, "videoWidth", 1280);
+    options.video.height = ReadInt(*args, "videoHeight", 720);
+    options.video.fps = ReadInt(*args, "videoFps", 30);
+    options.video.bitrate_kbps = ReadInt(*args, "videoBitrateKbps", 6000);
+    options.video.performance_profile =
+        ReadString(*args, "videoPerformanceProfile");
+    if (options.video.performance_profile.empty()) {
+      options.video.performance_profile = "lowLatency720p30";
+    }
+    options.video.keyframe_interval_frames = options.video.fps;
     result->Success(ToEncodable(session_.Start(options)));
   }
 

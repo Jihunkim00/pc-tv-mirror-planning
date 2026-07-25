@@ -45,6 +45,7 @@ void main() {
       expect(copy.supportedPerformanceProfiles, [
         PerformanceProfile.lowLatency720p30,
         PerformanceProfile.compatibility720p30,
+        PerformanceProfile.highQuality1080p30,
       ]);
     });
   });
@@ -68,10 +69,32 @@ void main() {
         'width': 1280,
         'height': 720,
         'fps': 30,
-        'bitrateKbps': 4000,
+        'bitrateKbps': 6000,
         'performanceProfile': 'lowLatency720p30',
       });
       expect(StreamStartRequest.fromJson(json).video.codec, VideoCodec.h264);
+    });
+
+    test('encodes the STAGE 4 selectable high-quality 1080p30 profile', () {
+      const request = StreamStartRequest(
+        sessionId: 'session-1080',
+        sourceType: SourceType.display,
+        sourceId: r'\\.\DISPLAY1',
+        video: VideoProfile.highQuality1080p30(),
+      );
+
+      final json = request.toJson();
+      final video = json['video'] as Map<String, Object?>;
+
+      expect(video['width'], 1920);
+      expect(video['height'], 1080);
+      expect(video['fps'], 30);
+      expect(video['bitrateKbps'], 7500);
+      expect(video['performanceProfile'], 'highQuality1080p30');
+      expect(
+        StreamStartRequest.fromJson(json).video.performanceProfile,
+        PerformanceProfile.highQuality1080p30,
+      );
     });
 
     test('encodes the STAGE 3 system audio profile when requested', () {
@@ -141,6 +164,47 @@ void main() {
       expect(copy.timestamp, DateTime.utc(2026, 7, 22, 10));
       expect(copy.video.fps, 29.9);
       expect(copy.network.packetLossPercent, 0.1);
+    });
+  });
+
+  group('PlaybackCommand', () {
+    test('round-trips receiver pause commands', () {
+      const command = PlaybackCommand(
+        sessionId: 'session-1',
+        commandId: 15,
+        command: PlaybackCommandKind.pause,
+        receiverTimestampUs: 123456,
+        reason: 'remote_key',
+        requestedBy: 'receiver_remote',
+      );
+
+      final copy = PlaybackCommand.fromJson(command.toJson());
+
+      expect(copy.sessionId, 'session-1');
+      expect(copy.commandId, 15);
+      expect(copy.command, PlaybackCommandKind.pause);
+      expect(copy.receiverTimestampUs, 123456);
+      expect(copy.requestedBy, 'receiver_remote');
+    });
+
+    test('round-trips sender ACK and error messages', () {
+      const ack = PlaybackCommandAck(
+        commandId: 16,
+        command: PlaybackCommandKind.resume,
+        senderState: 'resuming',
+      );
+      const error = PlaybackCommandError(
+        commandId: 17,
+        command: PlaybackCommandKind.pause,
+        errorCode: 'INVALID_STATE',
+        message: 'No active sender session.',
+      );
+
+      expect(PlaybackCommandAck.fromJson(ack.toJson()).senderState, 'resuming');
+      expect(
+        PlaybackCommandError.fromJson(error.toJson()).errorCode,
+        'INVALID_STATE',
+      );
     });
   });
 

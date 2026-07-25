@@ -3,8 +3,10 @@
 #include "native/display/display_enumerator.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <deque>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -13,10 +15,9 @@
 namespace pctv {
 namespace {
 
-constexpr double kTargetFps = 30.0;
-constexpr std::uint64_t kTargetFrameIntervalUs = 33'333;
 constexpr std::uint64_t kCadenceToleranceUs = 1'500;
-constexpr std::uint64_t kRollingWindowUs = 2'000'000;
+constexpr std::uint64_t kRollingWindowUs = 5'000'000;
+constexpr std::uint64_t kMinimumStaleVideoAgeUs = 80'000;
 
 std::uint64_t NowUs() {
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -26,6 +27,63 @@ std::uint64_t NowUs() {
 
 double UsToMs(std::uint64_t value_us) {
   return static_cast<double>(value_us) / 1000.0;
+}
+
+std::string JsonEscape(const std::string& value) {
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (const char ch : value) {
+    if (ch == '\\' || ch == '"') {
+      escaped.push_back('\\');
+    }
+    escaped.push_back(ch);
+  }
+  return escaped;
+}
+
+std::string ExtractJsonString(const std::string& json,
+                              const std::string& key) {
+  const auto key_pos = json.find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return {};
+  }
+  const auto colon = json.find(':', key_pos);
+  if (colon == std::string::npos) {
+    return {};
+  }
+  const auto first_quote = json.find('"', colon + 1);
+  if (first_quote == std::string::npos) {
+    return {};
+  }
+  const auto second_quote = json.find('"', first_quote + 1);
+  if (second_quote == std::string::npos) {
+    return {};
+  }
+  return json.substr(first_quote + 1, second_quote - first_quote - 1);
+}
+
+std::uint64_t ExtractJsonUint64(const std::string& json,
+                                const std::string& key) {
+  const auto key_pos = json.find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return 0;
+  }
+  const auto colon = json.find(':', key_pos);
+  if (colon == std::string::npos) {
+    return 0;
+  }
+  auto index = colon + 1;
+  while (index < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[index])) != 0) {
+    ++index;
+  }
+  std::uint64_t value = 0;
+  while (index < json.size() &&
+         std::isdigit(static_cast<unsigned char>(json[index])) != 0) {
+    value = value * 10 + static_cast<std::uint64_t>(json[index] - '0');
+    ++index;
+  }
+  return value;
 }
 
 void TrimEvents(std::deque<std::uint64_t>* events, std::uint64_t now_us) {
@@ -214,6 +272,11 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             "No HMONITOR matched sourceId " + options.source_id};
   }
 
+  video_config_ = options.video;
+  target_fps_ = static_cast<double>(std::max(1, options.video.fps));
+  target_frame_interval_us_ =
+      static_cast<std::uint64_t>(1'000'000.0 / target_fps_);
+
   const auto signal =
       transport_.Connect(options.receiver_host, options.receiver_port,
                          options.request_json);
@@ -230,7 +293,8 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
 
   std::string error;
   auto capture = std::make_unique<DisplayCapture>();
-  if (!capture->Start(options.source_id, &error)) {
+  if (!capture->Start(options.source_id, options.video.width,
+                      options.video.height, &error)) {
     transport_.Close();
     return {"failed",
             "Could not start Windows screen capture.",
@@ -242,7 +306,7 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             error};
   }
 
-  if (!encoder_.Start(&error)) {
+  if (!encoder_.Start(options.video, &error)) {
     capture->Stop();
     transport_.Close();
     return {"failed",
@@ -260,6 +324,9 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   next_sequence_ = 1;
   next_audio_sequence_ = 1;
   audio_enabled_ = options.audio_enabled;
+  pc_local_audio_mute_requested_ = options.pc_local_audio_mute_requested;
+  paused_ = false;
+  audio_config_requested_ = false;
   running_ = true;
   {
     std::scoped_lock status_lock(status_mutex_);
@@ -277,6 +344,7 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
 
   encode_thread_ = std::thread([this]() { EncodeLoop(); });
   send_thread_ = std::thread([this]() { SendLoop(); });
+  control_thread_ = std::thread([this]() { ControlLoop(); });
   if (options.audio_enabled) {
     audio_thread_ = std::thread([this]() { AudioLoop(); });
   }
@@ -304,6 +372,9 @@ NativeSnapshot MirrorSession::Stop() {
   if (send_thread_.joinable()) {
     send_thread_.join();
   }
+  if (control_thread_.joinable()) {
+    control_thread_.join();
+  }
 
   {
     std::scoped_lock lock(mutex_);
@@ -330,6 +401,11 @@ NativeSnapshot MirrorSession::Stop() {
   return Snapshot();
 }
 
+NativeSnapshot MirrorSession::SetPcLocalAudioMuteRequested(bool requested) {
+  pc_local_audio_mute_requested_.store(requested);
+  return Snapshot();
+}
+
 void MirrorSession::EncodeLoop() {
   try {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -338,6 +414,15 @@ void MirrorSession::EncodeLoop() {
 
   Nv12Frame frame;
   while (running_) {
+    if (IsPaused()) {
+      {
+        std::scoped_lock status_lock(status_mutex_);
+        next_admission_deadline_us_ = 0;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      continue;
+    }
+
     DisplayCapture* capture = nullptr;
     {
       std::scoped_lock lock(mutex_);
@@ -347,8 +432,29 @@ void MirrorSession::EncodeLoop() {
       break;
     }
 
+    bool admitted = false;
+    auto should_convert = [this, &admitted](std::uint64_t capture_us) {
+      std::scoped_lock status_lock(status_mutex_);
+      if (next_admission_deadline_us_ == 0) {
+        next_admission_deadline_us_ = capture_us;
+      }
+      if (capture_us + kCadenceToleranceUs < next_admission_deadline_us_) {
+        admitted = false;
+        RecordEvent(&cadence_dropped_events_us_, capture_us);
+        return false;
+      }
+      if (capture_us > next_admission_deadline_us_ + target_frame_interval_us_) {
+        next_admission_deadline_us_ = capture_us;
+      }
+      RecordEvent(&target_admission_events_us_, capture_us);
+      RecordEvent(&admitted_frame_events_us_, capture_us);
+      next_admission_deadline_us_ += target_frame_interval_us_;
+      admitted = true;
+      return true;
+    };
+
     std::string error;
-    if (!capture->CaptureNext(&frame, 500, &error)) {
+    if (!capture->CaptureNext(&frame, 500, should_convert, &error)) {
       if (!error.empty()) {
         SetLastEncodeError(error);
         SetSessionError("CAPTURE_SOURCE_GONE",
@@ -363,11 +469,6 @@ void MirrorSession::EncodeLoop() {
       std::scoped_lock status_lock(status_mutex_);
       RecordEvent(&capture_callback_events_us_, frame.capture_callback_us);
       RecordEvent(&captured_events_us_, frame.capture_callback_us);
-      RecordEvent(&converted_events_us_, frame.converted_us);
-      RecordSample(&capture_to_convert_samples_, frame.converted_us,
-                   frame.converted_us >= frame.capture_callback_us
-                       ? UsToMs(frame.converted_us - frame.capture_callback_us)
-                       : 0.0);
     }
     if (frame.dropped_frames > 0) {
       const auto replaced = static_cast<std::uint64_t>(frame.dropped_frames);
@@ -375,33 +476,19 @@ void MirrorSession::EncodeLoop() {
       capture_dropped_frames_.fetch_add(replaced);
     }
 
-    bool admitted = true;
-    {
-      std::scoped_lock status_lock(status_mutex_);
-      if (next_admission_deadline_us_ == 0) {
-        next_admission_deadline_us_ = frame.capture_callback_us;
-      }
-      if (frame.capture_callback_us + kCadenceToleranceUs <
-          next_admission_deadline_us_) {
-        admitted = false;
-      } else {
-        if (frame.capture_callback_us >
-            next_admission_deadline_us_ + kTargetFrameIntervalUs) {
-          next_admission_deadline_us_ = frame.capture_callback_us;
-        }
-        RecordEvent(&target_admission_events_us_, frame.capture_callback_us);
-        RecordEvent(&admitted_frame_events_us_, frame.capture_callback_us);
-        next_admission_deadline_us_ += kTargetFrameIntervalUs;
-      }
-    }
-    if (!admitted) {
+    if (!admitted || frame.data.empty()) {
       cadence_skipped_frames_.fetch_add(1);
       encoder_input_dropped_frames_.fetch_add(1);
-      {
-        std::scoped_lock status_lock(status_mutex_);
-        RecordEvent(&cadence_dropped_events_us_, frame.capture_callback_us);
-      }
       continue;
+    }
+
+    {
+      std::scoped_lock status_lock(status_mutex_);
+      RecordEvent(&converted_events_us_, frame.converted_us);
+      RecordSample(&capture_to_convert_samples_, frame.converted_us,
+                   frame.converted_us >= frame.capture_callback_us
+                       ? UsToMs(frame.converted_us - frame.capture_callback_us)
+                       : 0.0);
     }
 
     const auto encode_start_us = NowUs();
@@ -463,7 +550,7 @@ void MirrorSession::EncodeLoop() {
       if (access_unit.annex_b.empty()) {
         continue;
       }
-      if (!codec_config_sent_for_stream_) {
+      if (!codec_config_sent_for_stream_.load()) {
         if (!access_unit.key_frame) {
           continue;
         }
@@ -482,7 +569,7 @@ void MirrorSession::EncodeLoop() {
           running_ = false;
           break;
         }
-        codec_config_sent_for_stream_ = true;
+        codec_config_sent_for_stream_.store(true);
       }
 
       const auto sequence = next_sequence_.fetch_add(1);
@@ -571,11 +658,15 @@ void MirrorSession::AudioLoop() {
     audio_input_channels_ = capture.input_channels();
   }
 
-  const auto config_sequence = next_audio_sequence_.fetch_add(1);
-  auto config_packet = BuildAacCodecConfigPacket(
-      config_sequence, capture.stream_start_pts_us(),
-      encoder.codec_specific_data());
-  if (!config_packet.empty()) {
+  auto queue_config_packet = [&]() {
+    const auto config_sequence = next_audio_sequence_.fetch_add(1);
+    auto config_packet = BuildAacCodecConfigPacket(
+        config_sequence, capture.stream_start_pts_us(),
+        encoder.codec_specific_data());
+    if (config_packet.empty()) {
+      audio_dropped_packets_.fetch_add(1);
+      return;
+    }
     bool pushed = false;
     const auto dropped = audio_queue_.PushDropOldestWhere(
         {std::move(config_packet), true, false, config_sequence, NowUs()},
@@ -584,11 +675,24 @@ void MirrorSession::AudioLoop() {
     if (dropped > 0 || !pushed) {
       audio_dropped_packets_.fetch_add(dropped + (pushed ? 0 : 1));
     }
-  }
+  };
+  queue_config_packet();
 
   PcmAudioFrame pcm_frame;
   while (running_) {
     error.clear();
+    if (IsPaused()) {
+      if (!capture.CaptureNext(&pcm_frame, 50, &error) && !error.empty()) {
+        std::scoped_lock status_lock(status_mutex_);
+        audio_capture_state_ = "failed";
+        audio_last_error_ = error;
+        break;
+      }
+      continue;
+    }
+    if (audio_config_requested_.exchange(false)) {
+      queue_config_packet();
+    }
     if (!capture.CaptureNext(&pcm_frame, 200, &error)) {
       if (!error.empty()) {
         std::scoped_lock status_lock(status_mutex_);
@@ -670,6 +774,22 @@ void MirrorSession::SendLoop() {
     const auto queued_us =
         have_video ? video_packet.encoded_done_us : audio_packet.encoded_done_us;
     const auto send_start_us = NowUs();
+    const auto stale_video_age_us =
+        std::max(kMinimumStaleVideoAgeUs, target_frame_interval_us_ * 3);
+    if (have_video && video_packet.access_unit && !video_packet.key_frame &&
+        video_packet.encoded_done_us + stale_video_age_us < send_start_us) {
+      transport_dropped_frames_.fetch_add(1);
+      transport_backpressure_dropped_frames_.fetch_add(1);
+      stale_video_dropped_frames_.fetch_add(1);
+      {
+        std::scoped_lock status_lock(status_mutex_);
+        RecordEvent(&stale_video_dropped_events_us_, send_start_us);
+        RecordSample(&packet_writer_video_wait_samples_, send_start_us,
+                     UsToMs(send_start_us - video_packet.encoded_done_us));
+      }
+      prefer_audio = true;
+      continue;
+    }
     TransportResult result;
     {
       std::scoped_lock send_lock(transport_send_mutex_);
@@ -731,8 +851,123 @@ void MirrorSession::SendLoop() {
   }
 }
 
+void MirrorSession::ControlLoop() {
+  while (running_) {
+    std::string line;
+    std::string error;
+    if (!transport_.ReceiveControlLine(&line, &error)) {
+      if (!error.empty() && running_) {
+        SetLastSendError(error);
+      }
+      continue;
+    }
+    HandlePlaybackCommandLine(line);
+  }
+}
+
+void MirrorSession::HandlePlaybackCommandLine(const std::string& line) {
+  if (line.find("\"type\":\"PLAYBACK_COMMAND\"") == std::string::npos &&
+      line.find("\"type\": \"PLAYBACK_COMMAND\"") == std::string::npos) {
+    return;
+  }
+  const auto command = ExtractJsonString(line, "command");
+  const auto command_id = ExtractJsonUint64(line, "commandId");
+  if (command_id == 0 || (command != "pause" && command != "resume")) {
+    SendPlaybackError(command_id, command, "INVALID_MESSAGE",
+                      "Unsupported playback command.");
+    return;
+  }
+
+  const auto previous_id = last_playback_command_id_.load();
+  if (command_id <= previous_id) {
+    SendPlaybackAck(command_id, command, IsPaused() ? "paused" : "streaming");
+    return;
+  }
+  last_playback_command_id_.store(command_id);
+
+  if (command == "pause") {
+    ApplyPause(command_id, command);
+  } else {
+    ApplyResume(command_id, command);
+  }
+}
+
+void MirrorSession::ApplyPause(std::uint64_t command_id,
+                               const std::string& command) {
+  pause_requests_received_.fetch_add(1);
+  paused_.store(true);
+  packet_queue_.Clear();
+  audio_queue_.Clear();
+  {
+    std::scoped_lock status_lock(status_mutex_);
+    session_user_message_ = "Playback is paused by the TV remote.";
+  }
+  SendPlaybackAck(command_id, command, "paused");
+}
+
+void MirrorSession::ApplyResume(std::uint64_t command_id,
+                                const std::string& command) {
+  resume_requests_received_.fetch_add(1);
+  packet_queue_.Clear();
+  audio_queue_.Clear();
+  {
+    std::scoped_lock status_lock(status_mutex_);
+    codec_config_sent_for_stream_.store(false);
+    next_admission_deadline_us_ = 0;
+    session_user_message_ = "Playback is resuming from a fresh IDR frame.";
+  }
+  resume_codec_config_resends_.fetch_add(1);
+  audio_config_requested_.store(true);
+  encoder_.RequestKeyFrame();
+  paused_.store(false);
+  SendPlaybackAck(command_id, command, "resuming");
+}
+
+void MirrorSession::SendPlaybackAck(std::uint64_t command_id,
+                                    const std::string& command,
+                                    const std::string& sender_state) {
+  std::ostringstream stream;
+  stream << "{\"type\":\"PLAYBACK_COMMAND_ACK\",\"protocolVersion\":1"
+         << ",\"command\":\"" << JsonEscape(command) << "\""
+         << ",\"commandId\":" << command_id << ",\"senderState\":\""
+         << JsonEscape(sender_state) << "\"}";
+  TransportResult result;
+  {
+    std::scoped_lock send_lock(transport_send_mutex_);
+    result = transport_.SendControlLine(stream.str());
+  }
+  if (result.ok) {
+    playback_command_acks_sent_.fetch_add(1);
+  } else {
+    playback_command_errors_sent_.fetch_add(1);
+    SetLastSendError(result.detail);
+  }
+}
+
+void MirrorSession::SendPlaybackError(std::uint64_t command_id,
+                                      const std::string& command,
+                                      const std::string& error_code,
+                                      const std::string& message) {
+  std::ostringstream stream;
+  stream << "{\"type\":\"PLAYBACK_COMMAND_ERROR\",\"protocolVersion\":1"
+         << ",\"command\":\"" << JsonEscape(command) << "\""
+         << ",\"commandId\":" << command_id << ",\"errorCode\":\""
+         << JsonEscape(error_code) << "\",\"message\":\""
+         << JsonEscape(message) << "\"}";
+  TransportResult result;
+  {
+    std::scoped_lock send_lock(transport_send_mutex_);
+    result = transport_.SendControlLine(stream.str());
+  }
+  playback_command_errors_sent_.fetch_add(1);
+  if (!result.ok) {
+    SetLastSendError(result.detail);
+  }
+}
+
 bool MirrorSession::SendCodecConfig(const H264ParameterSets& parameter_sets) {
-  const auto config_packet = BuildH264CodecConfigPacket(0, parameter_sets);
+  const auto config_packet =
+      BuildH264CodecConfigPacket(0, parameter_sets, video_config_);
   if (config_packet.empty()) {
     const std::string error =
         "H.264 codec config packet could not be built from SPS/PPS";
@@ -843,7 +1078,7 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.error_code = session_error_code_;
   snapshot.developer_message = session_developer_message_;
   const auto now_us = NowUs();
-  snapshot.target_fps = kTargetFps;
+  snapshot.target_fps = target_fps_;
   snapshot.capture_callback_fps =
       RollingFps(&capture_callback_events_us_, now_us);
   snapshot.captured_fps = RollingFps(&captured_events_us_, now_us);
@@ -873,6 +1108,8 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       AverageIntervalMs(&encoder_input_events_us_, now_us);
   snapshot.send_frame_interval_average_ms =
       AverageIntervalMs(&sent_access_unit_events_us_, now_us);
+  snapshot.send_frame_interval_p95_ms =
+      P95IntervalMs(&sent_access_unit_events_us_, now_us);
   snapshot.capture_to_convert_average_ms =
       AverageSampleMs(&capture_to_convert_samples_, now_us);
   snapshot.convert_to_encode_average_ms =
@@ -883,6 +1120,10 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       P95SampleMs(&encode_duration_samples_, now_us);
   snapshot.encode_to_send_average_ms =
       AverageSampleMs(&encode_to_send_samples_, now_us);
+  snapshot.video_queue_wait_average_ms =
+      AverageSampleMs(&packet_writer_video_wait_samples_, now_us);
+  snapshot.video_queue_wait_p95_ms =
+      P95SampleMs(&packet_writer_video_wait_samples_, now_us);
   snapshot.captured_frames = captured_frames_.load();
   snapshot.capture_replaced_frames = capture_replaced_frames_.load();
   snapshot.cadence_skipped_frames = cadence_skipped_frames_.load();
@@ -892,6 +1133,7 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       encoder_backpressure_dropped_frames_.load();
   snapshot.transport_backpressure_dropped_frames =
       transport_backpressure_dropped_frames_.load();
+  snapshot.stale_video_dropped_frames = stale_video_dropped_frames_.load();
   snapshot.shutdown_dropped_frames = shutdown_dropped_frames_.load();
   snapshot.total_dropped_frames =
       snapshot.capture_replaced_frames + snapshot.cadence_skipped_frames +
@@ -945,6 +1187,16 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       snapshot.admitted_frame_fps <= 0.0
           ? 0.0
           : snapshot.encoded_fps / snapshot.admitted_frame_fps;
+  snapshot.selected_profile = video_config_.performance_profile;
+  {
+    std::ostringstream resolution;
+    resolution << video_config_.width << "x" << video_config_.height;
+    snapshot.output_resolution = resolution.str();
+  }
+  snapshot.current_bitrate_kbps = video_config_.bitrate_kbps;
+  snapshot.target_frame_interval_ms = UsToMs(target_frame_interval_us_);
+  snapshot.stale_video_dropped_fps =
+      RollingFps(&stale_video_dropped_events_us_, now_us);
   const auto encoder_diagnostics = encoder_.diagnostics();
   snapshot.selected_encoder_name = encoder_diagnostics.selected_encoder_name;
   snapshot.selected_encoder_hardware =
@@ -1011,10 +1263,46 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
     snapshot.video_fps_audio_disabled = snapshot.sent_access_unit_fps;
   }
   snapshot.audio_cpu_time_ms = snapshot.audio_encode_average_ms;
-  snapshot.packet_writer_video_wait_ms =
-      AverageSampleMs(&packet_writer_video_wait_samples_, now_us);
+  snapshot.packet_writer_video_wait_ms = snapshot.video_queue_wait_average_ms;
   snapshot.packet_writer_audio_wait_ms =
       AverageSampleMs(&packet_writer_audio_wait_samples_, now_us);
+  snapshot.playback_state = IsPaused() ? "paused" : state;
+  snapshot.pause_requests_received = pause_requests_received_.load();
+  snapshot.resume_requests_received = resume_requests_received_.load();
+  snapshot.playback_command_acks_sent = playback_command_acks_sent_.load();
+  snapshot.playback_command_errors_sent =
+      playback_command_errors_sent_.load();
+  snapshot.resume_codec_config_resends =
+      resume_codec_config_resends_.load();
+  snapshot.pc_local_audio_mute_requested =
+      pc_local_audio_mute_requested_.load();
+  snapshot.pc_local_audio_mute_supported = false;
+  snapshot.pc_local_audio_mute_applied = false;
+  snapshot.pc_local_audio_original_mute_state = false;
+  snapshot.audio_capture_active =
+      snapshot.audio_enabled && snapshot.audio_capture_state == "capturing";
+  snapshot.audio_encoder_active =
+      snapshot.audio_capture_active && snapshot.audio_last_error.empty();
+  snapshot.audio_transport_active =
+      snapshot.audio_enabled && snapshot.signaling_ready &&
+      session_error_code_ != "NETWORK_DISCONNECTED";
+  snapshot.tv_audio_streaming =
+      snapshot.audio_capture_active && snapshot.audio_encoder_active &&
+      snapshot.audio_transport_active;
+  snapshot.audio_routing_mode = "defaultRenderEndpointLoopback";
+  if (snapshot.pc_local_audio_mute_requested) {
+    snapshot.audio_mute_unsupported_reason =
+        "Unavailable: separate PC/TV audio routing is not configured";
+  } else {
+    snapshot.audio_mute_unsupported_reason.clear();
+  }
+  snapshot.local_speaker_mute_mode =
+      snapshot.pc_local_audio_mute_requested ? "pcLocalMuteRequested"
+                                             : "pcAndTv";
+  snapshot.local_speaker_mute_state =
+      snapshot.pc_local_audio_mute_requested ? "unsupported" : "disabled";
+  snapshot.local_speaker_mute_last_error =
+      snapshot.audio_mute_unsupported_reason;
   return snapshot;
 }
 
@@ -1025,9 +1313,18 @@ NativeSnapshot MirrorSession::CurrentSnapshotLocked() {
   if (!running_) {
     return BuildSnapshot("idle", "Native sender resources were released.");
   }
+  if (IsPaused()) {
+    return BuildSnapshot("paused", "Playback is paused by the TV remote.");
+  }
+  if (!codec_config_sent_for_stream_.load() && first_access_unit_sent_) {
+    return BuildSnapshot("resuming",
+                         "Waiting to send SPS/PPS and a fresh IDR frame.");
+  }
   if (first_access_unit_sent_) {
-    return BuildSnapshot("streaming",
-                         "Native 1280x720 H.264 video path is running.");
+    std::ostringstream message;
+    message << "Native " << video_config_.width << "x" << video_config_.height
+            << " H.264 video path is running.";
+    return BuildSnapshot("streaming", message.str());
   }
   return BuildSnapshot("negotiating",
                        "Waiting for the first encoded video frame.");
@@ -1040,6 +1337,7 @@ void MirrorSession::ResetCounters() {
   conversion_backpressure_dropped_frames_ = 0;
   encoder_backpressure_dropped_frames_ = 0;
   transport_backpressure_dropped_frames_ = 0;
+  stale_video_dropped_frames_ = 0;
   shutdown_dropped_frames_ = 0;
   capture_dropped_frames_ = 0;
   conversion_dropped_frames_ = 0;
@@ -1054,10 +1352,19 @@ void MirrorSession::ResetCounters() {
   bytes_sent_ = 0;
   send_completed_bytes_ = 0;
   audio_enabled_ = false;
+  pc_local_audio_mute_requested_ = false;
+  paused_ = false;
+  audio_config_requested_ = false;
   captured_audio_packets_ = 0;
   encoded_audio_packets_ = 0;
   sent_audio_packets_ = 0;
   audio_dropped_packets_ = 0;
+  pause_requests_received_ = 0;
+  resume_requests_received_ = 0;
+  playback_command_acks_sent_ = 0;
+  playback_command_errors_sent_ = 0;
+  resume_codec_config_resends_ = 0;
+  last_playback_command_id_ = 0;
   std::scoped_lock status_lock(status_mutex_);
   next_admission_deadline_us_ = 0;
   capture_callback_events_us_.clear();
@@ -1072,6 +1379,7 @@ void MirrorSession::ResetCounters() {
   cadence_dropped_events_us_.clear();
   encoder_busy_dropped_events_us_.clear();
   conversion_busy_dropped_events_us_.clear();
+  stale_video_dropped_events_us_.clear();
   socket_send_call_events_us_.clear();
   audio_capture_events_us_.clear();
   capture_to_convert_samples_.clear();
