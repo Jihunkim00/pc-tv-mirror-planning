@@ -244,10 +244,15 @@ void main() {
       'avSyncResyncCount': 2,
       'syncMaster': 'audio',
       'audioDecoderName': 'c2.android.aac.decoder',
+      'audioSessionGeneration': 8,
+      'audioDecoderState': 'running',
+      'audioDecoderInitialized': true,
+      'audioDecoderReleased': false,
       'receivedAudioPackets': 10,
       'audioDecoderInputPackets': 9,
       'audioDecoderOutputBuffers': 8,
       'audioTrackWrittenFrames': 8192,
+      'audioBytesWritten': 32768,
       'audioQueueDepth': 1,
       'pcmQueueDepth': 0,
       'audioBufferedDurationMs': 96.0,
@@ -259,7 +264,26 @@ void main() {
       'audioCodec': 'audio/mp4a-latm',
       'audioSampleRate': 48000,
       'audioChannels': 2,
+      'audioChannelMask': 12,
+      'audioEncodingFormat': 2,
+      'audioTrackState': 'INITIALIZED',
+      'audioTrackPlayState': 'PLAYING',
+      'audioTrackInitialized': true,
+      'audioTrackPlayCalled': true,
+      'audioTrackRecreatedCount': 1,
+      'audioTrackWriteErrorCount': 2,
+      'audioTrackDeadObjectCount': 1,
+      'audioQueueClearedOnReconnect': true,
+      'audioEosReceived': false,
+      'audioPtsResetCount': 3,
+      'audioSessionResetCount': 4,
+      'lastAudioSessionResetReason': 'TCP reconnect generation=8',
+      'audioPacketsReceivedRecent': 47.0,
+      'audioPacketsDecodedRecent': 46.0,
+      'audioBytesWrittenRecent': 188416.0,
+      'tvAudioAudibleExpected': true,
       'connectionId': 3,
+      'receiverSessionGeneration': 8,
       'sessionId': 'session-3',
       'playbackState': 'streaming',
       'pauseCommandPending': false,
@@ -322,9 +346,31 @@ void main() {
     expect(snapshot.syncMaster, 'audio');
     expect(snapshot.audioState, 'playing');
     expect(snapshot.audioDecoderName, 'c2.android.aac.decoder');
+    expect(snapshot.audioSessionGeneration, 8);
+    expect(snapshot.audioDecoderState, 'running');
+    expect(snapshot.audioDecoderInitialized, isTrue);
+    expect(snapshot.audioDecoderReleased, isFalse);
     expect(snapshot.audioBufferedDurationMs, 96.0);
     expect(snapshot.audioTrackWrittenFrames, 8192);
+    expect(snapshot.audioBytesWritten, 32768);
+    expect(snapshot.audioTrackState, 'INITIALIZED');
+    expect(snapshot.audioTrackPlayState, 'PLAYING');
+    expect(snapshot.audioTrackInitialized, isTrue);
+    expect(snapshot.audioTrackPlayCalled, isTrue);
+    expect(snapshot.audioTrackRecreatedCount, 1);
+    expect(snapshot.audioTrackWriteErrorCount, 2);
+    expect(snapshot.audioTrackDeadObjectCount, 1);
+    expect(snapshot.audioQueueClearedOnReconnect, isTrue);
+    expect(snapshot.audioEosReceived, isFalse);
+    expect(snapshot.audioPtsResetCount, 3);
+    expect(snapshot.audioSessionResetCount, 4);
+    expect(snapshot.lastAudioSessionResetReason, 'TCP reconnect generation=8');
+    expect(snapshot.audioPacketsReceivedRecent, 47.0);
+    expect(snapshot.audioPacketsDecodedRecent, 46.0);
+    expect(snapshot.audioBytesWrittenRecent, 188416.0);
+    expect(snapshot.tvAudioAudibleExpected, isTrue);
     expect(snapshot.connectionId, 3);
+    expect(snapshot.receiverSessionGeneration, 8);
     expect(snapshot.sessionId, 'session-3');
     expect(snapshot.playbackState, 'streaming');
     expect(snapshot.playbackCommandAcksReceived, 2);

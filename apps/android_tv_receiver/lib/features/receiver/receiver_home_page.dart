@@ -761,7 +761,18 @@ class _ReceiverStatusPanel extends StatelessWidget {
           ),
           _MetricRow(
             label: 'Decoder',
-            value: snapshot?.audioDecoderName ?? 'unknown',
+            value:
+                '${snapshot?.audioDecoderState ?? 'released'} / ${snapshot?.audioDecoderName ?? 'unknown'}',
+          ),
+          _MetricRow(
+            label: 'Track',
+            value:
+                '${snapshot?.audioTrackState ?? 'NONE'} / ${snapshot?.audioTrackPlayState ?? 'STOPPED'}',
+          ),
+          _MetricRow(
+            label: 'Audio session',
+            value:
+                '${snapshot?.receiverSessionGeneration ?? 0}/${snapshot?.audioSessionGeneration ?? 0}',
           ),
           _MetricRow(
             label: 'Queue / PCM',
@@ -788,13 +799,42 @@ class _ReceiverStatusPanel extends StatelessWidget {
           _MetricRow(
             label: 'Audio packets',
             value:
-                '${snapshot?.receivedAudioPackets ?? 0}/${snapshot?.audioDecoderInputPackets ?? 0}/${snapshot?.audioDecoderOutputBuffers ?? 0}',
+                '${snapshot?.receivedAudioPackets ?? 0}/${snapshot?.audioDecoderInputPackets ?? 0}/${snapshot?.audioDecoderOutputBuffers ?? 0} '
+                '(${(snapshot?.audioPacketsReceivedRecent ?? 0).toStringAsFixed(1)}/s)',
+          ),
+          _MetricRow(
+            label: 'Audio writes',
+            value:
+                '${snapshot?.audioTrackWrittenFrames ?? 0}f/${snapshot?.audioBytesWritten ?? 0}B '
+                '${(snapshot?.audioBytesWrittenRecent ?? 0).toStringAsFixed(0)}B/s',
+          ),
+          _MetricRow(
+            label: 'Audio recovery',
+            value:
+                'recreate ${snapshot?.audioTrackRecreatedCount ?? 0}, '
+                'write ${snapshot?.audioTrackWriteErrorCount ?? 0}, '
+                'dead ${snapshot?.audioTrackDeadObjectCount ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Audio reset',
+            value:
+                '${snapshot?.audioSessionResetCount ?? 0}, pts ${snapshot?.audioPtsResetCount ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Audio expected',
+            value:
+                '${snapshot?.tvAudioAudibleExpected ?? false}, play ${snapshot?.audioTrackPlayCalled ?? false}',
           ),
           _MetricRow(
             label: 'Audio drops',
             value:
                 '${snapshot?.audioDroppedPackets ?? 0}, av ${snapshot?.videoFramesDroppedForAvSync ?? 0}',
           ),
+          if ((snapshot?.lastAudioSessionResetReason ?? '').isNotEmpty)
+            _MetricRow(
+              label: 'Audio reset reason',
+              value: snapshot!.lastAudioSessionResetReason,
+            ),
           if (snapshot?.audioLastError != null)
             _MetricRow(label: 'Audio error', value: snapshot!.audioLastError!),
           const SizedBox(height: 18),
