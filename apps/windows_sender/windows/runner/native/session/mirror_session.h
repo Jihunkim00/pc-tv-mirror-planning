@@ -26,6 +26,7 @@ class MirrorSession {
   NativeSnapshot Start(const StartSessionOptions& options);
   NativeSnapshot Stop();
   NativeSnapshot Snapshot();
+  NativeSnapshot SetPcLocalAudioMuteRequested(bool requested);
 
  private:
   struct QueuedVideoPacket {
@@ -94,7 +95,7 @@ class MirrorSession {
   std::uint64_t target_frame_interval_us_ = 33'333;
   std::atomic_bool paused_{false};
   std::atomic_bool audio_config_requested_{false};
-  std::atomic_bool tv_only_audio_requested_{false};
+  std::atomic_bool pc_local_audio_mute_requested_{false};
   std::atomic_uint64_t next_sequence_{1};
   std::atomic_uint64_t next_audio_sequence_{1};
   std::atomic_uint64_t captured_frames_{0};
@@ -103,6 +104,7 @@ class MirrorSession {
   std::atomic_uint64_t conversion_backpressure_dropped_frames_{0};
   std::atomic_uint64_t encoder_backpressure_dropped_frames_{0};
   std::atomic_uint64_t transport_backpressure_dropped_frames_{0};
+  std::atomic_uint64_t stale_video_dropped_frames_{0};
   std::atomic_uint64_t shutdown_dropped_frames_{0};
   std::atomic_uint64_t capture_dropped_frames_{0};
   std::atomic_uint64_t conversion_dropped_frames_{0};
@@ -140,6 +142,7 @@ class MirrorSession {
   std::deque<std::uint64_t> cadence_dropped_events_us_;
   std::deque<std::uint64_t> encoder_busy_dropped_events_us_;
   std::deque<std::uint64_t> conversion_busy_dropped_events_us_;
+  std::deque<std::uint64_t> stale_video_dropped_events_us_;
   std::deque<std::uint64_t> socket_send_call_events_us_;
   std::deque<std::uint64_t> audio_capture_events_us_;
   std::deque<std::pair<std::uint64_t, double>> capture_to_convert_samples_;

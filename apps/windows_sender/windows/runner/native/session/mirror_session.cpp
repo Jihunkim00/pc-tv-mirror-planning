@@ -16,7 +16,8 @@ namespace pctv {
 namespace {
 
 constexpr std::uint64_t kCadenceToleranceUs = 1'500;
-constexpr std::uint64_t kRollingWindowUs = 2'000'000;
+constexpr std::uint64_t kRollingWindowUs = 5'000'000;
+constexpr std::uint64_t kMinimumStaleVideoAgeUs = 80'000;
 
 std::uint64_t NowUs() {
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -323,7 +324,7 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   next_sequence_ = 1;
   next_audio_sequence_ = 1;
   audio_enabled_ = options.audio_enabled;
-  tv_only_audio_requested_ = options.tv_only_audio_requested;
+  pc_local_audio_mute_requested_ = options.pc_local_audio_mute_requested;
   paused_ = false;
   audio_config_requested_ = false;
   running_ = true;
@@ -400,6 +401,11 @@ NativeSnapshot MirrorSession::Stop() {
   return Snapshot();
 }
 
+NativeSnapshot MirrorSession::SetPcLocalAudioMuteRequested(bool requested) {
+  pc_local_audio_mute_requested_.store(requested);
+  return Snapshot();
+}
+
 void MirrorSession::EncodeLoop() {
   try {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -426,8 +432,29 @@ void MirrorSession::EncodeLoop() {
       break;
     }
 
+    bool admitted = false;
+    auto should_convert = [this, &admitted](std::uint64_t capture_us) {
+      std::scoped_lock status_lock(status_mutex_);
+      if (next_admission_deadline_us_ == 0) {
+        next_admission_deadline_us_ = capture_us;
+      }
+      if (capture_us + kCadenceToleranceUs < next_admission_deadline_us_) {
+        admitted = false;
+        RecordEvent(&cadence_dropped_events_us_, capture_us);
+        return false;
+      }
+      if (capture_us > next_admission_deadline_us_ + target_frame_interval_us_) {
+        next_admission_deadline_us_ = capture_us;
+      }
+      RecordEvent(&target_admission_events_us_, capture_us);
+      RecordEvent(&admitted_frame_events_us_, capture_us);
+      next_admission_deadline_us_ += target_frame_interval_us_;
+      admitted = true;
+      return true;
+    };
+
     std::string error;
-    if (!capture->CaptureNext(&frame, 500, &error)) {
+    if (!capture->CaptureNext(&frame, 500, should_convert, &error)) {
       if (!error.empty()) {
         SetLastEncodeError(error);
         SetSessionError("CAPTURE_SOURCE_GONE",
@@ -442,11 +469,6 @@ void MirrorSession::EncodeLoop() {
       std::scoped_lock status_lock(status_mutex_);
       RecordEvent(&capture_callback_events_us_, frame.capture_callback_us);
       RecordEvent(&captured_events_us_, frame.capture_callback_us);
-      RecordEvent(&converted_events_us_, frame.converted_us);
-      RecordSample(&capture_to_convert_samples_, frame.converted_us,
-                   frame.converted_us >= frame.capture_callback_us
-                       ? UsToMs(frame.converted_us - frame.capture_callback_us)
-                       : 0.0);
     }
     if (frame.dropped_frames > 0) {
       const auto replaced = static_cast<std::uint64_t>(frame.dropped_frames);
@@ -454,33 +476,19 @@ void MirrorSession::EncodeLoop() {
       capture_dropped_frames_.fetch_add(replaced);
     }
 
-    bool admitted = true;
-    {
-      std::scoped_lock status_lock(status_mutex_);
-      if (next_admission_deadline_us_ == 0) {
-        next_admission_deadline_us_ = frame.capture_callback_us;
-      }
-      if (frame.capture_callback_us + kCadenceToleranceUs <
-          next_admission_deadline_us_) {
-        admitted = false;
-      } else {
-        if (frame.capture_callback_us >
-            next_admission_deadline_us_ + target_frame_interval_us_) {
-          next_admission_deadline_us_ = frame.capture_callback_us;
-        }
-        RecordEvent(&target_admission_events_us_, frame.capture_callback_us);
-        RecordEvent(&admitted_frame_events_us_, frame.capture_callback_us);
-        next_admission_deadline_us_ += target_frame_interval_us_;
-      }
-    }
-    if (!admitted) {
+    if (!admitted || frame.data.empty()) {
       cadence_skipped_frames_.fetch_add(1);
       encoder_input_dropped_frames_.fetch_add(1);
-      {
-        std::scoped_lock status_lock(status_mutex_);
-        RecordEvent(&cadence_dropped_events_us_, frame.capture_callback_us);
-      }
       continue;
+    }
+
+    {
+      std::scoped_lock status_lock(status_mutex_);
+      RecordEvent(&converted_events_us_, frame.converted_us);
+      RecordSample(&capture_to_convert_samples_, frame.converted_us,
+                   frame.converted_us >= frame.capture_callback_us
+                       ? UsToMs(frame.converted_us - frame.capture_callback_us)
+                       : 0.0);
     }
 
     const auto encode_start_us = NowUs();
@@ -766,6 +774,22 @@ void MirrorSession::SendLoop() {
     const auto queued_us =
         have_video ? video_packet.encoded_done_us : audio_packet.encoded_done_us;
     const auto send_start_us = NowUs();
+    const auto stale_video_age_us =
+        std::max(kMinimumStaleVideoAgeUs, target_frame_interval_us_ * 3);
+    if (have_video && video_packet.access_unit && !video_packet.key_frame &&
+        video_packet.encoded_done_us + stale_video_age_us < send_start_us) {
+      transport_dropped_frames_.fetch_add(1);
+      transport_backpressure_dropped_frames_.fetch_add(1);
+      stale_video_dropped_frames_.fetch_add(1);
+      {
+        std::scoped_lock status_lock(status_mutex_);
+        RecordEvent(&stale_video_dropped_events_us_, send_start_us);
+        RecordSample(&packet_writer_video_wait_samples_, send_start_us,
+                     UsToMs(send_start_us - video_packet.encoded_done_us));
+      }
+      prefer_audio = true;
+      continue;
+    }
     TransportResult result;
     {
       std::scoped_lock send_lock(transport_send_mutex_);
@@ -1084,6 +1108,8 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       AverageIntervalMs(&encoder_input_events_us_, now_us);
   snapshot.send_frame_interval_average_ms =
       AverageIntervalMs(&sent_access_unit_events_us_, now_us);
+  snapshot.send_frame_interval_p95_ms =
+      P95IntervalMs(&sent_access_unit_events_us_, now_us);
   snapshot.capture_to_convert_average_ms =
       AverageSampleMs(&capture_to_convert_samples_, now_us);
   snapshot.convert_to_encode_average_ms =
@@ -1094,6 +1120,10 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       P95SampleMs(&encode_duration_samples_, now_us);
   snapshot.encode_to_send_average_ms =
       AverageSampleMs(&encode_to_send_samples_, now_us);
+  snapshot.video_queue_wait_average_ms =
+      AverageSampleMs(&packet_writer_video_wait_samples_, now_us);
+  snapshot.video_queue_wait_p95_ms =
+      P95SampleMs(&packet_writer_video_wait_samples_, now_us);
   snapshot.captured_frames = captured_frames_.load();
   snapshot.capture_replaced_frames = capture_replaced_frames_.load();
   snapshot.cadence_skipped_frames = cadence_skipped_frames_.load();
@@ -1103,6 +1133,7 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       encoder_backpressure_dropped_frames_.load();
   snapshot.transport_backpressure_dropped_frames =
       transport_backpressure_dropped_frames_.load();
+  snapshot.stale_video_dropped_frames = stale_video_dropped_frames_.load();
   snapshot.shutdown_dropped_frames = shutdown_dropped_frames_.load();
   snapshot.total_dropped_frames =
       snapshot.capture_replaced_frames + snapshot.cadence_skipped_frames +
@@ -1156,6 +1187,16 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       snapshot.admitted_frame_fps <= 0.0
           ? 0.0
           : snapshot.encoded_fps / snapshot.admitted_frame_fps;
+  snapshot.selected_profile = video_config_.performance_profile;
+  {
+    std::ostringstream resolution;
+    resolution << video_config_.width << "x" << video_config_.height;
+    snapshot.output_resolution = resolution.str();
+  }
+  snapshot.current_bitrate_kbps = video_config_.bitrate_kbps;
+  snapshot.target_frame_interval_ms = UsToMs(target_frame_interval_us_);
+  snapshot.stale_video_dropped_fps =
+      RollingFps(&stale_video_dropped_events_us_, now_us);
   const auto encoder_diagnostics = encoder_.diagnostics();
   snapshot.selected_encoder_name = encoder_diagnostics.selected_encoder_name;
   snapshot.selected_encoder_hardware =
@@ -1222,8 +1263,7 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
     snapshot.video_fps_audio_disabled = snapshot.sent_access_unit_fps;
   }
   snapshot.audio_cpu_time_ms = snapshot.audio_encode_average_ms;
-  snapshot.packet_writer_video_wait_ms =
-      AverageSampleMs(&packet_writer_video_wait_samples_, now_us);
+  snapshot.packet_writer_video_wait_ms = snapshot.video_queue_wait_average_ms;
   snapshot.packet_writer_audio_wait_ms =
       AverageSampleMs(&packet_writer_audio_wait_samples_, now_us);
   snapshot.playback_state = IsPaused() ? "paused" : state;
@@ -1234,17 +1274,35 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       playback_command_errors_sent_.load();
   snapshot.resume_codec_config_resends =
       resume_codec_config_resends_.load();
-  snapshot.local_speaker_mute_mode =
-      tv_only_audio_requested_.load() ? "tvOnlyRequested" : "pcAndTv";
-  if (tv_only_audio_requested_.load()) {
-    snapshot.local_speaker_mute_state = "unsupported";
-    snapshot.local_speaker_mute_last_error =
-        "TV-only audio requires a verified routing or virtual audio device; "
-        "simple Windows endpoint mute is intentionally not used.";
+  snapshot.pc_local_audio_mute_requested =
+      pc_local_audio_mute_requested_.load();
+  snapshot.pc_local_audio_mute_supported = false;
+  snapshot.pc_local_audio_mute_applied = false;
+  snapshot.pc_local_audio_original_mute_state = false;
+  snapshot.audio_capture_active =
+      snapshot.audio_enabled && snapshot.audio_capture_state == "capturing";
+  snapshot.audio_encoder_active =
+      snapshot.audio_capture_active && snapshot.audio_last_error.empty();
+  snapshot.audio_transport_active =
+      snapshot.audio_enabled && snapshot.signaling_ready &&
+      session_error_code_ != "NETWORK_DISCONNECTED";
+  snapshot.tv_audio_streaming =
+      snapshot.audio_capture_active && snapshot.audio_encoder_active &&
+      snapshot.audio_transport_active;
+  snapshot.audio_routing_mode = "defaultRenderEndpointLoopback";
+  if (snapshot.pc_local_audio_mute_requested) {
+    snapshot.audio_mute_unsupported_reason =
+        "Unavailable: separate PC/TV audio routing is not configured";
   } else {
-    snapshot.local_speaker_mute_state = "disabled";
-    snapshot.local_speaker_mute_last_error.clear();
+    snapshot.audio_mute_unsupported_reason.clear();
   }
+  snapshot.local_speaker_mute_mode =
+      snapshot.pc_local_audio_mute_requested ? "pcLocalMuteRequested"
+                                             : "pcAndTv";
+  snapshot.local_speaker_mute_state =
+      snapshot.pc_local_audio_mute_requested ? "unsupported" : "disabled";
+  snapshot.local_speaker_mute_last_error =
+      snapshot.audio_mute_unsupported_reason;
   return snapshot;
 }
 
@@ -1279,6 +1337,7 @@ void MirrorSession::ResetCounters() {
   conversion_backpressure_dropped_frames_ = 0;
   encoder_backpressure_dropped_frames_ = 0;
   transport_backpressure_dropped_frames_ = 0;
+  stale_video_dropped_frames_ = 0;
   shutdown_dropped_frames_ = 0;
   capture_dropped_frames_ = 0;
   conversion_dropped_frames_ = 0;
@@ -1293,7 +1352,7 @@ void MirrorSession::ResetCounters() {
   bytes_sent_ = 0;
   send_completed_bytes_ = 0;
   audio_enabled_ = false;
-  tv_only_audio_requested_ = false;
+  pc_local_audio_mute_requested_ = false;
   paused_ = false;
   audio_config_requested_ = false;
   captured_audio_packets_ = 0;
@@ -1320,6 +1379,7 @@ void MirrorSession::ResetCounters() {
   cadence_dropped_events_us_.clear();
   encoder_busy_dropped_events_us_.clear();
   conversion_busy_dropped_events_us_.clear();
+  stale_video_dropped_events_us_.clear();
   socket_send_call_events_us_.clear();
   audio_capture_events_us_.clear();
   capture_to_convert_samples_.clear();

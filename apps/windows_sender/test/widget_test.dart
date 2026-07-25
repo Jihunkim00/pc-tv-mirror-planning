@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 import 'package:windows_sender/app/windows_sender_app.dart';
 import 'package:windows_sender/core/native_bridge/mirror_native_api.dart';
+import 'package:windows_sender/features/mirroring/mirror_controller.dart';
 
 void main() {
   testWidgets('loads displays and sends a STAGE 4 video/audio start request', (
@@ -45,7 +46,18 @@ void main() {
       'lowLatency720p30',
     );
     expect((json['video'] as Map<String, Object?>)['bitrateKbps'], 6000);
+    expect(nativeApi.lastStartRequest!.pcLocalAudioMuteRequested, isFalse);
     expect(find.text('State: negotiating'), findsOneWidget);
+  });
+
+  test('uses a balanced STAGE 4 1080p profile bitrate', () {
+    final profile = SenderVideoProfile.highQuality1080p30.videoProfile;
+
+    expect(profile.width, 1920);
+    expect(profile.height, 1080);
+    expect(profile.fps, 30);
+    expect(profile.bitrateKbps, 7500);
+    expect(profile.performanceProfile, PerformanceProfile.highQuality1080p30);
   });
 
   test('parses sender latency, queue, and drop diagnostics', () {
@@ -74,17 +86,21 @@ void main() {
       'captureFrameIntervalP95Ms': 38.0,
       'encodeFrameIntervalAverageMs': 34.0,
       'sendFrameIntervalAverageMs': 34.5,
+      'sendFrameIntervalP95Ms': 42.0,
       'captureToConvertAverageMs': 6.5,
       'convertToEncodeAverageMs': 1.5,
       'encodeDurationAverageMs': 8.0,
       'encodeDurationP95Ms': 14.0,
       'encodeToSendAverageMs': 2.0,
+      'videoQueueWaitAverageMs': 0.6,
+      'videoQueueWaitP95Ms': 1.4,
       'capturedFrames': 10,
       'captureReplacedFrames': 1,
       'cadenceSkippedFrames': 2,
       'conversionBackpressureDroppedFrames': 0,
       'encoderBackpressureDroppedFrames': 0,
       'transportBackpressureDroppedFrames': 3,
+      'staleVideoDroppedFrames': 2,
       'shutdownDroppedFrames': 0,
       'totalDroppedFrames': 6,
       'captureDroppedFrames': 1,
@@ -111,6 +127,11 @@ void main() {
       'averageCaptureToEncodeMs': 14,
       'maxCaptureToEncodeMs': 30.25,
       'admittedToEncodedRatio': 0.98,
+      'selectedProfile': 'highQuality1080p30',
+      'outputResolution': '1920x1080',
+      'currentBitrateKbps': 7500,
+      'targetFrameIntervalMs': 33.333,
+      'staleVideoDroppedFps': 1.5,
       'selectedEncoderName': 'Intel Quick Sync H.264',
       'selectedEncoderHardware': true,
       'selectedEncoderAsync': false,
@@ -161,9 +182,21 @@ void main() {
       'playbackCommandAcksSent': 2,
       'playbackCommandErrorsSent': 0,
       'resumeCodecConfigResends': 1,
-      'localSpeakerMuteMode': 'pcAndTv',
-      'localSpeakerMuteState': 'disabled',
-      'localSpeakerMuteLastError': '',
+      'localSpeakerMuteMode': 'pcLocalMuteRequested',
+      'localSpeakerMuteState': 'unsupported',
+      'localSpeakerMuteLastError':
+          'Unavailable: separate PC/TV audio routing is not configured.',
+      'pcLocalAudioMuteRequested': true,
+      'pcLocalAudioMuteSupported': false,
+      'pcLocalAudioMuteApplied': false,
+      'pcLocalAudioOriginalMuteState': false,
+      'tvAudioStreaming': true,
+      'audioCaptureActive': true,
+      'audioEncoderActive': true,
+      'audioTransportActive': true,
+      'audioRoutingMode': 'defaultRenderEndpointLoopback',
+      'audioMuteUnsupportedReason':
+          'Unavailable: separate PC/TV audio routing is not configured.',
     });
 
     expect(snapshot.targetFps, 30);
@@ -197,13 +230,29 @@ void main() {
     expect(snapshot.processInputDurationP95Ms, 0.4);
     expect(snapshot.processOutputDurationP95Ms, 1.3);
     expect(snapshot.gpuReadbackPerFrame, isTrue);
+    expect(snapshot.selectedProfile, 'highQuality1080p30');
+    expect(snapshot.outputResolution, '1920x1080');
+    expect(snapshot.currentBitrateKbps, 7500);
+    expect(snapshot.sendFrameIntervalP95Ms, 42);
+    expect(snapshot.videoQueueWaitP95Ms, 1.4);
+    expect(snapshot.staleVideoDroppedFrames, 2);
+    expect(snapshot.staleVideoDroppedFps, 1.5);
     expect(snapshot.audioEnabled, isTrue);
     expect(snapshot.audioCaptureState, 'capturing');
     expect(snapshot.sentAudioPackets, 3);
     expect(snapshot.packetWriterAudioWaitMs, 0.4);
     expect(snapshot.playbackState, 'streaming');
     expect(snapshot.resumeCodecConfigResends, 1);
-    expect(snapshot.localSpeakerMuteState, 'disabled');
+    expect(snapshot.localSpeakerMuteState, 'unsupported');
+    expect(snapshot.pcLocalAudioMuteRequested, isTrue);
+    expect(snapshot.pcLocalAudioMuteSupported, isFalse);
+    expect(snapshot.pcLocalAudioMuteApplied, isFalse);
+    expect(snapshot.tvAudioStreaming, isTrue);
+    expect(snapshot.audioCaptureActive, isTrue);
+    expect(snapshot.audioEncoderActive, isTrue);
+    expect(snapshot.audioTransportActive, isTrue);
+    expect(snapshot.audioRoutingMode, 'defaultRenderEndpointLoopback');
+    expect(snapshot.audioMuteUnsupportedReason, contains('Unavailable'));
     expect(snapshot.bottleneckSummary, 'healthy');
   });
 }
@@ -263,6 +312,23 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
       encoderReady: false,
       signalingReady: true,
       nativeVideoPathReady: false,
+    );
+  }
+
+  @override
+  Future<NativeSessionSnapshot> setPcLocalAudioMuteRequested(
+    bool requested,
+  ) async {
+    return NativeSessionSnapshot(
+      state: MirrorSessionState.negotiating,
+      userMessage: 'Control signaling is ready.',
+      captureReady: false,
+      encoderReady: false,
+      signalingReady: true,
+      nativeVideoPathReady: false,
+      pcLocalAudioMuteRequested: requested,
+      pcLocalAudioMuteSupported: false,
+      pcLocalAudioMuteApplied: false,
     );
   }
 }

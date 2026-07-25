@@ -43,7 +43,7 @@ class MirrorController extends ChangeNotifier {
   String? _activeSessionId;
   bool _busy = false;
   bool _systemAudioEnabled = true;
-  bool _tvOnlyAudioRequested = false;
+  bool _pcLocalAudioMuteRequested = false;
   SenderVideoProfile _videoProfile = SenderVideoProfile.lowLatency720p30;
   String? _userMessage;
   String? _developerMessage;
@@ -57,7 +57,7 @@ class MirrorController extends ChangeNotifier {
   String? get selectedDisplayId => _selectedDisplayId;
   bool get busy => _busy;
   bool get systemAudioEnabled => _systemAudioEnabled;
-  bool get tvOnlyAudioRequested => _tvOnlyAudioRequested;
+  bool get pcLocalAudioMuteRequested => _pcLocalAudioMuteRequested;
   SenderVideoProfile get videoProfile => _videoProfile;
   String? get userMessage => _userMessage;
   String? get developerMessage => _developerMessage;
@@ -113,23 +113,40 @@ class MirrorController extends ChangeNotifier {
     }
     _systemAudioEnabled = enabled;
     if (!enabled) {
-      _tvOnlyAudioRequested = false;
+      _pcLocalAudioMuteRequested = false;
     }
     _appendLog('System audio ${enabled ? 'enabled' : 'disabled'}.');
     notifyListeners();
   }
 
-  void setTvOnlyAudioRequested(bool enabled) {
-    if (_tvOnlyAudioRequested == enabled || isRunning) {
+  void setPcLocalAudioMuteRequested(bool enabled) {
+    if (_pcLocalAudioMuteRequested == enabled) {
       return;
     }
-    _tvOnlyAudioRequested = enabled;
+    if (!_systemAudioEnabled) {
+      return;
+    }
+    _pcLocalAudioMuteRequested = enabled;
     _appendLog(
       enabled
-          ? 'TV-only audio requested; waiting for verified routing support.'
-          : 'TV-only audio request disabled.',
+          ? 'Mute PC speakers requested; TV audio transport remains enabled.'
+          : 'Mute PC speakers disabled.',
     );
+    if (isRunning) {
+      unawaited(_applyPcLocalAudioMuteRequested(enabled));
+    }
     notifyListeners();
+  }
+
+  Future<void> _applyPcLocalAudioMuteRequested(bool enabled) async {
+    try {
+      final snapshot = await _nativeApi.setPcLocalAudioMuteRequested(enabled);
+      _applySnapshot(snapshot);
+    } catch (error) {
+      _developerMessage = '$error';
+      _appendLog('Mute PC speakers request failed.');
+      notifyListeners();
+    }
   }
 
   void setVideoProfile(SenderVideoProfile profile) {
@@ -167,7 +184,8 @@ class MirrorController extends ChangeNotifier {
       'Starting ${_videoProfile.videoProfile.performanceProfile.wireName} '
       'video session '
       'with system audio ${_systemAudioEnabled ? 'enabled' : 'disabled'} '
-      'and TV-only audio ${_tvOnlyAudioRequested ? 'requested' : 'off'}.',
+      'and PC speaker mute '
+      '${_pcLocalAudioMuteRequested ? 'requested' : 'off'}.',
     );
     notifyListeners();
 
@@ -188,7 +206,7 @@ class MirrorController extends ChangeNotifier {
           receiverHost: receiverHost,
           receiverPort: receiverPort,
           streamRequest: request,
-          tvOnlyAudioRequested: _tvOnlyAudioRequested,
+          pcLocalAudioMuteRequested: _pcLocalAudioMuteRequested,
         ),
       );
       _activeSessionId = sessionId;

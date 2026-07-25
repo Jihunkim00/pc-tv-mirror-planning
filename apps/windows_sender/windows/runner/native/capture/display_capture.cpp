@@ -156,6 +156,15 @@ bool DisplayCapture::Start(const std::string& source_id,
 bool DisplayCapture::CaptureNext(Nv12Frame* frame,
                                  int timeout_ms,
                                  std::string* error) {
+  return CaptureNext(frame, timeout_ms, nullptr, error);
+}
+
+bool DisplayCapture::CaptureNext(
+    Nv12Frame* frame,
+    int timeout_ms,
+    const std::function<bool(std::uint64_t capture_callback_us)>&
+        should_convert,
+    std::string* error) {
   if (!frame_pool_) {
     *error = "capture session is not running";
     return false;
@@ -189,6 +198,21 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
       ++dropped_frames;
     }
 
+    frame->width = target_width_;
+    frame->height = target_height_;
+    frame->pts_us = capture_callback_us;
+    frame->capture_callback_us = capture_callback_us;
+    frame->convert_started_us = capture_callback_us;
+    frame->converted_us = capture_callback_us;
+    frame->convert_duration_us = 0;
+    frame->dropped_frames = dropped_frames;
+    frame->data.clear();
+
+    if (should_convert && !should_convert(capture_callback_us)) {
+      capture_frame.Close();
+      return true;
+    }
+
     auto surface = capture_frame.Surface();
     auto access =
         surface.as<::Windows::Graphics::DirectX::Direct3D11::
@@ -217,14 +241,11 @@ bool DisplayCapture::CaptureNext(Nv12Frame* frame,
     ConvertMappedBgraToNv12(mapped, desc.Width, desc.Height, frame);
     const auto converted_us = NowUs();
     d3d_context_->Unmap(staging_texture_.get(), 0);
-    frame->pts_us = capture_callback_us;
-    frame->capture_callback_us = capture_callback_us;
     frame->convert_started_us = convert_started_us;
     frame->converted_us = converted_us;
     frame->convert_duration_us =
         converted_us >= convert_started_us ? converted_us - convert_started_us
                                            : 0;
-    frame->dropped_frames = dropped_frames;
   } catch (const winrt::hresult_error& failure) {
     *error = HResultText("WGC frame copy", failure.code());
     return false;

@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <windows.h>
 
+#include <functional>
 #include <string>
 
 #include <winrt/Windows.Foundation.h>
@@ -29,6 +30,12 @@ class DisplayCapture {
              int target_height,
              std::string* error);
   bool CaptureNext(Nv12Frame* frame, int timeout_ms, std::string* error);
+  bool CaptureNext(
+      Nv12Frame* frame,
+      int timeout_ms,
+      const std::function<bool(std::uint64_t capture_callback_us)>&
+          should_convert,
+      std::string* error);
   void Stop();
 
  private:

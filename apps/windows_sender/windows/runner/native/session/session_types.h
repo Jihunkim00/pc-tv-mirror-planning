@@ -35,17 +35,21 @@ struct NativeSnapshot {
   double capture_frame_interval_p95_ms = 0.0;
   double encode_frame_interval_average_ms = 0.0;
   double send_frame_interval_average_ms = 0.0;
+  double send_frame_interval_p95_ms = 0.0;
   double capture_to_convert_average_ms = 0.0;
   double convert_to_encode_average_ms = 0.0;
   double encode_duration_average_ms = 0.0;
   double encode_duration_p95_ms = 0.0;
   double encode_to_send_average_ms = 0.0;
+  double video_queue_wait_average_ms = 0.0;
+  double video_queue_wait_p95_ms = 0.0;
   std::uint64_t captured_frames = 0;
   std::uint64_t capture_replaced_frames = 0;
   std::uint64_t cadence_skipped_frames = 0;
   std::uint64_t conversion_backpressure_dropped_frames = 0;
   std::uint64_t encoder_backpressure_dropped_frames = 0;
   std::uint64_t transport_backpressure_dropped_frames = 0;
+  std::uint64_t stale_video_dropped_frames = 0;
   std::uint64_t shutdown_dropped_frames = 0;
   std::uint64_t total_dropped_frames = 0;
   std::uint64_t capture_dropped_frames = 0;
@@ -73,6 +77,11 @@ struct NativeSnapshot {
   double average_capture_to_encode_ms = 0.0;
   double max_capture_to_encode_ms = 0.0;
   double admitted_to_encoded_ratio = 0.0;
+  std::string selected_profile = "lowLatency720p30";
+  std::string output_resolution = "1280x720";
+  int current_bitrate_kbps = 6000;
+  double target_frame_interval_ms = 33.333;
+  double stale_video_dropped_fps = 0.0;
   std::string selected_encoder_name = "unknown";
   bool selected_encoder_hardware = false;
   bool selected_encoder_async = false;
@@ -129,6 +138,16 @@ struct NativeSnapshot {
   std::string local_speaker_mute_mode = "pcAndTv";
   std::string local_speaker_mute_state = "disabled";
   std::string local_speaker_mute_last_error;
+  bool pc_local_audio_mute_requested = false;
+  bool pc_local_audio_mute_supported = false;
+  bool pc_local_audio_mute_applied = false;
+  bool pc_local_audio_original_mute_state = false;
+  bool tv_audio_streaming = false;
+  bool audio_capture_active = false;
+  bool audio_encoder_active = false;
+  bool audio_transport_active = false;
+  std::string audio_routing_mode = "defaultRenderEndpointLoopback";
+  std::string audio_mute_unsupported_reason;
 };
 
 struct StartSessionOptions {
@@ -137,7 +156,7 @@ struct StartSessionOptions {
   std::string request_json;
   std::string source_id;
   bool audio_enabled = true;
-  bool tv_only_audio_requested = false;
+  bool pc_local_audio_mute_requested = false;
   VideoStreamConfig video;
 };
 

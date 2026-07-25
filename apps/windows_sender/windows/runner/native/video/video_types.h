@@ -2,6 +2,7 @@
 #define RUNNER_NATIVE_VIDEO_VIDEO_TYPES_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace pctv {
@@ -11,6 +12,8 @@ struct VideoStreamConfig {
   int height = 720;
   int fps = 30;
   int bitrate_kbps = 6000;
+  int keyframe_interval_frames = 30;
+  std::string performance_profile = "lowLatency720p30";
 };
 
 struct Nv12Frame {

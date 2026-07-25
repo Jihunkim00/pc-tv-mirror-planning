@@ -17,7 +17,7 @@
 namespace pctv {
 namespace {
 
-constexpr std::uint64_t kRollingWindowUs = 2'000'000;
+constexpr std::uint64_t kRollingWindowUs = 5'000'000;
 
 std::uint64_t NowUs() {
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -271,6 +271,7 @@ void SetCodecApiU4(ICodecAPI* codec_api,
 }
 
 void ApplyLowLatencyOptions(IMFTransform* transform,
+                            int keyframe_interval_frames,
                             H264EncoderDiagnostics* diagnostics) {
   winrt::com_ptr<IMFAttributes> attributes;
   HRESULT hr = transform->QueryInterface(IID_PPV_ARGS(attributes.put()));
@@ -309,7 +310,8 @@ void ApplyLowLatencyOptions(IMFTransform* transform,
                   "CODECAPI_AVLowLatencyMode", diagnostics);
   SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0,
                 "CODECAPI_AVEncMPVDefaultBPictureCount", diagnostics);
-  SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVGOPSize, 30,
+  SetCodecApiU4(codec_api.get(), CODECAPI_AVEncMPVGOPSize,
+                static_cast<ULONG>(std::max(1, keyframe_interval_frames)),
                 "CODECAPI_AVEncMPVGOPSize", diagnostics);
   SetCodecApiU4(codec_api.get(), CODECAPI_AVEncCommonRateControlMode,
                 eAVEncCommonRateControlMode_CBR,
@@ -414,7 +416,7 @@ H264Encoder::~H264Encoder() {
 bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
   Stop();
   if (config.width < 16 || config.height < 16 || config.fps <= 0 ||
-      config.bitrate_kbps <= 0) {
+      config.bitrate_kbps <= 0 || config.keyframe_interval_frames <= 0) {
     *error = "Invalid H.264 encoder video profile";
     return false;
   }
@@ -438,7 +440,8 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
 
   std::string hardware_error;
   if (CreateHardwareEncoder(&hardware_error)) {
-    ApplyLowLatencyOptions(transform_.get(), &diagnostics_);
+    ApplyLowLatencyOptions(transform_.get(), config_.keyframe_interval_frames,
+                           &diagnostics_);
     if (!ConfigureTypes(error)) {
       Log("Hardware H.264 encoder rejected NV12 input; falling back: " +
           *error);
@@ -457,7 +460,8 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
       Stop();
       return false;
     }
-    ApplyLowLatencyOptions(transform_.get(), &diagnostics_);
+    ApplyLowLatencyOptions(transform_.get(), config_.keyframe_interval_frames,
+                           &diagnostics_);
 
     if (!ConfigureTypes(error)) {
       Stop();
@@ -730,8 +734,15 @@ bool H264Encoder::ConfigureTypes(std::string* error) {
 bool H264Encoder::ForceNextKeyFrame(std::string* error) {
   winrt::com_ptr<ICodecAPI> codec_api;
   HRESULT hr = transform_->QueryInterface(IID_PPV_ARGS(codec_api.put()));
-  if (Failed(hr, "QueryInterface(ICodecAPI)", error)) {
-    return false;
+  if (FAILED(hr)) {
+    WarnUnsupported(hr, "ICodecAPI force key frame");
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      AppendOption(&diagnostics_.unsupported_encoder_options,
+                   "ICodecAPI force key frame");
+    }
+    force_next_key_frame_.store(false);
+    return true;
   }
 
   VARIANT value;
@@ -747,8 +758,15 @@ bool H264Encoder::ForceNextKeyFrame(std::string* error) {
     hr = codec_api->SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value);
     VariantClear(&value);
   }
-  if (Failed(hr, "CODECAPI_AVEncVideoForceKeyFrame", error)) {
-    return false;
+  if (FAILED(hr)) {
+    WarnUnsupported(hr, "CODECAPI_AVEncVideoForceKeyFrame");
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      AppendOption(&diagnostics_.unsupported_encoder_options,
+                   "CODECAPI_AVEncVideoForceKeyFrame");
+    }
+    force_next_key_frame_.store(false);
+    return true;
   }
 
   force_next_key_frame_.store(false);

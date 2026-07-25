@@ -89,7 +89,7 @@ void main() {
       expect(video['width'], 1920);
       expect(video['height'], 1080);
       expect(video['fps'], 30);
-      expect(video['bitrateKbps'], 9000);
+      expect(video['bitrateKbps'], 7500);
       expect(video['performanceProfile'], 'highQuality1080p30');
       expect(
         StreamStartRequest.fromJson(json).video.performanceProfile,
@@ -200,10 +200,7 @@ void main() {
         message: 'No active sender session.',
       );
 
-      expect(
-        PlaybackCommandAck.fromJson(ack.toJson()).senderState,
-        'resuming',
-      );
+      expect(PlaybackCommandAck.fromJson(ack.toJson()).senderState, 'resuming');
       expect(
         PlaybackCommandError.fromJson(error.toJson()).errorCode,
         'INVALID_STATE',

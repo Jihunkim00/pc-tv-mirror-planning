@@ -330,7 +330,7 @@ final class VideoProfile {
       width = 1920,
       height = 1080,
       fps = 30,
-      bitrateKbps = 9000,
+      bitrateKbps = 7500,
       performanceProfile = PerformanceProfile.highQuality1080p30;
 
   final VideoCodec codec;
@@ -890,11 +890,7 @@ final class PlaybackCommand {
       commandId: _readInt(json, 'commandId'),
       command: PlaybackCommandKind.fromWireName(_readString(json, 'command')),
       receiverTimestampUs: _readInt(json, 'receiverTimestampUs'),
-      reason: _readOptionalString(
-        json,
-        'reason',
-        defaultValue: 'remote_key',
-      ),
+      reason: _readOptionalString(json, 'reason', defaultValue: 'remote_key'),
       requestedBy: _readOptionalString(
         json,
         'requestedBy',

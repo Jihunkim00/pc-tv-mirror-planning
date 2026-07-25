@@ -55,7 +55,8 @@ class _MirroringPageState extends State<MirroringPage> {
                   onStart: _start,
                   onStop: _controller.stop,
                   onSystemAudioChanged: _controller.setSystemAudioEnabled,
-                  onTvOnlyAudioChanged: _controller.setTvOnlyAudioRequested,
+                  onPcLocalAudioMuteChanged:
+                      _controller.setPcLocalAudioMuteRequested,
                   onVideoProfileChanged: _controller.setVideoProfile,
                 );
 
@@ -281,7 +282,7 @@ class _SessionPanel extends StatelessWidget {
     required this.onStart,
     required this.onStop,
     required this.onSystemAudioChanged,
-    required this.onTvOnlyAudioChanged,
+    required this.onPcLocalAudioMuteChanged,
     required this.onVideoProfileChanged,
   });
 
@@ -292,11 +293,20 @@ class _SessionPanel extends StatelessWidget {
   final VoidCallback onStart;
   final VoidCallback onStop;
   final ValueChanged<bool> onSystemAudioChanged;
-  final ValueChanged<bool> onTvOnlyAudioChanged;
+  final ValueChanged<bool> onPcLocalAudioMuteChanged;
   final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
 
   @override
   Widget build(BuildContext context) {
+    final pcMuteUnsupported =
+        controller.pcLocalAudioMuteRequested &&
+        !(controller.snapshot?.pcLocalAudioMuteSupported ?? false);
+    final pcMuteSubtitle = pcMuteUnsupported
+        ? 'Unavailable: separate PC/TV audio routing is not configured'
+        : controller.pcLocalAudioMuteRequested
+        ? 'PC muted - TV audio continues'
+        : 'PC audio on - TV audio continues';
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainer,
@@ -387,11 +397,12 @@ class _SessionPanel extends StatelessWidget {
             type: MaterialType.transparency,
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              value: controller.tvOnlyAudioRequested,
-              onChanged: controller.isRunning || !controller.systemAudioEnabled
+              value: controller.pcLocalAudioMuteRequested,
+              onChanged: controller.busy || !controller.systemAudioEnabled
                   ? null
-                  : onTvOnlyAudioChanged,
-              title: const Text('TV-only audio'),
+                  : onPcLocalAudioMuteChanged,
+              title: const Text('Mute PC speakers'),
+              subtitle: Text(pcMuteSubtitle),
               secondary: const Icon(Icons.speaker),
             ),
           ),
@@ -459,6 +470,12 @@ class _SenderCounters extends StatelessWidget {
               title: 'Capture',
               rows: [
                 _MetricRow(
+                  label: 'Profile',
+                  value:
+                      '${snapshot.selectedProfile} - ${snapshot.outputResolution} - '
+                      '${snapshot.currentBitrateKbps} kbps',
+                ),
+                _MetricRow(
                   label: 'Target / actual',
                   value:
                       '${snapshot.targetFps.toStringAsFixed(1)} / '
@@ -473,6 +490,11 @@ class _SenderCounters extends StatelessWidget {
                   label: 'Interval p95',
                   value:
                       '${snapshot.captureFrameIntervalP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Target interval',
+                  value:
+                      '${snapshot.targetFrameIntervalMs.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
                   label: 'Replaced / cadence',
@@ -557,6 +579,11 @@ class _SenderCounters extends StatelessWidget {
                   value: '${snapshot.sentVideoFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
+                  label: 'Send interval p95',
+                  value:
+                      '${snapshot.sendFrameIntervalP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
                   label: 'Send duration',
                   value:
                       '${snapshot.accessUnitSendDurationAverageMs.toStringAsFixed(1)}/'
@@ -574,6 +601,18 @@ class _SenderCounters extends StatelessWidget {
                 _MetricRow(
                   label: 'Queue depth',
                   value: '${snapshot.queueDepthTransport}',
+                ),
+                _MetricRow(
+                  label: 'Queue wait avg/p95',
+                  value:
+                      '${snapshot.videoQueueWaitAverageMs.toStringAsFixed(1)}/'
+                      '${snapshot.videoQueueWaitP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Stale video drops',
+                  value:
+                      '${snapshot.staleVideoDroppedFrames} '
+                      '(${snapshot.staleVideoDroppedFps.toStringAsFixed(1)} fps)',
                 ),
               ],
             ),
@@ -627,14 +666,29 @@ class _SenderCounters extends StatelessWidget {
                     value: snapshot.audioLastError,
                   ),
                 _MetricRow(
-                  label: 'Local speaker',
+                  label: 'Mute PC speakers',
                   value:
-                      '${snapshot.localSpeakerMuteMode} / ${snapshot.localSpeakerMuteState}',
+                      'requested ${snapshot.pcLocalAudioMuteRequested}, '
+                      'supported ${snapshot.pcLocalAudioMuteSupported}, '
+                      'applied ${snapshot.pcLocalAudioMuteApplied}, '
+                      'original ${snapshot.pcLocalAudioOriginalMuteState}',
                 ),
-                if (snapshot.localSpeakerMuteLastError.isNotEmpty)
+                _MetricRow(
+                  label: 'TV audio path',
+                  value:
+                      'stream ${snapshot.tvAudioStreaming}, '
+                      'cap ${snapshot.audioCaptureActive}, '
+                      'enc ${snapshot.audioEncoderActive}, '
+                      'net ${snapshot.audioTransportActive}',
+                ),
+                _MetricRow(
+                  label: 'Audio routing',
+                  value: snapshot.audioRoutingMode,
+                ),
+                if (snapshot.audioMuteUnsupportedReason.isNotEmpty)
                   _MetricRow(
                     label: 'Speaker route error',
-                    value: snapshot.localSpeakerMuteLastError,
+                    value: snapshot.audioMuteUnsupportedReason,
                   ),
               ],
             ),
@@ -678,7 +732,8 @@ class _SenderCounters extends StatelessWidget {
               value:
                   'conv ${snapshot.conversionBackpressureDroppedFrames}, '
                   'enc ${snapshot.encoderBackpressureDroppedFrames}, '
-                  'net ${snapshot.transportBackpressureDroppedFrames}',
+                  'net ${snapshot.transportBackpressureDroppedFrames}, '
+                  'stale ${snapshot.staleVideoDroppedFrames}',
             ),
             _MetricRow(
               label: 'Config sent',
