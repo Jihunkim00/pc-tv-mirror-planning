@@ -68,6 +68,16 @@ class ReceiverController extends ChangeNotifier {
     }
   }
 
+  Future<void> setAudioMuted(bool muted) async {
+    try {
+      final snapshot = await _nativeApi.setAudioMuted(muted);
+      _applySnapshot(snapshot, notify: true);
+    } catch (error) {
+      _appendLog('Audio mute update failed: $error');
+      notifyListeners();
+    }
+  }
+
   void _applySnapshot(ReceiverSessionSnapshot snapshot, {bool notify = false}) {
     _snapshot = snapshot;
     _state = snapshot.state;

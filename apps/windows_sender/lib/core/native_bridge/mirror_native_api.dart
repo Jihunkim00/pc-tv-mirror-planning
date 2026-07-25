@@ -75,6 +75,7 @@ final class StartMirrorSessionRequest {
       'receiverPort': receiverPort,
       'sourceId': streamRequest.sourceId,
       'requestJson': jsonEncode(streamRequest.toJson()),
+      'audioEnabled': streamRequest.audio?.enabled ?? false,
     };
   }
 }
@@ -90,10 +91,17 @@ final class NativeSessionSnapshot {
     this.targetFps = 30,
     this.captureCallbackFps = 0,
     this.capturedFps = 0,
+    this.targetAdmissionFps = 0,
+    this.admittedFrameFps = 0,
     this.convertedFps = 0,
+    this.encoderAcceptedFps = 0,
     this.encoderInputFps = 0,
     this.encodedFps = 0,
+    this.sentVideoFps = 0,
     this.sentAccessUnitFps = 0,
+    this.cadenceDroppedFps = 0,
+    this.encoderBusyDroppedFps = 0,
+    this.conversionBusyDroppedFps = 0,
     this.captureFrameIntervalAverageMs = 0,
     this.captureFrameIntervalP95Ms = 0,
     this.encodeFrameIntervalAverageMs = 0,
@@ -104,6 +112,13 @@ final class NativeSessionSnapshot {
     this.encodeDurationP95Ms = 0,
     this.encodeToSendAverageMs = 0,
     this.capturedFrames = 0,
+    this.captureReplacedFrames = 0,
+    this.cadenceSkippedFrames = 0,
+    this.conversionBackpressureDroppedFrames = 0,
+    this.encoderBackpressureDroppedFrames = 0,
+    this.transportBackpressureDroppedFrames = 0,
+    this.shutdownDroppedFrames = 0,
+    this.totalDroppedFrames = 0,
     this.captureDroppedFrames = 0,
     this.conversionDroppedFrames = 0,
     this.encoderInputDroppedFrames = 0,
@@ -128,6 +143,7 @@ final class NativeSessionSnapshot {
     this.lastCaptureToEncodeMs = 0,
     this.averageCaptureToEncodeMs = 0,
     this.maxCaptureToEncodeMs = 0,
+    this.admittedToEncodedRatio = 0,
     this.selectedEncoderName = 'unknown',
     this.selectedEncoderHardware = false,
     this.selectedEncoderAsync = false,
@@ -136,11 +152,45 @@ final class NativeSessionSnapshot {
     this.encoderOutputFormat = 'H.264 1280x720@30',
     this.averageEncodeDurationMs = 0,
     this.encoderBackpressureCount = 0,
+    this.encoderNotAcceptingCount = 0,
+    this.processInputCalls = 0,
+    this.processInputAccepted = 0,
+    this.processInputNotAccepting = 0,
+    this.processInputRetries = 0,
+    this.processOutputCalls = 0,
+    this.processOutputFrames = 0,
+    this.processInputDurationAverageMs = 0,
+    this.processInputDurationP95Ms = 0,
+    this.processOutputDurationAverageMs = 0,
+    this.processOutputDurationP95Ms = 0,
+    this.bgraToNv12Mode = 'cpuBgraToNv12',
+    this.gpuReadbackPerFrame = true,
+    this.textureReuseEnabled = true,
     this.lowLatencyOptionsApplied = '',
     this.unsupportedEncoderOptions = '',
     this.bottleneckSummary = 'unknown',
     this.lastEncodeError,
     this.lastSendError,
+    this.audioEnabled = false,
+    this.audioCaptureState = 'disabled',
+    this.audioDeviceName = '',
+    this.audioInputSampleRate = 0,
+    this.audioInputChannels = 0,
+    this.audioEncodedSampleRate = 48000,
+    this.audioEncodedChannels = 2,
+    this.capturedAudioPackets = 0,
+    this.encodedAudioPackets = 0,
+    this.sentAudioPackets = 0,
+    this.audioCaptureFps = 0,
+    this.audioEncodeAverageMs = 0,
+    this.audioQueueDepth = 0,
+    this.audioDroppedPackets = 0,
+    this.audioLastError = '',
+    this.videoFpsAudioDisabled = 0,
+    this.videoFpsAudioEnabled = 0,
+    this.audioCpuTimeMs = 0,
+    this.packetWriterVideoWaitMs = 0,
+    this.packetWriterAudioWaitMs = 0,
     this.errorCode,
     this.developerMessage,
   });
@@ -154,10 +204,17 @@ final class NativeSessionSnapshot {
   final double targetFps;
   final double captureCallbackFps;
   final double capturedFps;
+  final double targetAdmissionFps;
+  final double admittedFrameFps;
   final double convertedFps;
+  final double encoderAcceptedFps;
   final double encoderInputFps;
   final double encodedFps;
+  final double sentVideoFps;
   final double sentAccessUnitFps;
+  final double cadenceDroppedFps;
+  final double encoderBusyDroppedFps;
+  final double conversionBusyDroppedFps;
   final double captureFrameIntervalAverageMs;
   final double captureFrameIntervalP95Ms;
   final double encodeFrameIntervalAverageMs;
@@ -168,6 +225,13 @@ final class NativeSessionSnapshot {
   final double encodeDurationP95Ms;
   final double encodeToSendAverageMs;
   final int capturedFrames;
+  final int captureReplacedFrames;
+  final int cadenceSkippedFrames;
+  final int conversionBackpressureDroppedFrames;
+  final int encoderBackpressureDroppedFrames;
+  final int transportBackpressureDroppedFrames;
+  final int shutdownDroppedFrames;
+  final int totalDroppedFrames;
   final int captureDroppedFrames;
   final int conversionDroppedFrames;
   final int encoderInputDroppedFrames;
@@ -192,6 +256,7 @@ final class NativeSessionSnapshot {
   final double lastCaptureToEncodeMs;
   final double averageCaptureToEncodeMs;
   final double maxCaptureToEncodeMs;
+  final double admittedToEncodedRatio;
   final String selectedEncoderName;
   final bool selectedEncoderHardware;
   final bool selectedEncoderAsync;
@@ -200,11 +265,45 @@ final class NativeSessionSnapshot {
   final String encoderOutputFormat;
   final double averageEncodeDurationMs;
   final int encoderBackpressureCount;
+  final int encoderNotAcceptingCount;
+  final int processInputCalls;
+  final int processInputAccepted;
+  final int processInputNotAccepting;
+  final int processInputRetries;
+  final int processOutputCalls;
+  final int processOutputFrames;
+  final double processInputDurationAverageMs;
+  final double processInputDurationP95Ms;
+  final double processOutputDurationAverageMs;
+  final double processOutputDurationP95Ms;
+  final String bgraToNv12Mode;
+  final bool gpuReadbackPerFrame;
+  final bool textureReuseEnabled;
   final String lowLatencyOptionsApplied;
   final String unsupportedEncoderOptions;
   final String bottleneckSummary;
   final String? lastEncodeError;
   final String? lastSendError;
+  final bool audioEnabled;
+  final String audioCaptureState;
+  final String audioDeviceName;
+  final int audioInputSampleRate;
+  final int audioInputChannels;
+  final int audioEncodedSampleRate;
+  final int audioEncodedChannels;
+  final int capturedAudioPackets;
+  final int encodedAudioPackets;
+  final int sentAudioPackets;
+  final double audioCaptureFps;
+  final double audioEncodeAverageMs;
+  final int audioQueueDepth;
+  final int audioDroppedPackets;
+  final String audioLastError;
+  final double videoFpsAudioDisabled;
+  final double videoFpsAudioEnabled;
+  final double audioCpuTimeMs;
+  final double packetWriterVideoWaitMs;
+  final double packetWriterAudioWaitMs;
   final MirrorErrorCode? errorCode;
   final String? developerMessage;
 
@@ -220,10 +319,20 @@ final class NativeSessionSnapshot {
       targetFps: _readOptionalDouble(json, 'targetFps', defaultValue: 30),
       captureCallbackFps: _readOptionalDouble(json, 'captureCallbackFps'),
       capturedFps: _readOptionalDouble(json, 'capturedFps'),
+      targetAdmissionFps: _readOptionalDouble(json, 'targetAdmissionFps'),
+      admittedFrameFps: _readOptionalDouble(json, 'admittedFrameFps'),
       convertedFps: _readOptionalDouble(json, 'convertedFps'),
+      encoderAcceptedFps: _readOptionalDouble(json, 'encoderAcceptedFps'),
       encoderInputFps: _readOptionalDouble(json, 'encoderInputFps'),
       encodedFps: _readOptionalDouble(json, 'encodedFps'),
+      sentVideoFps: _readOptionalDouble(json, 'sentVideoFps'),
       sentAccessUnitFps: _readOptionalDouble(json, 'sentAccessUnitFps'),
+      cadenceDroppedFps: _readOptionalDouble(json, 'cadenceDroppedFps'),
+      encoderBusyDroppedFps: _readOptionalDouble(json, 'encoderBusyDroppedFps'),
+      conversionBusyDroppedFps: _readOptionalDouble(
+        json,
+        'conversionBusyDroppedFps',
+      ),
       captureFrameIntervalAverageMs: _readOptionalDouble(
         json,
         'captureFrameIntervalAverageMs',
@@ -253,11 +362,24 @@ final class NativeSessionSnapshot {
         'encodeDurationAverageMs',
       ),
       encodeDurationP95Ms: _readOptionalDouble(json, 'encodeDurationP95Ms'),
-      encodeToSendAverageMs: _readOptionalDouble(
-        json,
-        'encodeToSendAverageMs',
-      ),
+      encodeToSendAverageMs: _readOptionalDouble(json, 'encodeToSendAverageMs'),
       capturedFrames: _readOptionalInt(json, 'capturedFrames'),
+      captureReplacedFrames: _readOptionalInt(json, 'captureReplacedFrames'),
+      cadenceSkippedFrames: _readOptionalInt(json, 'cadenceSkippedFrames'),
+      conversionBackpressureDroppedFrames: _readOptionalInt(
+        json,
+        'conversionBackpressureDroppedFrames',
+      ),
+      encoderBackpressureDroppedFrames: _readOptionalInt(
+        json,
+        'encoderBackpressureDroppedFrames',
+      ),
+      transportBackpressureDroppedFrames: _readOptionalInt(
+        json,
+        'transportBackpressureDroppedFrames',
+      ),
+      shutdownDroppedFrames: _readOptionalInt(json, 'shutdownDroppedFrames'),
+      totalDroppedFrames: _readOptionalInt(json, 'totalDroppedFrames'),
       captureDroppedFrames: _readOptionalInt(json, 'captureDroppedFrames'),
       conversionDroppedFrames: _readOptionalInt(
         json,
@@ -300,15 +422,16 @@ final class NativeSessionSnapshot {
       queueDepthCapture: _readOptionalInt(json, 'queueDepthCapture'),
       queueDepthEncoder: _readOptionalInt(json, 'queueDepthEncoder'),
       queueDepthTransport: _readOptionalInt(json, 'queueDepthTransport'),
-      lastCaptureToEncodeMs: _readOptionalDouble(
-        json,
-        'lastCaptureToEncodeMs',
-      ),
+      lastCaptureToEncodeMs: _readOptionalDouble(json, 'lastCaptureToEncodeMs'),
       averageCaptureToEncodeMs: _readOptionalDouble(
         json,
         'averageCaptureToEncodeMs',
       ),
       maxCaptureToEncodeMs: _readOptionalDouble(json, 'maxCaptureToEncodeMs'),
+      admittedToEncodedRatio: _readOptionalDouble(
+        json,
+        'admittedToEncodedRatio',
+      ),
       selectedEncoderName: _readOptionalString(json, 'selectedEncoderName'),
       selectedEncoderHardware: _readOptionalBool(
         json,
@@ -326,6 +449,50 @@ final class NativeSessionSnapshot {
         json,
         'encoderBackpressureCount',
       ),
+      encoderNotAcceptingCount: _readOptionalInt(
+        json,
+        'encoderNotAcceptingCount',
+      ),
+      processInputCalls: _readOptionalInt(json, 'processInputCalls'),
+      processInputAccepted: _readOptionalInt(json, 'processInputAccepted'),
+      processInputNotAccepting: _readOptionalInt(
+        json,
+        'processInputNotAccepting',
+      ),
+      processInputRetries: _readOptionalInt(json, 'processInputRetries'),
+      processOutputCalls: _readOptionalInt(json, 'processOutputCalls'),
+      processOutputFrames: _readOptionalInt(json, 'processOutputFrames'),
+      processInputDurationAverageMs: _readOptionalDouble(
+        json,
+        'processInputDurationAverageMs',
+      ),
+      processInputDurationP95Ms: _readOptionalDouble(
+        json,
+        'processInputDurationP95Ms',
+      ),
+      processOutputDurationAverageMs: _readOptionalDouble(
+        json,
+        'processOutputDurationAverageMs',
+      ),
+      processOutputDurationP95Ms: _readOptionalDouble(
+        json,
+        'processOutputDurationP95Ms',
+      ),
+      bgraToNv12Mode: _readOptionalString(
+        json,
+        'bgraToNv12Mode',
+        defaultValue: 'cpuBgraToNv12',
+      ),
+      gpuReadbackPerFrame: _readOptionalBool(
+        json,
+        'gpuReadbackPerFrame',
+        defaultValue: true,
+      ),
+      textureReuseEnabled: _readOptionalBool(
+        json,
+        'textureReuseEnabled',
+        defaultValue: true,
+      ),
       lowLatencyOptionsApplied: _readOptionalString(
         json,
         'lowLatencyOptionsApplied',
@@ -339,6 +506,44 @@ final class NativeSessionSnapshot {
       bottleneckSummary: _readOptionalString(json, 'bottleneckSummary'),
       lastEncodeError: json['lastEncodeError'] as String?,
       lastSendError: json['lastSendError'] as String?,
+      audioEnabled: _readOptionalBool(json, 'audioEnabled'),
+      audioCaptureState: _readOptionalString(
+        json,
+        'audioCaptureState',
+        defaultValue: 'disabled',
+      ),
+      audioDeviceName: _readOptionalString(
+        json,
+        'audioDeviceName',
+        defaultValue: '',
+      ),
+      audioInputSampleRate: _readOptionalInt(json, 'audioInputSampleRate'),
+      audioInputChannels: _readOptionalInt(json, 'audioInputChannels'),
+      audioEncodedSampleRate: _readOptionalInt(json, 'audioEncodedSampleRate'),
+      audioEncodedChannels: _readOptionalInt(json, 'audioEncodedChannels'),
+      capturedAudioPackets: _readOptionalInt(json, 'capturedAudioPackets'),
+      encodedAudioPackets: _readOptionalInt(json, 'encodedAudioPackets'),
+      sentAudioPackets: _readOptionalInt(json, 'sentAudioPackets'),
+      audioCaptureFps: _readOptionalDouble(json, 'audioCaptureFps'),
+      audioEncodeAverageMs: _readOptionalDouble(json, 'audioEncodeAverageMs'),
+      audioQueueDepth: _readOptionalInt(json, 'audioQueueDepth'),
+      audioDroppedPackets: _readOptionalInt(json, 'audioDroppedPackets'),
+      audioLastError: _readOptionalString(
+        json,
+        'audioLastError',
+        defaultValue: '',
+      ),
+      videoFpsAudioDisabled: _readOptionalDouble(json, 'videoFpsAudioDisabled'),
+      videoFpsAudioEnabled: _readOptionalDouble(json, 'videoFpsAudioEnabled'),
+      audioCpuTimeMs: _readOptionalDouble(json, 'audioCpuTimeMs'),
+      packetWriterVideoWaitMs: _readOptionalDouble(
+        json,
+        'packetWriterVideoWaitMs',
+      ),
+      packetWriterAudioWaitMs: _readOptionalDouble(
+        json,
+        'packetWriterAudioWaitMs',
+      ),
       errorCode: errorCode == null
           ? null
           : MirrorErrorCode.fromWireName(_readString(json, 'errorCode')),
@@ -402,10 +607,14 @@ double _readOptionalDouble(
   throw FormatException('Expected number for $key');
 }
 
-bool _readOptionalBool(Map<String, Object?> json, String key) {
+bool _readOptionalBool(
+  Map<String, Object?> json,
+  String key, {
+  bool defaultValue = false,
+}) {
   final value = json[key];
   if (value == null) {
-    return false;
+    return defaultValue;
   }
   if (value is bool) {
     return value;

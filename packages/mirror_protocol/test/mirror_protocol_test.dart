@@ -74,6 +74,29 @@ void main() {
       expect(StreamStartRequest.fromJson(json).video.codec, VideoCodec.h264);
     });
 
+    test('encodes the STAGE 3 system audio profile when requested', () {
+      const request = StreamStartRequest(
+        sessionId: 'session-1',
+        sourceType: SourceType.display,
+        sourceId: r'\\.\DISPLAY1',
+        video: VideoProfile.lowLatency720p30(),
+        audio: AudioProfile.systemAacLc(),
+      );
+
+      final json = request.toJson();
+      final audio = json['audio'] as Map<String, Object?>;
+
+      expect(audio, {
+        'enabled': true,
+        'codec': 'aacLc',
+        'sampleRate': 48000,
+        'channelCount': 2,
+        'bitrate': 128000,
+        'source': 'systemLoopback',
+      });
+      expect(StreamStartRequest.fromJson(json).audio?.codec, AudioCodec.aacLc);
+    });
+
     test('keeps STAGE 1 profile alias backward-compatible', () {
       const profile = VideoProfile.stageOne720p30();
 
@@ -166,8 +189,7 @@ void main() {
         bitrateKbps: 4000,
         sps: _sps,
         pps: _pps,
-      ).encode()
-        ..[23] = 0x40;
+      ).encode()..[23] = 0x40;
 
       expect(() => H264CodecConfig.decode(wrongLength), throwsFormatException);
 
@@ -199,44 +221,47 @@ void main() {
 
   group('VideoPacket', () {
     test(
-        'round-trips a length-prefixed Annex B access unit with uint64 sequence',
-        () {
-      final packet = VideoPacket(
-        type: VideoPacketType.accessUnit,
-        sequenceNumber: 0x10000002A,
-        ptsUs: 33333,
-        flags: VideoPacketFlags.keyFrame,
-        payload: Uint8List.fromList([0, 0, 0, 1, 0x65, 0x88]),
-      );
+      'round-trips a length-prefixed Annex B access unit with uint64 sequence',
+      () {
+        final packet = VideoPacket(
+          type: VideoPacketType.accessUnit,
+          sequenceNumber: 0x10000002A,
+          ptsUs: 33333,
+          flags: VideoPacketFlags.keyFrame,
+          payload: Uint8List.fromList([0, 0, 0, 1, 0x65, 0x88]),
+        );
 
-      final copy = VideoPacket.decodeLengthPrefixed(
-        packet.encodeLengthPrefixed(),
-      );
+        final copy = VideoPacket.decodeLengthPrefixed(
+          packet.encodeLengthPrefixed(),
+        );
 
-      expect(copy.type, VideoPacketType.accessUnit);
-      expect(copy.sequenceNumber, 0x10000002A);
-      expect(copy.ptsUs, 33333);
-      expect(copy.isKeyFrame, isTrue);
-      expect(copy.flags & VideoPacketFlags.extendedHeader, isNonZero);
-      expect(copy.payload, [0, 0, 0, 1, 0x65, 0x88]);
-    });
+        expect(copy.type, VideoPacketType.accessUnit);
+        expect(copy.sequenceNumber, 0x10000002A);
+        expect(copy.ptsUs, 33333);
+        expect(copy.isKeyFrame, isTrue);
+        expect(copy.flags & VideoPacketFlags.extendedHeader, isNonZero);
+        expect(copy.payload, [0, 0, 0, 1, 0x65, 0x88]);
+      },
+    );
 
-    test('decodes legacy 24-byte packet headers without sequence or PTS crash',
-        () {
-      final legacy = _legacyAccessUnitPacket(
-        sequenceNumber: 42,
-        ptsUs: 33333,
-        flags: VideoPacketFlags.keyFrame,
-        payload: Uint8List.fromList([0, 0, 0, 1, 0x65]),
-      );
+    test(
+      'decodes legacy 24-byte packet headers without sequence or PTS crash',
+      () {
+        final legacy = _legacyAccessUnitPacket(
+          sequenceNumber: 42,
+          ptsUs: 33333,
+          flags: VideoPacketFlags.keyFrame,
+          payload: Uint8List.fromList([0, 0, 0, 1, 0x65]),
+        );
 
-      final copy = VideoPacket.decodeLengthPrefixed(legacy);
+        final copy = VideoPacket.decodeLengthPrefixed(legacy);
 
-      expect(copy.sequenceNumber, 42);
-      expect(copy.ptsUs, 33333);
-      expect(copy.isKeyFrame, isTrue);
-      expect(copy.flags & VideoPacketFlags.extendedHeader, 0);
-    });
+        expect(copy.sequenceNumber, 42);
+        expect(copy.ptsUs, 33333);
+        expect(copy.isKeyFrame, isTrue);
+        expect(copy.flags & VideoPacketFlags.extendedHeader, 0);
+      },
+    );
 
     test('round-trips a codec config packet', () {
       final config = H264CodecConfig(
@@ -319,6 +344,120 @@ void main() {
         () => VideoPacket.decodeLengthPrefixed(oversizedLength),
         throwsFormatException,
       );
+    });
+
+    test('round-trips an AAC codec config packet', () {
+      final config = AacCodecConfig(
+        sampleRate: 48000,
+        channelCount: 2,
+        bitrate: 128000,
+        streamStartPtsUs: 123456,
+        codecSpecificData: Uint8List.fromList([0x11, 0x90]),
+      ).encode();
+      final packet = VideoPacket(
+        type: VideoPacketType.audioConfig,
+        sequenceNumber: 0,
+        ptsUs: 123456,
+        payload: config,
+      );
+
+      final copy = VideoPacket.decodeLengthPrefixed(
+        packet.encodeLengthPrefixed(),
+      );
+      final decoded = AacCodecConfig.decode(copy.payload);
+
+      expect(copy.type, VideoPacketType.audioConfig);
+      expect(decoded.codec, 'audio/mp4a-latm');
+      expect(decoded.sampleRate, 48000);
+      expect(decoded.channelCount, 2);
+      expect(decoded.bitrate, 128000);
+      expect(decoded.streamStartPtsUs, 123456);
+      expect(decoded.codecSpecificData, [0x11, 0x90]);
+    });
+
+    test('round-trips an AAC access unit with uint64 sequence and PTS', () {
+      final packet = VideoPacket(
+        type: VideoPacketType.audioAccessUnit,
+        sequenceNumber: 0x100000055,
+        ptsUs: 456789,
+        payload: Uint8List.fromList([1, 2, 3, 4]),
+      );
+
+      final copy = VideoPacket.decodeLengthPrefixed(
+        packet.encodeLengthPrefixed(),
+      );
+
+      expect(copy.type, VideoPacketType.audioAccessUnit);
+      expect(copy.sequenceNumber, 0x100000055);
+      expect(copy.ptsUs, 456789);
+      expect(copy.payload, [1, 2, 3, 4]);
+    });
+
+    test('rejects malformed audio payload lengths', () {
+      final config = AacCodecConfig(
+        sampleRate: 48000,
+        channelCount: 2,
+        bitrate: 128000,
+        streamStartPtsUs: 1,
+        codecSpecificData: Uint8List.fromList([0x11, 0x90]),
+      ).encode();
+      final packet = VideoPacket(
+        type: VideoPacketType.audioConfig,
+        sequenceNumber: 0,
+        ptsUs: 1,
+        payload: config,
+      ).encodeLengthPrefixed();
+
+      final wrongPayloadLength = Uint8List.fromList(packet)..[31] = 99;
+      expect(
+        () => VideoPacket.decodeLengthPrefixed(wrongPayloadLength),
+        throwsFormatException,
+      );
+
+      expect(() => AacCodecConfig.decode(Uint8List(4)), throwsFormatException);
+    });
+
+    test('enforces audio packet payload limits', () {
+      expect(AudioPacketLimits.configMaxPayloadLength, 64 * 1024);
+      expect(AudioPacketLimits.accessUnitMaxPayloadLength, 256 * 1024);
+      expect(
+        () => VideoPacket(
+          type: VideoPacketType.audioAccessUnit,
+          sequenceNumber: 1,
+          ptsUs: 1,
+          payload: Uint8List(AudioPacketLimits.accessUnitMaxPayloadLength + 1),
+        ).encodeLengthPrefixed(),
+        throwsRangeError,
+      );
+    });
+
+    test('parses interleaved video and audio packets', () {
+      final video = VideoPacket(
+        type: VideoPacketType.accessUnit,
+        sequenceNumber: 7,
+        ptsUs: 7000,
+        payload: Uint8List.fromList([0, 0, 0, 1, 0x41]),
+      );
+      final audio = VideoPacket(
+        type: VideoPacketType.audioAccessUnit,
+        sequenceNumber: 8,
+        ptsUs: 7100,
+        payload: Uint8List.fromList([0x21, 0x22]),
+      );
+
+      final packets = [video, audio]
+          .map(
+            (packet) =>
+                VideoPacket.decodeLengthPrefixed(packet.encodeLengthPrefixed()),
+          )
+          .toList();
+
+      expect(packets.map((packet) => packet.type), [
+        VideoPacketType.accessUnit,
+        VideoPacketType.audioAccessUnit,
+      ]);
+      expect(packets[1].sequenceNumber, 8);
+      expect(packets[1].ptsUs, 7100);
     });
   });
 }

@@ -11,6 +11,7 @@
 #include <wmcodecdsp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <sstream>
 
 namespace pctv {
@@ -21,6 +22,50 @@ constexpr UINT32 kHeight = 720;
 constexpr UINT32 kFps = 30;
 constexpr UINT32 kBitrate = 4'000'000;
 constexpr LONGLONG kFrameDuration100Ns = 10'000'000 / kFps;
+constexpr std::uint64_t kRollingWindowUs = 2'000'000;
+
+std::uint64_t NowUs() {
+  const auto now = std::chrono::steady_clock::now().time_since_epoch();
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(now).count());
+}
+
+double UsToMs(std::uint64_t value_us) {
+  return static_cast<double>(value_us) / 1000.0;
+}
+
+void TrimSamples(std::deque<std::pair<std::uint64_t, double>>* samples,
+                 std::uint64_t now_us) {
+  const std::uint64_t cutoff =
+      now_us > kRollingWindowUs ? now_us - kRollingWindowUs : 0;
+  while (!samples->empty() && samples->front().first < cutoff) {
+    samples->pop_front();
+  }
+}
+
+double Average(const std::deque<std::pair<std::uint64_t, double>>& samples) {
+  if (samples.empty()) {
+    return 0.0;
+  }
+  double total = 0.0;
+  for (const auto& sample : samples) {
+    total += sample.second;
+  }
+  return total / static_cast<double>(samples.size());
+}
+
+double P95(std::deque<std::pair<std::uint64_t, double>> samples) {
+  if (samples.empty()) {
+    return 0.0;
+  }
+  std::vector<double> values;
+  values.reserve(samples.size());
+  for (const auto& sample : samples) {
+    values.push_back(sample.second);
+  }
+  std::sort(values.begin(), values.end());
+  return values[((values.size() - 1) * 95) / 100];
+}
 
 std::string HResultText(const char* operation, HRESULT hr) {
   std::ostringstream stream;
@@ -366,8 +411,14 @@ H264Encoder::~H264Encoder() {
 
 bool H264Encoder::Start(std::string* error) {
   Stop();
-  diagnostics_ = H264EncoderDiagnostics{};
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    diagnostics_ = H264EncoderDiagnostics{};
+    process_input_samples_.clear();
+    process_output_samples_.clear();
+  }
   encoder_backpressure_count_ = 0;
+  encoder_backpressure_dropped_frames_ = 0;
 
   HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
   if (Failed(hr, "MFStartup", error)) {
@@ -382,8 +433,12 @@ bool H264Encoder::Start(std::string* error) {
       Log("Hardware H.264 encoder rejected 720p30 NV12 input; falling back: " +
           *error);
       transform_ = nullptr;
-      diagnostics_ = H264EncoderDiagnostics{};
-      AppendOption(&diagnostics_.unsupported_encoder_options, hardware_error);
+      {
+        std::scoped_lock lock(diagnostics_mutex_);
+        diagnostics_ = H264EncoderDiagnostics{};
+        AppendOption(&diagnostics_.unsupported_encoder_options,
+                     hardware_error);
+      }
     }
   }
 
@@ -412,7 +467,15 @@ bool H264Encoder::Start(std::string* error) {
 
 bool H264Encoder::Encode(const Nv12Frame& frame,
                          std::vector<EncodedAccessUnit>* output,
+                         bool* input_accepted,
+                         bool* backpressure_dropped,
                          std::string* error) {
+  if (input_accepted != nullptr) {
+    *input_accepted = false;
+  }
+  if (backpressure_dropped != nullptr) {
+    *backpressure_dropped = false;
+  }
   if (!transform_) {
     *error = "H.264 encoder is not running";
     return false;
@@ -454,17 +517,60 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
     return false;
   }
 
+  auto input_start_us = NowUs();
   hr = transform_->ProcessInput(0, sample.get(), 0);
+  auto input_done_us = NowUs();
+  RecordProcessInputDuration(input_done_us, UsToMs(input_done_us - input_start_us));
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    ++diagnostics_.process_input_calls;
+  }
   if (hr == MF_E_NOTACCEPTING) {
     ++encoder_backpressure_count_;
-    diagnostics_.encoder_backpressure_count = encoder_backpressure_count_;
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      diagnostics_.encoder_backpressure_count = encoder_backpressure_count_;
+      ++diagnostics_.process_input_not_accepting;
+    }
     if (!ReadAvailableOutput(output, error)) {
       return false;
     }
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      ++diagnostics_.process_input_retries;
+    }
+    input_start_us = NowUs();
     hr = transform_->ProcessInput(0, sample.get(), 0);
+    input_done_us = NowUs();
+    RecordProcessInputDuration(input_done_us,
+                               UsToMs(input_done_us - input_start_us));
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      ++diagnostics_.process_input_calls;
+    }
+    if (hr == MF_E_NOTACCEPTING) {
+      ++encoder_backpressure_dropped_frames_;
+      {
+        std::scoped_lock lock(diagnostics_mutex_);
+        diagnostics_.encoder_backpressure_dropped_frames =
+            encoder_backpressure_dropped_frames_;
+        ++diagnostics_.process_input_not_accepting;
+      }
+      if (backpressure_dropped != nullptr) {
+        *backpressure_dropped = true;
+      }
+      return true;
+    }
   }
   if (Failed(hr, "IMFTransform::ProcessInput", error)) {
     return false;
+  }
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    ++diagnostics_.process_input_accepted;
+  }
+  if (input_accepted != nullptr) {
+    *input_accepted = true;
   }
 
   return ReadAvailableOutput(output, error);
@@ -480,6 +586,13 @@ void H264Encoder::Stop() {
   parameter_sets_ = {};
   first_pts_us_ = 0;
   force_next_key_frame_ = false;
+  encoder_backpressure_count_ = 0;
+  encoder_backpressure_dropped_frames_ = 0;
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    process_input_samples_.clear();
+    process_output_samples_.clear();
+  }
   if (mf_started_) {
     MFShutdown();
     mf_started_ = false;
@@ -703,7 +816,15 @@ bool H264Encoder::ReadAvailableOutput(
     output_buffer.dwStreamID = 0;
     output_buffer.pSample = sample.get();
     DWORD status = 0;
+    const auto output_start_us = NowUs();
     hr = transform_->ProcessOutput(0, 1, &output_buffer, &status);
+    const auto output_done_us = NowUs();
+    RecordProcessOutputDuration(output_done_us,
+                                UsToMs(output_done_us - output_start_us));
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      ++diagnostics_.process_output_calls;
+    }
 
     if (output_buffer.pEvents != nullptr) {
       output_buffer.pEvents->Release();
@@ -772,6 +893,10 @@ bool H264Encoder::ReadAvailableOutput(
     const auto output_pts_us =
         first_pts_us_ + static_cast<std::uint64_t>(sample_time / 10);
     output->push_back({output_pts_us, key_frame, std::move(annex_b)});
+    {
+      std::scoped_lock lock(diagnostics_mutex_);
+      ++diagnostics_.process_output_frames;
+    }
 
     if (output_buffer.pSample != sample.get()) {
       output_buffer.pSample->Release();
@@ -779,6 +904,31 @@ bool H264Encoder::ReadAvailableOutput(
   }
 
   return true;
+}
+
+H264EncoderDiagnostics H264Encoder::diagnostics() const {
+  std::scoped_lock lock(diagnostics_mutex_);
+  return diagnostics_;
+}
+
+void H264Encoder::RecordProcessInputDuration(std::uint64_t now_us,
+                                             double value_ms) {
+  std::scoped_lock lock(diagnostics_mutex_);
+  process_input_samples_.push_back({now_us, value_ms});
+  TrimSamples(&process_input_samples_, now_us);
+  diagnostics_.process_input_duration_average_ms =
+      Average(process_input_samples_);
+  diagnostics_.process_input_duration_p95_ms = P95(process_input_samples_);
+}
+
+void H264Encoder::RecordProcessOutputDuration(std::uint64_t now_us,
+                                              double value_ms) {
+  std::scoped_lock lock(diagnostics_mutex_);
+  process_output_samples_.push_back({now_us, value_ms});
+  TrimSamples(&process_output_samples_, now_us);
+  diagnostics_.process_output_duration_average_ms =
+      Average(process_output_samples_);
+  diagnostics_.process_output_duration_p95_ms = P95(process_output_samples_);
 }
 
 std::vector<std::uint8_t> H264Encoder::NormalizeAnnexB(

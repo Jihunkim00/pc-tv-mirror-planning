@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,6 +25,7 @@ class ReceiverHomePage extends StatefulWidget {
 
 class _ReceiverHomePageState extends State<ReceiverHomePage> {
   late final ReceiverController _controller;
+  late final GlobalKey _videoSurfaceKey;
   late final FocusNode _restartFocusNode;
   late final FocusNode _fullscreenFocusNode;
   late final FocusNode _stopFocusNode;
@@ -32,6 +35,11 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   bool _fullscreenMode = false;
   bool _autoFullscreen = true;
   String _scaleMode = 'fit';
+  int _lastRemoteActionMs = 0;
+
+  static const MethodChannel _receiverControlsChannel = MethodChannel(
+    'pc_tv_mirror/receiver_controls',
+  );
 
   static const Map<ShortcutActivator, Intent> _tvRemoteShortcuts = {
     SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
@@ -47,11 +55,13 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   @override
   void initState() {
     super.initState();
+    _videoSurfaceKey = GlobalKey(debugLabel: 'receiverVideoSurface');
     _restartFocusNode = FocusNode(debugLabel: 'Restart receiver');
     _fullscreenFocusNode = FocusNode(debugLabel: 'Fullscreen');
     _stopFocusNode = FocusNode(debugLabel: 'Stop receiver');
     _controller = ReceiverController(widget.nativeApi);
     _controller.addListener(_handleControllerChanged);
+    _receiverControlsChannel.setMethodCallHandler(_handleNativeRemoteAction);
     _controller.initialize();
     _scheduleFocusRestore();
   }
@@ -59,6 +69,8 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   @override
   void dispose() {
     _controller.removeListener(_handleControllerChanged);
+    _sendFullscreenStateToNative(false);
+    _receiverControlsChannel.setMethodCallHandler(null);
     _setFullscreenSystemUi(false);
     _controller.dispose();
     _restartFocusNode.dispose();
@@ -99,6 +111,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     setState(() {
       _fullscreenMode = true;
     });
+    _sendFullscreenStateToNative(true);
     _setFullscreenSystemUi(true);
   }
 
@@ -109,8 +122,40 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
     setState(() {
       _fullscreenMode = false;
     });
+    _sendFullscreenStateToNative(false);
     _setFullscreenSystemUi(false);
     _scheduleFocusRestore();
+  }
+
+  Future<dynamic> _handleNativeRemoteAction(MethodCall call) async {
+    if (call.method != 'remoteAction') {
+      return null;
+    }
+    final args = call.arguments;
+    final action = args is Map ? args['action'] as String? : null;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastRemoteActionMs < 250) {
+      return null;
+    }
+    _lastRemoteActionMs = nowMs;
+    if (action == 'exitFullscreen' && _fullscreenMode) {
+      _exitFullscreen();
+    } else if (action == 'toggleFullscreen') {
+      if (_fullscreenMode) {
+        _exitFullscreen();
+      } else if (_controller.state == MirrorSessionState.streaming) {
+        _enterFullscreen();
+      }
+    }
+    return null;
+  }
+
+  void _sendFullscreenStateToNative(bool enabled) {
+    unawaited(
+      _receiverControlsChannel.invokeMethod<void>('setFullscreenState', {
+        'enabled': enabled,
+      }),
+    );
   }
 
   Future<void> _setFullscreenSystemUi(bool enabled) async {
@@ -213,6 +258,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
               backgroundColor: Colors.black,
               body: _fullscreenMode
                   ? _VideoSurface(
+                      key: _videoSurfaceKey,
                       showNativeSurface: widget.showNativeSurface,
                       controller: _controller,
                       scaleMode: _scaleMode,
@@ -227,6 +273,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                             Expanded(
                               flex: 5,
                               child: _VideoSurface(
+                                key: _videoSurfaceKey,
                                 showNativeSurface: widget.showNativeSurface,
                                 controller: _controller,
                                 scaleMode: _scaleMode,
@@ -330,6 +377,7 @@ class _VideoSurface extends StatelessWidget {
     required this.controller,
     required this.scaleMode,
     this.fullscreen = false,
+    super.key,
   });
 
   static const String _surfaceZOrderMode = String.fromEnvironment(
@@ -363,7 +411,7 @@ class _VideoSurface extends StatelessWidget {
       children: [
         if (usePlatformView)
           AndroidView(
-            key: ValueKey<String>('receiver.androidVideoSurface.$scaleMode'),
+            key: const ValueKey<String>('receiver.androidVideoSurface'),
             viewType: 'pc_tv_mirror/video_surface',
             creationParams: creationParams,
             creationParamsCodec: const StandardMessageCodec(),
@@ -629,6 +677,58 @@ class _ReceiverStatusPanel extends StatelessWidget {
             label: 'Sequence gaps',
             value: '${snapshot?.frameSequenceGaps ?? 0}',
           ),
+          const SizedBox(height: 18),
+          Text('Audio', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: snapshot?.audioMuted ?? false,
+            onChanged: (value) => controller.setAudioMuted(value),
+            title: Text('Audio: ${snapshot?.audioState ?? 'idle'}'),
+          ),
+          _MetricRow(
+            label: 'Codec',
+            value:
+                '${snapshot?.audioCodec ?? 'audio/mp4a-latm'} ${snapshot?.audioSampleRate ?? 0} Hz ${snapshot?.audioChannels ?? 0} ch',
+          ),
+          _MetricRow(
+            label: 'Decoder',
+            value: snapshot?.audioDecoderName ?? 'unknown',
+          ),
+          _MetricRow(
+            label: 'Queue / PCM',
+            value:
+                '${snapshot?.audioQueueDepth ?? 0}/${snapshot?.pcmQueueDepth ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Buffered',
+            value:
+                '${(snapshot?.audioBufferedDurationMs ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'A/V sync',
+            value:
+                '${(snapshot?.avSyncOffsetMs ?? 0).toStringAsFixed(1)} ms '
+                '(${snapshot?.syncMaster ?? 'videoLocal'})',
+          ),
+          _MetricRow(
+            label: 'A/V avg/p95',
+            value:
+                '${(snapshot?.avSyncAverageMs ?? 0).toStringAsFixed(1)}/'
+                '${(snapshot?.avSyncP95Ms ?? 0).toStringAsFixed(1)} ms',
+          ),
+          _MetricRow(
+            label: 'Audio packets',
+            value:
+                '${snapshot?.receivedAudioPackets ?? 0}/${snapshot?.audioDecoderInputPackets ?? 0}/${snapshot?.audioDecoderOutputBuffers ?? 0}',
+          ),
+          _MetricRow(
+            label: 'Audio drops',
+            value:
+                '${snapshot?.audioDroppedPackets ?? 0}, av ${snapshot?.videoFramesDroppedForAvSync ?? 0}',
+          ),
+          if (snapshot?.audioLastError != null)
+            _MetricRow(label: 'Audio error', value: snapshot!.audioLastError!),
           const SizedBox(height: 18),
           Text('Presentation', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),

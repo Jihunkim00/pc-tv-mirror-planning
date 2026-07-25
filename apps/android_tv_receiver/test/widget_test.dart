@@ -8,9 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
 void main() {
-  testWidgets('starts the native receiver in video-only STAGE 2 mode', (
-    tester,
-  ) async {
+  testWidgets('starts the native receiver in STAGE 3 mode', (tester) async {
     final nativeApi = _FakeReceiverNativeApi();
 
     await _pumpReceiverApp(tester, nativeApi);
@@ -179,6 +177,7 @@ void main() {
       'decoderInputFps': 29.4,
       'decoderOutputFps': 29.3,
       'releasedToSurfaceFps': 29.2,
+      'actualPresentedFps': 29.2,
       'lateFrameDropFps': 0.0,
       'receivedFrameIntervalAverageMs': 33.5,
       'receivedFrameIntervalP95Ms': 38.0,
@@ -233,6 +232,28 @@ void main() {
       'p95RenderScheduleDelayMs': 28.0,
       'playoutDelayMs': 30.0,
       'pacingResyncCount': 1,
+      'avSyncOffsetMs': 24.0,
+      'avSyncAverageMs': 30.0,
+      'avSyncP95Ms': 42.0,
+      'videoFramesDroppedForAvSync': 1,
+      'avSyncResyncCount': 2,
+      'syncMaster': 'audio',
+      'audioDecoderName': 'c2.android.aac.decoder',
+      'receivedAudioPackets': 10,
+      'audioDecoderInputPackets': 9,
+      'audioDecoderOutputBuffers': 8,
+      'audioTrackWrittenFrames': 8192,
+      'audioQueueDepth': 1,
+      'pcmQueueDepth': 0,
+      'audioBufferedDurationMs': 96.0,
+      'audioPlaybackPositionUs': 123456,
+      'audioUnderrunCount': 0,
+      'audioDroppedPackets': 1,
+      'audioState': 'playing',
+      'audioMuted': false,
+      'audioCodec': 'audio/mp4a-latm',
+      'audioSampleRate': 48000,
+      'audioChannels': 2,
     });
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
@@ -268,6 +289,7 @@ void main() {
     expect(snapshot.estimatedEndToEndLatencyMs, 120.0);
     expect(snapshot.latencyP95Ms, 180.0);
     expect(snapshot.releasedToSurfaceFps, 29.2);
+    expect(snapshot.actualPresentedFps, 29.2);
     expect(snapshot.presentedFrameIntervalP95Ms, 39.0);
     expect(snapshot.receiverQueueDepth, 1);
     expect(snapshot.maxReceiverQueueDepth, 3);
@@ -277,7 +299,15 @@ void main() {
     expect(snapshot.rendererMode, 'lowLatencyPaced');
     expect(snapshot.scheduledRenderFrames, 4);
     expect(snapshot.pacingResyncCount, 1);
-    expect(snapshot.bottleneckSummary, 'healthy');
+    expect(snapshot.avSyncOffsetMs, 24.0);
+    expect(snapshot.avSyncP95Ms, 42.0);
+    expect(snapshot.videoFramesDroppedForAvSync, 1);
+    expect(snapshot.syncMaster, 'audio');
+    expect(snapshot.audioState, 'playing');
+    expect(snapshot.audioDecoderName, 'c2.android.aac.decoder');
+    expect(snapshot.audioBufferedDurationMs, 96.0);
+    expect(snapshot.audioTrackWrittenFrames, 8192);
+    expect(snapshot.bottleneckSummary, 'healthy_27_plus');
   });
 
   testWidgets('focused receiver button survives parent rebuild', (
@@ -388,6 +418,19 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
 
   @override
   Future<ReceiverSessionSnapshot> getReceiverStatus() async {
+    return _snapshot(
+      state: startState,
+      userMessage: 'Listening for a Windows sender.',
+      decoderReady: true,
+      surfaceRendererReady: true,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
+    );
+  }
+
+  @override
+  Future<ReceiverSessionSnapshot> setAudioMuted(bool muted) async {
     return _snapshot(
       state: startState,
       userMessage: 'Listening for a Windows sender.',

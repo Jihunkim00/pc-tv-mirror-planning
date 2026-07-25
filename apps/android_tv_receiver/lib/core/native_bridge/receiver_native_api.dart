@@ -9,6 +9,8 @@ abstract interface class ReceiverNativeApi {
   Future<ReceiverSessionSnapshot> stopReceiver();
 
   Future<ReceiverSessionSnapshot> getReceiverStatus();
+
+  Future<ReceiverSessionSnapshot> setAudioMuted(bool muted);
 }
 
 final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
@@ -50,6 +52,15 @@ final class MethodChannelReceiverNativeApi implements ReceiverNativeApi {
     );
     return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
   }
+
+  @override
+  Future<ReceiverSessionSnapshot> setAudioMuted(bool muted) async {
+    final result = await _channel.invokeMapMethod<Object?, Object?>(
+      'setAudioMuted',
+      {'muted': muted},
+    );
+    return ReceiverSessionSnapshot.fromJson(_asJsonMap(result));
+  }
 }
 
 final class ReceiverSessionSnapshot {
@@ -74,6 +85,7 @@ final class ReceiverSessionSnapshot {
     this.decoderInputFps = 0,
     this.decoderOutputFps = 0,
     this.releasedToSurfaceFps = 0,
+    this.actualPresentedFps = 0,
     this.lateFrameDropFps = 0,
     this.receivedFrameIntervalAverageMs = 0,
     this.receivedFrameIntervalP95Ms = 0,
@@ -127,6 +139,29 @@ final class ReceiverSessionSnapshot {
     this.p95RenderScheduleDelayMs = 0,
     this.playoutDelayMs = 0,
     this.pacingResyncCount = 0,
+    this.avSyncOffsetMs = 0,
+    this.avSyncAverageMs = 0,
+    this.avSyncP95Ms = 0,
+    this.videoFramesDroppedForAvSync = 0,
+    this.avSyncResyncCount = 0,
+    this.syncMaster = 'videoLocal',
+    this.audioDecoderName = 'unknown',
+    this.receivedAudioPackets = 0,
+    this.audioDecoderInputPackets = 0,
+    this.audioDecoderOutputBuffers = 0,
+    this.audioTrackWrittenFrames = 0,
+    this.audioQueueDepth = 0,
+    this.pcmQueueDepth = 0,
+    this.audioBufferedDurationMs = 0,
+    this.audioPlaybackPositionUs = 0,
+    this.audioUnderrunCount = 0,
+    this.audioDroppedPackets = 0,
+    this.audioState = 'idle',
+    this.audioMuted = false,
+    this.audioCodec = 'audio/mp4a-latm',
+    this.audioSampleRate = 0,
+    this.audioChannels = 0,
+    this.audioLastError,
     this.fullscreenEnabled = false,
     this.autoFullscreen = true,
     this.lastDecoderError,
@@ -153,6 +188,7 @@ final class ReceiverSessionSnapshot {
   final double decoderInputFps;
   final double decoderOutputFps;
   final double releasedToSurfaceFps;
+  final double actualPresentedFps;
   final double lateFrameDropFps;
   final double receivedFrameIntervalAverageMs;
   final double receivedFrameIntervalP95Ms;
@@ -206,6 +242,29 @@ final class ReceiverSessionSnapshot {
   final double p95RenderScheduleDelayMs;
   final double playoutDelayMs;
   final int pacingResyncCount;
+  final double avSyncOffsetMs;
+  final double avSyncAverageMs;
+  final double avSyncP95Ms;
+  final int videoFramesDroppedForAvSync;
+  final int avSyncResyncCount;
+  final String syncMaster;
+  final String audioDecoderName;
+  final int receivedAudioPackets;
+  final int audioDecoderInputPackets;
+  final int audioDecoderOutputBuffers;
+  final int audioTrackWrittenFrames;
+  final int audioQueueDepth;
+  final int pcmQueueDepth;
+  final double audioBufferedDurationMs;
+  final int audioPlaybackPositionUs;
+  final int audioUnderrunCount;
+  final int audioDroppedPackets;
+  final String audioState;
+  final bool audioMuted;
+  final String audioCodec;
+  final int audioSampleRate;
+  final int audioChannels;
+  final String? audioLastError;
   final bool fullscreenEnabled;
   final bool autoFullscreen;
   final String? lastDecoderError;
@@ -219,18 +278,23 @@ final class ReceiverSessionSnapshot {
     if (receivedAccessUnitFps >= 27 &&
         releasedToSurfaceFps >= 27 &&
         presentedFrameIntervalP95Ms <= 50) {
-      return 'healthy';
+      return 'healthy_27_plus';
     }
-    if (receivedAccessUnitFps >= 27 && decoderOutputFps < 27) {
+    if (receivedAccessUnitFps >= 23 &&
+        releasedToSurfaceFps >= 23 &&
+        presentedFrameIntervalP95Ms <= 60) {
+      return 'healthy_23_plus';
+    }
+    if (receivedAccessUnitFps >= 23 && decoderOutputFps < 23) {
       return 'decoder_bottleneck';
     }
-    if (decoderOutputFps >= 27 && releasedToSurfaceFps < 27) {
+    if (decoderOutputFps >= 23 && releasedToSurfaceFps < 23) {
       return 'presentation_bottleneck';
     }
-    if (releasedToSurfaceFps >= 27 && presentedFrameIntervalP95Ms > 50) {
+    if (releasedToSurfaceFps >= 23 && presentedFrameIntervalP95Ms > 60) {
       return 'pacing_jitter';
     }
-    if (receivedAccessUnitFps > 0 && receivedAccessUnitFps < 27) {
+    if (receivedAccessUnitFps > 0 && receivedAccessUnitFps < 23) {
       return 'network_or_parser_bottleneck';
     }
     return 'warming_up';
@@ -254,10 +318,7 @@ final class ReceiverSessionSnapshot {
       configPacketsReceived: _readOptionalInt(json, 'configPacketsReceived'),
       accessUnitsReceived: _readOptionalInt(json, 'accessUnitsReceived'),
       keyFramesReceived: _readOptionalInt(json, 'keyFramesReceived'),
-      receivedAccessUnitFps: _readOptionalDouble(
-        json,
-        'receivedAccessUnitFps',
-      ),
+      receivedAccessUnitFps: _readOptionalDouble(json, 'receivedAccessUnitFps'),
       decoderInputFrames: _readOptionalInt(json, 'decoderInputFrames'),
       decoderOutputFrames: _readOptionalInt(json, 'decoderOutputFrames'),
       releasedToSurfaceFrames: _readOptionalInt(
@@ -268,10 +329,8 @@ final class ReceiverSessionSnapshot {
       droppedFrames: _readOptionalInt(json, 'droppedFrames'),
       decoderInputFps: _readOptionalDouble(json, 'decoderInputFps'),
       decoderOutputFps: _readOptionalDouble(json, 'decoderOutputFps'),
-      releasedToSurfaceFps: _readOptionalDouble(
-        json,
-        'releasedToSurfaceFps',
-      ),
+      releasedToSurfaceFps: _readOptionalDouble(json, 'releasedToSurfaceFps'),
+      actualPresentedFps: _readOptionalDouble(json, 'actualPresentedFps'),
       lateFrameDropFps: _readOptionalDouble(json, 'lateFrameDropFps'),
       receivedFrameIntervalAverageMs: _readOptionalDouble(
         json,
@@ -313,11 +372,7 @@ final class ReceiverSessionSnapshot {
       containerHeight: _readOptionalInt(json, 'containerHeight'),
       renderedViewWidth: _readOptionalInt(json, 'renderedViewWidth'),
       renderedViewHeight: _readOptionalInt(json, 'renderedViewHeight'),
-      scaleMode: _readOptionalString(
-        json,
-        'scaleMode',
-        defaultValue: 'fit',
-      ),
+      scaleMode: _readOptionalString(json, 'scaleMode', defaultValue: 'fit'),
       aspectRatioError: _readOptionalDouble(json, 'aspectRatioError'),
       configuredWidth: _readOptionalInt(json, 'configuredWidth'),
       configuredHeight: _readOptionalInt(json, 'configuredHeight'),
@@ -377,6 +432,55 @@ final class ReceiverSessionSnapshot {
       ),
       playoutDelayMs: _readOptionalDouble(json, 'playoutDelayMs'),
       pacingResyncCount: _readOptionalInt(json, 'pacingResyncCount'),
+      avSyncOffsetMs: _readOptionalDouble(json, 'avSyncOffsetMs'),
+      avSyncAverageMs: _readOptionalDouble(json, 'avSyncAverageMs'),
+      avSyncP95Ms: _readOptionalDouble(json, 'avSyncP95Ms'),
+      videoFramesDroppedForAvSync: _readOptionalInt(
+        json,
+        'videoFramesDroppedForAvSync',
+      ),
+      avSyncResyncCount: _readOptionalInt(json, 'avSyncResyncCount'),
+      syncMaster: _readOptionalString(
+        json,
+        'syncMaster',
+        defaultValue: 'videoLocal',
+      ),
+      audioDecoderName: _readOptionalString(json, 'audioDecoderName'),
+      receivedAudioPackets: _readOptionalInt(json, 'receivedAudioPackets'),
+      audioDecoderInputPackets: _readOptionalInt(
+        json,
+        'audioDecoderInputPackets',
+      ),
+      audioDecoderOutputBuffers: _readOptionalInt(
+        json,
+        'audioDecoderOutputBuffers',
+      ),
+      audioTrackWrittenFrames: _readOptionalInt(
+        json,
+        'audioTrackWrittenFrames',
+      ),
+      audioQueueDepth: _readOptionalInt(json, 'audioQueueDepth'),
+      pcmQueueDepth: _readOptionalInt(json, 'pcmQueueDepth'),
+      audioBufferedDurationMs: _readOptionalDouble(
+        json,
+        'audioBufferedDurationMs',
+      ),
+      audioPlaybackPositionUs: _readOptionalInt(
+        json,
+        'audioPlaybackPositionUs',
+      ),
+      audioUnderrunCount: _readOptionalInt(json, 'audioUnderrunCount'),
+      audioDroppedPackets: _readOptionalInt(json, 'audioDroppedPackets'),
+      audioState: _readOptionalString(json, 'audioState', defaultValue: 'idle'),
+      audioMuted: _readOptionalBool(json, 'audioMuted'),
+      audioCodec: _readOptionalString(
+        json,
+        'audioCodec',
+        defaultValue: 'audio/mp4a-latm',
+      ),
+      audioSampleRate: _readOptionalInt(json, 'audioSampleRate'),
+      audioChannels: _readOptionalInt(json, 'audioChannels'),
+      audioLastError: json['audioLastError'] as String?,
       fullscreenEnabled: _readOptionalBool(json, 'fullscreenEnabled'),
       autoFullscreen: _readOptionalBool(
         json,

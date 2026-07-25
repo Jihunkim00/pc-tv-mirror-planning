@@ -17,6 +17,7 @@ class MirrorController extends ChangeNotifier {
   String? _selectedDisplayId;
   String? _activeSessionId;
   bool _busy = false;
+  bool _systemAudioEnabled = true;
   String? _userMessage;
   String? _developerMessage;
   Timer? _statusTimer;
@@ -28,6 +29,7 @@ class MirrorController extends ChangeNotifier {
   List<String> get log => List.unmodifiable(_log);
   String? get selectedDisplayId => _selectedDisplayId;
   bool get busy => _busy;
+  bool get systemAudioEnabled => _systemAudioEnabled;
   String? get userMessage => _userMessage;
   String? get developerMessage => _developerMessage;
   bool get canStart => !_busy && _selectedDisplayId != null && !isRunning;
@@ -74,6 +76,15 @@ class MirrorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setSystemAudioEnabled(bool enabled) {
+    if (_systemAudioEnabled == enabled || isRunning) {
+      return;
+    }
+    _systemAudioEnabled = enabled;
+    _appendLog('System audio ${enabled ? 'enabled' : 'disabled'}.');
+    notifyListeners();
+  }
+
   Future<void> start({
     required String receiverHost,
     required int receiverPort,
@@ -92,7 +103,10 @@ class MirrorController extends ChangeNotifier {
     _setBusy(true);
     _state = MirrorSessionState.connecting;
     _userMessage = 'Preparing the native video path.';
-    _appendLog('Starting lowLatency720p30 video session.');
+    _appendLog(
+      'Starting lowLatency720p30 video session '
+      'with system audio ${_systemAudioEnabled ? 'enabled' : 'disabled'}.',
+    );
     notifyListeners();
 
     final sessionId = 'stage1-${DateTime.now().microsecondsSinceEpoch}';
@@ -101,6 +115,9 @@ class MirrorController extends ChangeNotifier {
       sourceType: SourceType.display,
       sourceId: sourceId,
       video: const VideoProfile.lowLatency720p30(),
+      audio: _systemAudioEnabled
+          ? const AudioProfile.systemAacLc()
+          : const AudioProfile.disabled(),
     );
 
     try {
@@ -162,7 +179,8 @@ class MirrorController extends ChangeNotifier {
     _snapshot = snapshot;
     _state = snapshot.state;
     _userMessage = snapshot.userMessage;
-    _developerMessage = snapshot.lastEncodeError ??
+    _developerMessage =
+        snapshot.lastEncodeError ??
         snapshot.lastSendError ??
         snapshot.developerMessage;
     notifyListeners();

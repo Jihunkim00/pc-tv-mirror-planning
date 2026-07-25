@@ -20,15 +20,21 @@ constexpr std::uint32_t kConfigMagic = 0x48323634;  // H264
 constexpr std::uint8_t kProtocolVersion = 1;
 constexpr std::uint8_t kPacketTypeCodecConfig = 1;
 constexpr std::uint8_t kPacketTypeAccessUnit = 2;
+constexpr std::uint8_t kPacketTypeEndOfStream = 3;
+constexpr std::uint8_t kPacketTypeAudioConfig = 4;
+constexpr std::uint8_t kPacketTypeAudioAccessUnit = 5;
+constexpr std::uint8_t kPacketTypeAudioEndOfStream = 6;
 constexpr std::uint16_t kFlagKeyFrame = 1 << 0;
 constexpr std::uint16_t kFlagCodecConfig = 1 << 1;
 constexpr std::uint16_t kFlagExtendedHeader = 1 << 2;
 constexpr std::uint32_t kPacketHeaderLength = 28;
 constexpr std::uint32_t kConfigHeaderLength = 24;
+constexpr std::uint32_t kAudioConfigHeaderLength = 32;
 constexpr std::uint32_t kStageOneWidth = 1280;
 constexpr std::uint32_t kStageOneHeight = 720;
 constexpr std::uint32_t kStageOneFps = 30;
 constexpr std::uint32_t kStageOneBitrateKbps = 4000;
+constexpr std::uint32_t kAudioConfigMagic = 0x41414320;  // AAC
 constexpr std::uintptr_t kInvalidSocketValue = UINTPTR_MAX;
 
 std::string LastWsaError(const char* operation) {
@@ -291,6 +297,63 @@ std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint64_t sequence,
   WritePacketHeader(bytes, kPacketTypeAccessUnit,
                     key_frame ? kFlagKeyFrame : 0, pts_us, sequence, size);
   std::copy(data, data + size, bytes.begin() + 4 + kPacketHeaderLength);
+  return bytes;
+}
+
+std::vector<std::uint8_t> BuildAacCodecConfigPacket(
+    std::uint64_t sequence,
+    std::uint64_t stream_start_pts_us,
+    const std::vector<std::uint8_t>& codec_specific_data) {
+  if (codec_specific_data.size() > 0xFFFF ||
+      kAudioConfigHeaderLength + codec_specific_data.size() > 64 * 1024) {
+    return {};
+  }
+  const std::uint32_t payload_size =
+      kAudioConfigHeaderLength +
+      static_cast<std::uint32_t>(codec_specific_data.size());
+  std::vector<std::uint8_t> bytes(4 + kPacketHeaderLength + payload_size);
+  WritePacketHeader(bytes, kPacketTypeAudioConfig, 0, stream_start_pts_us,
+                    sequence, payload_size);
+
+  const std::size_t payload = 4 + kPacketHeaderLength;
+  WriteU32(bytes, payload, kAudioConfigMagic);
+  bytes[payload + 4] = kProtocolVersion;
+  bytes[payload + 5] = 0;
+  WriteU16(bytes, payload + 6, 0);
+  WriteU32(bytes, payload + 8, 48000);
+  WriteU16(bytes, payload + 12, 2);
+  WriteU16(bytes, payload + 14, 2);
+  WriteU32(bytes, payload + 16, 128000);
+  WriteU64(bytes, payload + 20, stream_start_pts_us);
+  WriteU16(bytes, payload + 28,
+           static_cast<std::uint16_t>(codec_specific_data.size()));
+  WriteU16(bytes, payload + 30, 0);
+  std::copy(codec_specific_data.begin(), codec_specific_data.end(),
+            bytes.begin() + static_cast<std::ptrdiff_t>(
+                              payload + kAudioConfigHeaderLength));
+  return bytes;
+}
+
+std::vector<std::uint8_t> BuildAudioAccessUnitPacket(
+    std::uint64_t sequence,
+    std::uint64_t pts_us,
+    const std::uint8_t* data,
+    std::uint32_t size) {
+  if (size > 256 * 1024) {
+    return {};
+  }
+  std::vector<std::uint8_t> bytes(4 + kPacketHeaderLength + size);
+  WritePacketHeader(bytes, kPacketTypeAudioAccessUnit, 0, pts_us, sequence,
+                    size);
+  std::copy(data, data + size, bytes.begin() + 4 + kPacketHeaderLength);
+  return bytes;
+}
+
+std::vector<std::uint8_t> BuildAudioEndOfStreamPacket(
+    std::uint64_t sequence,
+    std::uint64_t pts_us) {
+  std::vector<std::uint8_t> bytes(4 + kPacketHeaderLength);
+  WritePacketHeader(bytes, kPacketTypeAudioEndOfStream, 0, pts_us, sequence, 0);
   return bytes;
 }
 

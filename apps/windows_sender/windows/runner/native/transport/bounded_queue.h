@@ -76,6 +76,16 @@ class BoundedQueue {
     return true;
   }
 
+  bool TryPop(T* value) {
+    std::scoped_lock lock(mutex_);
+    if (items_.empty()) {
+      return false;
+    }
+    *value = std::move(items_.front());
+    items_.pop_front();
+    return true;
+  }
+
   void Close() {
     {
       std::scoped_lock lock(mutex_);
