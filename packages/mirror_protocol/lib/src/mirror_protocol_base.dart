@@ -35,7 +35,10 @@ enum VideoCodec {
 enum VideoPacketType {
   codecConfig(1),
   accessUnit(2),
-  endOfStream(3);
+  endOfStream(3),
+  audioConfig(4),
+  audioAccessUnit(5),
+  audioEndOfStream(6);
 
   const VideoPacketType(this.wireValue);
 
@@ -46,7 +49,25 @@ enum VideoPacketType {
       1 => VideoPacketType.codecConfig,
       2 => VideoPacketType.accessUnit,
       3 => VideoPacketType.endOfStream,
+      4 => VideoPacketType.audioConfig,
+      5 => VideoPacketType.audioAccessUnit,
+      6 => VideoPacketType.audioEndOfStream,
       _ => throw FormatException('Unsupported video packet type: $value'),
+    };
+  }
+}
+
+enum AudioCodec {
+  aacLc('aacLc');
+
+  const AudioCodec(this.wireName);
+
+  final String wireName;
+
+  static AudioCodec fromWireName(String value) {
+    return switch (value) {
+      'aacLc' => AudioCodec.aacLc,
+      _ => throw FormatException('Unsupported audio codec: $value'),
     };
   }
 }
@@ -252,8 +273,8 @@ final class ReceiverCapabilities {
               PerformanceProfile.compatibility720p30,
             ]
           : profileNames
-              .map(PerformanceProfile.fromWireName)
-              .toList(growable: false),
+                .map(PerformanceProfile.fromWireName)
+                .toList(growable: false),
     );
   }
 }
@@ -269,28 +290,28 @@ final class VideoProfile {
   });
 
   const VideoProfile.stageOne720p30()
-      : codec = VideoCodec.h264,
-        width = 1280,
-        height = 720,
-        fps = 30,
-        bitrateKbps = 4000,
-        performanceProfile = PerformanceProfile.lowLatency720p30;
+    : codec = VideoCodec.h264,
+      width = 1280,
+      height = 720,
+      fps = 30,
+      bitrateKbps = 4000,
+      performanceProfile = PerformanceProfile.lowLatency720p30;
 
   const VideoProfile.lowLatency720p30()
-      : codec = VideoCodec.h264,
-        width = 1280,
-        height = 720,
-        fps = 30,
-        bitrateKbps = 4000,
-        performanceProfile = PerformanceProfile.lowLatency720p30;
+    : codec = VideoCodec.h264,
+      width = 1280,
+      height = 720,
+      fps = 30,
+      bitrateKbps = 4000,
+      performanceProfile = PerformanceProfile.lowLatency720p30;
 
   const VideoProfile.compatibility720p30()
-      : codec = VideoCodec.h264,
-        width = 1280,
-        height = 720,
-        fps = 30,
-        bitrateKbps = 3000,
-        performanceProfile = PerformanceProfile.compatibility720p30;
+    : codec = VideoCodec.h264,
+      width = 1280,
+      height = 720,
+      fps = 30,
+      bitrateKbps = 3000,
+      performanceProfile = PerformanceProfile.compatibility720p30;
 
   final VideoCodec codec;
   final int width;
@@ -338,8 +359,8 @@ final class H264CodecConfig {
     required Uint8List pps,
     this.annexB = true,
     this.spsPpsInBand = true,
-  })  : sps = Uint8List.fromList(sps),
-        pps = Uint8List.fromList(pps);
+  }) : sps = Uint8List.fromList(sps),
+       pps = Uint8List.fromList(pps);
 
   static const int binaryHeaderLength = 24;
   static const int binaryLength = binaryHeaderLength;
@@ -437,6 +458,182 @@ final class H264CodecConfig {
   }
 }
 
+final class AudioProfile {
+  const AudioProfile({
+    required this.enabled,
+    required this.codec,
+    required this.sampleRate,
+    required this.channelCount,
+    required this.bitrate,
+    this.source = 'systemLoopback',
+  });
+
+  const AudioProfile.systemAacLc()
+    : enabled = true,
+      codec = AudioCodec.aacLc,
+      sampleRate = 48000,
+      channelCount = 2,
+      bitrate = 128000,
+      source = 'systemLoopback';
+
+  const AudioProfile.disabled()
+    : enabled = false,
+      codec = AudioCodec.aacLc,
+      sampleRate = 48000,
+      channelCount = 2,
+      bitrate = 128000,
+      source = 'systemLoopback';
+
+  final bool enabled;
+  final AudioCodec codec;
+  final int sampleRate;
+  final int channelCount;
+  final int bitrate;
+  final String source;
+
+  Map<String, Object?> toJson() {
+    return {
+      'enabled': enabled,
+      'codec': codec.wireName,
+      'sampleRate': sampleRate,
+      'channelCount': channelCount,
+      'bitrate': bitrate,
+      'source': source,
+    };
+  }
+
+  factory AudioProfile.fromJson(Map<String, Object?> json) {
+    return AudioProfile(
+      enabled: _readBool(json, 'enabled'),
+      codec: AudioCodec.fromWireName(_readString(json, 'codec')),
+      sampleRate: _readInt(json, 'sampleRate'),
+      channelCount: _readInt(json, 'channelCount'),
+      bitrate: _readInt(json, 'bitrate'),
+      source: _readOptionalString(
+        json,
+        'source',
+        defaultValue: 'systemLoopback',
+      ),
+    );
+  }
+}
+
+final class AudioPacketLimits {
+  const AudioPacketLimits._();
+
+  static const int configMaxPayloadLength = 64 * 1024;
+  static const int accessUnitMaxPayloadLength = 256 * 1024;
+}
+
+final class AacCodecConfig {
+  AacCodecConfig({
+    required this.sampleRate,
+    required this.channelCount,
+    required this.bitrate,
+    required this.streamStartPtsUs,
+    required Uint8List codecSpecificData,
+    this.codec = 'audio/mp4a-latm',
+    this.aacProfile = 2,
+  }) : codecSpecificData = Uint8List.fromList(codecSpecificData);
+
+  static const int binaryHeaderLength = 32;
+  static const int _magic = 0x41414320; // AAC
+
+  final String codec;
+  final int sampleRate;
+  final int channelCount;
+  final int bitrate;
+  final int streamStartPtsUs;
+  final int aacProfile;
+  final Uint8List codecSpecificData;
+
+  Uint8List encode() {
+    if (codec != 'audio/mp4a-latm') {
+      throw FormatException('Unsupported audio codec: $codec');
+    }
+    _checkRange('sampleRate', sampleRate, 8000, 192000);
+    _checkRange('channelCount', channelCount, 1, 8);
+    _checkUint32('bitrate', bitrate);
+    _checkUint64('streamStartPtsUs', streamStartPtsUs);
+    _checkRange('aacProfile', aacProfile, 1, 31);
+    _checkUint16('codecSpecificData.length', codecSpecificData.length);
+
+    final payloadLength = binaryHeaderLength + codecSpecificData.length;
+    if (payloadLength > AudioPacketLimits.configMaxPayloadLength) {
+      throw RangeError.range(
+        payloadLength,
+        0,
+        AudioPacketLimits.configMaxPayloadLength,
+        'audioConfigPayload',
+      );
+    }
+    final bytes = Uint8List(payloadLength);
+    final data = ByteData.sublistView(bytes);
+    data.setUint32(0, _magic);
+    data.setUint8(4, mirrorProtocolVersion);
+    data.setUint8(5, 0);
+    data.setUint16(6, 0);
+    data.setUint32(8, sampleRate);
+    data.setUint16(12, channelCount);
+    data.setUint16(14, aacProfile);
+    data.setUint32(16, bitrate);
+    data.setUint64(20, streamStartPtsUs);
+    data.setUint16(28, codecSpecificData.length);
+    data.setUint16(30, 0);
+    bytes.setRange(binaryHeaderLength, bytes.length, codecSpecificData);
+    return bytes;
+  }
+
+  factory AacCodecConfig.decode(Uint8List bytes) {
+    if (bytes.length < binaryHeaderLength) {
+      throw FormatException('Invalid AAC config length: ${bytes.length}');
+    }
+    if (bytes.length > AudioPacketLimits.configMaxPayloadLength) {
+      throw const FormatException(
+        'AAC config is larger than the configured limit',
+      );
+    }
+    final data = ByteData.sublistView(bytes);
+    final magic = data.getUint32(0);
+    if (magic != _magic) {
+      throw FormatException('Invalid AAC config magic: $magic');
+    }
+    final version = data.getUint8(4);
+    if (version != mirrorProtocolVersion) {
+      throw FormatException('Unsupported AAC config version: $version');
+    }
+    final flags = data.getUint8(5);
+    if (flags != 0) {
+      throw FormatException('Unsupported AAC config flags: $flags');
+    }
+    final csdLength = data.getUint16(28);
+    final expectedLength = binaryHeaderLength + csdLength;
+    if (bytes.length != expectedLength) {
+      throw FormatException(
+        'AAC config CSD length does not match payload length: $csdLength',
+      );
+    }
+    return AacCodecConfig(
+      sampleRate: _checkedDecodedRange(
+        'sampleRate',
+        data.getUint32(8),
+        8000,
+        192000,
+      ),
+      channelCount: _checkedDecodedRange(
+        'channelCount',
+        data.getUint16(12),
+        1,
+        8,
+      ),
+      aacProfile: _checkedDecodedRange('aacProfile', data.getUint16(14), 1, 31),
+      bitrate: data.getUint32(16),
+      streamStartPtsUs: data.getUint64(20),
+      codecSpecificData: Uint8List.sublistView(bytes, binaryHeaderLength),
+    );
+  }
+}
+
 final class VideoPacket {
   const VideoPacket({
     required this.type,
@@ -464,7 +661,7 @@ final class VideoPacket {
     _checkUint16('flags', flags);
     _checkUint64('sequenceNumber', sequenceNumber);
     _checkUint64('ptsUs', ptsUs);
-    _checkPayloadLength(payload.length);
+    _checkPacketPayloadLength(type, payload.length);
 
     final packetLength = headerLength + payload.length;
     final bytes = Uint8List(lengthPrefixLength + packetLength);
@@ -517,7 +714,8 @@ final class VideoPacket {
         : legacyHeaderLength;
     if (packetLength < packetHeaderLength) {
       throw FormatException(
-          'Invalid video packet header length: $packetLength');
+        'Invalid video packet header length: $packetLength',
+      );
     }
     final payloadLength = data.getUint32(
       lengthPrefixLength + packetHeaderLength - 4,
@@ -527,9 +725,11 @@ final class VideoPacket {
         'Payload length does not match packet length: $payloadLength',
       );
     }
+    final type = VideoPacketType.fromWireValue(data.getUint8(9));
+    _checkDecodedPacketPayloadLength(type, payloadLength);
 
     return VideoPacket(
-      type: VideoPacketType.fromWireValue(data.getUint8(9)),
+      type: type,
       flags: flags,
       ptsUs: data.getUint64(12),
       sequenceNumber: packetHeaderLength == headerLength
@@ -549,6 +749,7 @@ final class StreamStartRequest {
     required this.sourceType,
     required this.sourceId,
     required this.video,
+    this.audio,
     this.protocolVersion = mirrorProtocolVersion,
   });
 
@@ -557,6 +758,7 @@ final class StreamStartRequest {
   final SourceType sourceType;
   final String sourceId;
   final VideoProfile video;
+  final AudioProfile? audio;
 
   Map<String, Object?> toJson() {
     return {
@@ -566,6 +768,7 @@ final class StreamStartRequest {
       'sourceType': sourceType.wireName,
       'sourceId': sourceId,
       'video': video.toJson(),
+      if (audio != null) 'audio': audio!.toJson(),
     };
   }
 
@@ -577,6 +780,9 @@ final class StreamStartRequest {
       sourceType: SourceType.fromWireName(_readString(json, 'sourceType')),
       sourceId: _readString(json, 'sourceId'),
       video: VideoProfile.fromJson(_readMap(json, 'video')),
+      audio: json['audio'] == null
+          ? null
+          : AudioProfile.fromJson(_readMap(json, 'audio')),
     );
   }
 }
@@ -796,6 +1002,38 @@ void _checkUint64(String label, int value) {
 void _checkPayloadLength(int length) {
   if (length < 0 || length > VideoPacket.maxPayloadLength) {
     throw RangeError.range(length, 0, VideoPacket.maxPayloadLength, 'payload');
+  }
+}
+
+void _checkPacketPayloadLength(VideoPacketType type, int length) {
+  final maxLength = switch (type) {
+    VideoPacketType.audioConfig => AudioPacketLimits.configMaxPayloadLength,
+    VideoPacketType.audioAccessUnit =>
+      AudioPacketLimits.accessUnitMaxPayloadLength,
+    VideoPacketType.audioEndOfStream => 0,
+    VideoPacketType.endOfStream => 0,
+    VideoPacketType.codecConfig ||
+    VideoPacketType.accessUnit => VideoPacket.maxPayloadLength,
+  };
+  if (length < 0 || length > maxLength) {
+    throw RangeError.range(length, 0, maxLength, 'payload');
+  }
+}
+
+void _checkDecodedPacketPayloadLength(VideoPacketType type, int length) {
+  final maxLength = switch (type) {
+    VideoPacketType.audioConfig => AudioPacketLimits.configMaxPayloadLength,
+    VideoPacketType.audioAccessUnit =>
+      AudioPacketLimits.accessUnitMaxPayloadLength,
+    VideoPacketType.audioEndOfStream => 0,
+    VideoPacketType.endOfStream => 0,
+    VideoPacketType.codecConfig ||
+    VideoPacketType.accessUnit => VideoPacket.maxPayloadLength,
+  };
+  if (length < 0 || length > maxLength) {
+    throw FormatException(
+      'Packet payload is larger than the configured limit: $length',
+    );
   }
 }
 

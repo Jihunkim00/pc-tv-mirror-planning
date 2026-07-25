@@ -8,6 +8,10 @@ import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
 import android.media.MediaCodec
 import android.media.MediaCodecList
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTimestamp
+import android.media.AudioTrack
 import android.media.MediaFormat
 import android.os.Build
 import android.os.SystemClock
@@ -19,6 +23,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.Gravity
+import android.view.KeyEvent
 import android.widget.FrameLayout
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -48,6 +53,8 @@ import kotlin.collections.ArrayDeque
 class MainActivity : FlutterActivity() {
     private val h264DecoderAvailable = hasH264Decoder()
     private val receiverServer = StageOneReceiverServer(h264DecoderAvailable)
+    private var receiverControlsChannel: MethodChannel? = null
+    private var fullscreenEnabled = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -61,7 +68,26 @@ class MainActivity : FlutterActivity() {
                 "startReceiver" -> startReceiver(call, result)
                 "stopReceiver" -> result.success(receiverServer.stop())
                 "getReceiverStatus" -> result.success(receiverServer.getStatus())
+                "setAudioMuted" -> {
+                    receiverServer.setAudioMuted(call.argument<Boolean>("muted") ?: false)
+                    result.success(receiverServer.getStatus())
+                }
                 else -> result.notImplemented()
+            }
+        }
+
+        receiverControlsChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "pc_tv_mirror/receiver_controls",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setFullscreenState" -> {
+                        fullscreenEnabled = call.argument<Boolean>("enabled") ?: false
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
             }
         }
 
@@ -80,8 +106,31 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        receiverControlsChannel = null
         receiverServer.stop()
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val keyCode = event.keyCode
+        val isOkKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+            keyCode == KeyEvent.KEYCODE_ENTER ||
+            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_A
+        val isBackKey = keyCode == KeyEvent.KEYCODE_BACK
+        if (fullscreenEnabled && (isOkKey || isBackKey)) {
+            if (event.action == KeyEvent.ACTION_UP && event.repeatCount == 0) {
+                receiverControlsChannel?.invokeMethod(
+                    "remoteAction",
+                    mapOf(
+                        "action" to "exitFullscreen",
+                        "source" to if (isBackKey) "back" else "dpadCenter",
+                    ),
+                )
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun startReceiver(call: MethodCall, result: MethodChannel.Result) {
@@ -119,6 +168,8 @@ private const val PERFORMANCE_PROFILE_COMPATIBILITY_720P30 = "compatibility720p3
 private const val MAX_PACKET_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_ACCESS_UNIT_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_CODEC_CONFIG_PAYLOAD = 24 + 64 * 1024 + 64 * 1024
+private const val MAX_AUDIO_CONFIG_PAYLOAD = 64 * 1024
+private const val MAX_AUDIO_ACCESS_UNIT_PAYLOAD = 256 * 1024
 private const val MAX_PARAMETER_SET_BYTES = 64 * 1024
 private const val MAX_PENDING_DECODER_TIMESTAMPS = 30
 private const val MAX_LATENCY_SAMPLES = 120
@@ -129,6 +180,13 @@ private const val MAX_SCHEDULED_DELAY_NS = 66_000_000L
 private const val LATE_DROP_THRESHOLD_NS = 100_000_000L
 private const val BACKLOG_RECOVERY_THRESHOLD_NS = 150_000_000L
 private const val ROLLING_WINDOW_US = 2_000_000L
+private const val AUDIO_SAMPLE_RATE = 48000
+private const val AUDIO_CHANNELS = 2
+private const val MAX_AUDIO_ACCESS_UNIT_QUEUE_DEPTH = 8
+private const val TARGET_AUDIO_BUFFER_MS = 120
+private const val VIDEO_LATE_FOR_AUDIO_DROP_US = 80_000L
+private const val VIDEO_EARLY_FOR_AUDIO_SCHEDULE_US = 50_000L
+private const val AV_SYNC_RESYNC_THRESHOLD_US = 150_000L
 
 private class StageOneReceiverServer(
     private val h264DecoderAvailable: Boolean,
@@ -138,7 +196,8 @@ private class StageOneReceiverServer(
         private const val BIND_ADDRESS = "0.0.0.0"
     }
 
-    private val decoder = StageOneVideoDecoder()
+    private val audioDecoder = StageThreeAudioDecoder()
+    private val decoder = StageOneVideoDecoder(audioDecoder)
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -213,6 +272,7 @@ private class StageOneReceiverServer(
         clientConnected = false
         serverSocket = null
         decoder.releaseCodec()
+        audioDecoder.release()
         lastPacketError = null
         lastErrorCode = null
 
@@ -227,6 +287,10 @@ private class StageOneReceiverServer(
 
     fun getStatus(): Map<String, Any> {
         return snapshot(receiverPort = boundPort)
+    }
+
+    fun setAudioMuted(muted: Boolean) {
+        audioDecoder.setMuted(muted)
     }
 
     fun onVideoLayout(metrics: VideoLayoutMetrics) {
@@ -296,6 +360,7 @@ private class StageOneReceiverServer(
 
             if (requestType == ControlRequestType.STREAM_STOP) {
                 decoder.releaseCodec()
+                audioDecoder.release()
                 writeJsonLine(socket, receiverStoppedResponse())
                 return
             }
@@ -369,6 +434,29 @@ private class StageOneReceiverServer(
                     decoder.releaseCodec()
                     break
                 }
+                VideoPacketType.AUDIO_CONFIG -> {
+                    val config = try {
+                        AacStreamConfig.decode(packet.payload)
+                    } catch (error: IllegalArgumentException) {
+                        recordPacketError(error.message ?: "Invalid AAC config packet.")
+                        null
+                    }
+                    if (config != null) {
+                        lastPacketError = null
+                        audioDecoder.configure(config)
+                    }
+                }
+                VideoPacketType.AUDIO_ACCESS_UNIT -> {
+                    audioDecoder.queueAccessUnit(
+                        packet.payload,
+                        packet.ptsUs,
+                        packet.sequenceNumber,
+                        elapsedRealtimeUs(),
+                    )
+                }
+                VideoPacketType.AUDIO_END_OF_STREAM -> {
+                    audioDecoder.release()
+                }
             }
         }
     }
@@ -383,6 +471,7 @@ private class StageOneReceiverServer(
         developerMessage: String? = null,
     ): Map<String, Any> {
         val decoderSnapshot = decoder.snapshot()
+        val audioSnapshot = audioDecoder.snapshot()
         val activeDeveloperMessage =
             developerMessage ?: lastPacketError ?: decoderSnapshot.lastDecoderError
         val activeErrorCode = errorCode ?: lastErrorCode
@@ -481,7 +570,31 @@ private class StageOneReceiverServer(
             "p95RenderScheduleDelayMs" to decoderSnapshot.p95RenderScheduleDelayMs,
             "playoutDelayMs" to decoderSnapshot.playoutDelayMs,
             "pacingResyncCount" to decoderSnapshot.pacingResyncCount,
+            "actualPresentedFps" to decoderSnapshot.releasedToSurfaceFps,
+            "avSyncOffsetMs" to decoderSnapshot.avSyncOffsetMs,
+            "avSyncAverageMs" to decoderSnapshot.avSyncAverageMs,
+            "avSyncP95Ms" to decoderSnapshot.avSyncP95Ms,
+            "videoFramesDroppedForAvSync" to decoderSnapshot.videoFramesDroppedForAvSync,
+            "avSyncResyncCount" to decoderSnapshot.avSyncResyncCount,
+            "syncMaster" to decoderSnapshot.syncMaster,
+            "audioDecoderName" to audioSnapshot.audioDecoderName,
+            "receivedAudioPackets" to audioSnapshot.receivedAudioPackets,
+            "audioDecoderInputPackets" to audioSnapshot.audioDecoderInputPackets,
+            "audioDecoderOutputBuffers" to audioSnapshot.audioDecoderOutputBuffers,
+            "audioTrackWrittenFrames" to audioSnapshot.audioTrackWrittenFrames,
+            "audioQueueDepth" to audioSnapshot.audioQueueDepth,
+            "pcmQueueDepth" to audioSnapshot.pcmQueueDepth,
+            "audioBufferedDurationMs" to audioSnapshot.audioBufferedDurationMs,
+            "audioPlaybackPositionUs" to audioSnapshot.audioPlaybackPositionUs,
+            "audioUnderrunCount" to audioSnapshot.audioUnderrunCount,
+            "audioDroppedPackets" to audioSnapshot.audioDroppedPackets,
+            "audioState" to audioSnapshot.audioState,
+            "audioMuted" to audioSnapshot.audioMuted,
+            "audioCodec" to audioSnapshot.audioCodec,
+            "audioSampleRate" to audioSnapshot.audioSampleRate,
+            "audioChannels" to audioSnapshot.audioChannels,
         )
+        audioSnapshot.audioLastError?.let { values["audioLastError"] = it }
         decoderSnapshot.outputCropLeft?.let { values["outputCropLeft"] = it }
         decoderSnapshot.outputCropRight?.let { values["outputCropRight"] = it }
         decoderSnapshot.outputCropTop?.let { values["outputCropTop"] = it }
@@ -504,6 +617,7 @@ private class StageOneReceiverServer(
         lastPacketError = null
         lastErrorCode = null
         decoder.resetDiagnostics()
+        audioDecoder.resetDiagnostics()
     }
 
     private fun recordPacketError(message: String) {
@@ -582,6 +696,12 @@ private data class DecoderSnapshot(
     val p95RenderScheduleDelayMs: Double,
     val playoutDelayMs: Double,
     val pacingResyncCount: Long,
+    val avSyncOffsetMs: Double,
+    val avSyncAverageMs: Double,
+    val avSyncP95Ms: Double,
+    val videoFramesDroppedForAvSync: Long,
+    val avSyncResyncCount: Long,
+    val syncMaster: String,
     val lastDecoderError: String?,
 )
 
@@ -628,7 +748,437 @@ private data class QueuedAccessUnit(
     val arrivalUs: Long,
 )
 
-private class StageOneVideoDecoder {
+private data class QueuedAudioAccessUnit(
+    val payload: ByteArray,
+    val ptsUs: Long,
+    val sequenceNumber: Long,
+    val arrivalUs: Long,
+)
+
+private data class AacStreamConfig(
+    val sampleRate: Int,
+    val channelCount: Int,
+    val bitrate: Int,
+    val streamStartPtsUs: Long,
+    val codecSpecificData: ByteArray,
+) {
+    companion object {
+        private const val BINARY_HEADER_LENGTH = 32
+        private const val MAGIC = 0x41414320
+
+        fun decode(payload: ByteArray): AacStreamConfig {
+            require(payload.size in BINARY_HEADER_LENGTH..MAX_AUDIO_CONFIG_PAYLOAD) {
+                "invalid AAC config length"
+            }
+            val buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
+            require(buffer.int == MAGIC) { "invalid AAC config magic" }
+            require((buffer.get().toInt() and 0xFF) == 1) {
+                "unsupported AAC config version"
+            }
+            val flags = buffer.get().toInt() and 0xFF
+            require(flags == 0) { "unsupported AAC config flags" }
+            buffer.short
+            val sampleRate = buffer.int
+            val channelCount = buffer.short.toInt() and 0xFFFF
+            buffer.short
+            val bitrate = buffer.int
+            val streamStartPtsUs = buffer.long
+            val csdLength = buffer.short.toInt() and 0xFFFF
+            buffer.short
+            require(sampleRate in 8000..192000 && channelCount in 1..8) {
+                "AAC config metadata is outside the supported range"
+            }
+            require(BINARY_HEADER_LENGTH + csdLength == payload.size) {
+                "AAC config CSD length does not match payload length"
+            }
+            return AacStreamConfig(
+                sampleRate = sampleRate,
+                channelCount = channelCount,
+                bitrate = bitrate,
+                streamStartPtsUs = streamStartPtsUs,
+                codecSpecificData = payload.copyOfRange(BINARY_HEADER_LENGTH, payload.size),
+            )
+        }
+    }
+}
+
+private data class AudioSnapshot(
+    val audioDecoderName: String,
+    val receivedAudioPackets: Long,
+    val audioDecoderInputPackets: Long,
+    val audioDecoderOutputBuffers: Long,
+    val audioTrackWrittenFrames: Long,
+    val audioQueueDepth: Int,
+    val pcmQueueDepth: Int,
+    val audioBufferedDurationMs: Double,
+    val audioPlaybackPositionUs: Long,
+    val audioUnderrunCount: Long,
+    val audioDroppedPackets: Long,
+    val audioState: String,
+    val audioMuted: Boolean,
+    val audioCodec: String,
+    val audioSampleRate: Int,
+    val audioChannels: Int,
+    val audioLastError: String?,
+)
+
+private interface AudioPlaybackClock {
+    fun audioPlaybackPositionUs(): Long?
+    fun audioReadyForSync(): Boolean
+}
+
+private class StageThreeAudioDecoder : AudioPlaybackClock {
+    private val lock = java.lang.Object()
+    private val audioQueue = ArrayDeque<QueuedAudioAccessUnit>()
+    private var codec: MediaCodec? = null
+    private var audioTrack: AudioTrack? = null
+    private var config: AacStreamConfig? = null
+    private var audioDecoderName = "unknown"
+    private var audioState = "muted"
+    private var muted = false
+    private var running = true
+    private var receivedAudioPackets = 0L
+    private var audioDecoderInputPackets = 0L
+    private var audioDecoderOutputBuffers = 0L
+    private var audioTrackWrittenFrames = 0L
+    private var audioDroppedPackets = 0L
+    private var audioUnderrunCount = 0L
+    private var lastAudioSequence: Long? = null
+    private var lastAudioError: String? = null
+    private var firstQueuedAudioPtsUs: Long? = null
+    private var audioTrackBasePlaybackHead: Long? = null
+    private var audioTrackBasePtsUs: Long? = null
+    private val workerThread = Thread({ audioLoop() }, "StageThreeAudioDecoder").apply {
+        isDaemon = true
+        start()
+    }
+
+    override fun audioPlaybackPositionUs(): Long? {
+        return synchronized(lock) {
+            val track = audioTrack ?: return@synchronized null
+            val basePts = audioTrackBasePtsUs ?: return@synchronized null
+            val baseHead = audioTrackBasePlaybackHead ?: 0L
+            val playbackHead = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
+            basePts + ((playbackHead - baseHead).coerceAtLeast(0L) * 1_000_000L) /
+                (config?.sampleRate ?: AUDIO_SAMPLE_RATE)
+        }
+    }
+
+    override fun audioReadyForSync(): Boolean {
+        return synchronized(lock) {
+            !muted && audioState == "playing" && audioTrackBasePtsUs != null
+        }
+    }
+
+    fun snapshot(): AudioSnapshot {
+        return synchronized(lock) {
+            AudioSnapshot(
+                audioDecoderName = audioDecoderName,
+                receivedAudioPackets = receivedAudioPackets,
+                audioDecoderInputPackets = audioDecoderInputPackets,
+                audioDecoderOutputBuffers = audioDecoderOutputBuffers,
+                audioTrackWrittenFrames = audioTrackWrittenFrames,
+                audioQueueDepth = audioQueue.size,
+                pcmQueueDepth = 0,
+                audioBufferedDurationMs = bufferedDurationMsLocked(),
+                audioPlaybackPositionUs = audioPlaybackPositionUs() ?: 0L,
+                audioUnderrunCount = audioUnderrunCount,
+                audioDroppedPackets = audioDroppedPackets,
+                audioState = if (muted && audioState == "playing") "muted" else audioState,
+                audioMuted = muted,
+                audioCodec = "audio/mp4a-latm",
+                audioSampleRate = config?.sampleRate ?: 0,
+                audioChannels = config?.channelCount ?: 0,
+                audioLastError = lastAudioError,
+            )
+        }
+    }
+
+    fun setMuted(value: Boolean) {
+        synchronized(lock) {
+            muted = value
+            if (value) {
+                audioTrack?.pause()
+            } else if (audioTrack != null) {
+                audioTrack?.play()
+                if (audioState != "failed") {
+                    audioState = "playing"
+                }
+            }
+        }
+    }
+
+    fun resetDiagnostics() {
+        synchronized(lock) {
+            audioQueue.clear()
+            receivedAudioPackets = 0
+            audioDecoderInputPackets = 0
+            audioDecoderOutputBuffers = 0
+            audioTrackWrittenFrames = 0
+            audioDroppedPackets = 0
+            audioUnderrunCount = 0
+            lastAudioSequence = null
+            lastAudioError = null
+            firstQueuedAudioPtsUs = null
+            audioTrackBasePlaybackHead = null
+            audioTrackBasePtsUs = null
+            audioState = if (muted) "muted" else "idle"
+            lock.notifyAll()
+        }
+    }
+
+    fun configure(value: AacStreamConfig) {
+        synchronized(lock) {
+            releaseLocked("audio reconfigure")
+            config = value
+            audioState = "configuring"
+            try {
+                val newCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+                audioDecoderName = newCodec.name ?: "AAC decoder"
+                val format = MediaFormat.createAudioFormat(
+                    MediaFormat.MIMETYPE_AUDIO_AAC,
+                    value.sampleRate,
+                    value.channelCount,
+                )
+                format.setInteger(MediaFormat.KEY_BIT_RATE, value.bitrate)
+                format.setByteBuffer("csd-0", ByteBuffer.wrap(value.codecSpecificData))
+                newCodec.configure(format, null, null, 0)
+                newCodec.start()
+                codec = newCodec
+                audioTrack = createAudioTrack(value)
+                audioTrack?.play()
+                audioState = if (muted) "muted" else "playing"
+                lastAudioError = null
+            } catch (error: Exception) {
+                audioState = "failed"
+                lastAudioError = error.message ?: "AAC decoder configure failed."
+                releaseLocked("audio configure failed")
+            }
+        }
+    }
+
+    fun queueAccessUnit(
+        payload: ByteArray,
+        ptsUs: Long,
+        sequenceNumber: Long,
+        arrivalUs: Long,
+    ): Boolean {
+        return synchronized(lock) {
+            receivedAudioPackets += 1
+            val previous = lastAudioSequence
+            if (previous != null && sequenceNumber > previous + 1) {
+                audioDroppedPackets += sequenceNumber - previous - 1
+            }
+            if (previous == null || sequenceNumber > previous) {
+                lastAudioSequence = sequenceNumber
+            }
+            if (codec == null) {
+                audioDroppedPackets += 1
+                lastAudioError = "AAC decoder is not configured yet."
+                return@synchronized false
+            }
+            while (audioQueue.size >= MAX_AUDIO_ACCESS_UNIT_QUEUE_DEPTH) {
+                audioQueue.removeFirst()
+                audioDroppedPackets += 1
+            }
+            audioQueue.addLast(
+                QueuedAudioAccessUnit(
+                    payload = payload,
+                    ptsUs = ptsUs,
+                    sequenceNumber = sequenceNumber,
+                    arrivalUs = arrivalUs,
+                ),
+            )
+            if (firstQueuedAudioPtsUs == null) {
+                firstQueuedAudioPtsUs = ptsUs
+            }
+            lock.notifyAll()
+            true
+        }
+    }
+
+    fun release() {
+        synchronized(lock) {
+            releaseLocked("audio release")
+            audioState = if (muted) "muted" else "idle"
+        }
+    }
+
+    private fun audioLoop() {
+        while (running) {
+            val unit = synchronized(lock) {
+                while (running && audioQueue.isEmpty()) {
+                    try {
+                        lock.wait()
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        running = false
+                    }
+                }
+                if (!running) {
+                    return
+                }
+                audioQueue.removeFirst()
+            }
+            decodeAudioAccessUnit(unit)
+        }
+    }
+
+    private fun decodeAudioAccessUnit(unit: QueuedAudioAccessUnit) {
+        synchronized(lock) {
+            val activeCodec = codec ?: return
+            try {
+                val inputIndex = activeCodec.dequeueInputBuffer(10_000)
+                if (inputIndex < 0) {
+                    audioDroppedPackets += 1
+                    return
+                }
+                val inputBuffer = activeCodec.getInputBuffer(inputIndex)
+                if (inputBuffer == null || unit.payload.size > inputBuffer.capacity()) {
+                    audioDroppedPackets += 1
+                    lastAudioError = "AAC access unit did not fit decoder input."
+                    return
+                }
+                inputBuffer.clear()
+                inputBuffer.put(unit.payload)
+                activeCodec.queueInputBuffer(inputIndex, 0, unit.payload.size, unit.ptsUs, 0)
+                audioDecoderInputPackets += 1
+                drainAudioOutputLocked(activeCodec)
+            } catch (error: Exception) {
+                audioState = "failed"
+                lastAudioError = error.message ?: "AAC decode failed."
+            }
+        }
+    }
+
+    private fun drainAudioOutputLocked(activeCodec: MediaCodec) {
+        val bufferInfo = MediaCodec.BufferInfo()
+        while (true) {
+            when (val outputIndex = activeCodec.dequeueOutputBuffer(bufferInfo, 0)) {
+                MediaCodec.INFO_TRY_AGAIN_LATER -> return
+                MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit
+                MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                else -> {
+                    if (outputIndex < 0) {
+                        return
+                    }
+                    val outputBuffer = activeCodec.getOutputBuffer(outputIndex)
+                    if (outputBuffer != null && bufferInfo.size > 0) {
+                        val pcm = ByteArray(bufferInfo.size)
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        outputBuffer.get(pcm)
+                        audioDecoderOutputBuffers += 1
+                        writePcmLocked(pcm, bufferInfo.presentationTimeUs)
+                    }
+                    activeCodec.releaseOutputBuffer(outputIndex, false)
+                }
+            }
+        }
+    }
+
+    private fun writePcmLocked(pcm: ByteArray, ptsUs: Long) {
+        val track = audioTrack ?: return
+        val frames = pcm.size / (2 * (config?.channelCount ?: AUDIO_CHANNELS))
+        if (audioTrackBasePtsUs == null) {
+            audioTrackBasePtsUs = ptsUs
+            audioTrackBasePlaybackHead = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
+        }
+        if (!muted) {
+            val written = track.write(pcm, 0, pcm.size)
+            if (written < pcm.size) {
+                audioUnderrunCount += 1
+            }
+        }
+        audioTrackWrittenFrames += frames
+    }
+
+    private fun createAudioTrack(value: AacStreamConfig): AudioTrack {
+        val channelMask = if (value.channelCount == 1) {
+            AudioFormat.CHANNEL_OUT_MONO
+        } else {
+            AudioFormat.CHANNEL_OUT_STEREO
+        }
+        val minBuffer = AudioTrack.getMinBufferSize(
+            value.sampleRate,
+            channelMask,
+            AudioFormat.ENCODING_PCM_16BIT,
+        ).coerceAtLeast(0)
+        val targetBuffer = maxOf(
+            minBuffer,
+            value.sampleRate * value.channelCount * 2 * TARGET_AUDIO_BUFFER_MS / 1000,
+        )
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val builder = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(value.sampleRate)
+                        .setChannelMask(channelMask)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .build(),
+                )
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(targetBuffer)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            }
+            builder.build()
+        } else {
+            @Suppress("DEPRECATION")
+            AudioTrack(
+                android.media.AudioManager.STREAM_MUSIC,
+                value.sampleRate,
+                channelMask,
+                AudioFormat.ENCODING_PCM_16BIT,
+                targetBuffer,
+                AudioTrack.MODE_STREAM,
+            )
+        }
+    }
+
+    private fun bufferedDurationMsLocked(): Double {
+        val playbackUs = audioPlaybackPositionUs() ?: return 0.0
+        val basePts = audioTrackBasePtsUs ?: return 0.0
+        val writtenUs =
+            basePts + (audioTrackWrittenFrames * 1_000_000L) /
+                (config?.sampleRate ?: AUDIO_SAMPLE_RATE)
+        return ((writtenUs - playbackUs).coerceAtLeast(0L)).toDouble() / 1_000.0
+    }
+
+    private fun releaseLocked(reason: String) {
+        audioQueue.clear()
+        try {
+            codec?.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            codec?.release()
+        } catch (_: Exception) {
+        }
+        try {
+            audioTrack?.pause()
+            audioTrack?.flush()
+            audioTrack?.release()
+        } catch (_: Exception) {
+        }
+        codec = null
+        audioTrack = null
+        firstQueuedAudioPtsUs = null
+        audioTrackBasePlaybackHead = null
+        audioTrackBasePtsUs = null
+        Log.i("PC_TV_MIRROR", "Audio decoder released: $reason")
+    }
+}
+
+private class StageOneVideoDecoder(
+    private val audioClock: AudioPlaybackClock,
+) {
     private val lock = java.lang.Object()
     private var surface: Surface? = null
     private var surfaceId: Int? = null
@@ -706,6 +1256,13 @@ private class StageOneVideoDecoder {
     private var p95RenderScheduleDelayMs = 0.0
     private var playoutDelayMs = INITIAL_PLAYOUT_DELAY_NS / 1_000_000.0
     private var pacingResyncCount = 0L
+    private val avSyncSamples = ArrayDeque<Double>()
+    private var avSyncOffsetMs = 0.0
+    private var avSyncAverageMs = 0.0
+    private var avSyncP95Ms = 0.0
+    private var videoFramesDroppedForAvSync = 0L
+    private var avSyncResyncCount = 0L
+    private var syncMaster = "videoLocal"
     private var firstPacingPtsUs: Long? = null
     private var firstLocalRenderTimeNs: Long? = null
     private var lastDecoderError: String? = null
@@ -787,6 +1344,12 @@ private class StageOneVideoDecoder {
                 p95RenderScheduleDelayMs = p95RenderScheduleDelayMs,
                 playoutDelayMs = playoutDelayMs,
                 pacingResyncCount = pacingResyncCount,
+                avSyncOffsetMs = avSyncOffsetMs,
+                avSyncAverageMs = avSyncAverageMs,
+                avSyncP95Ms = avSyncP95Ms,
+                videoFramesDroppedForAvSync = videoFramesDroppedForAvSync,
+                avSyncResyncCount = avSyncResyncCount,
+                syncMaster = syncMaster,
                 lastDecoderError = lastDecoderError,
             )
         }
@@ -843,6 +1406,13 @@ private class StageOneVideoDecoder {
             p95RenderScheduleDelayMs = 0.0
             playoutDelayMs = INITIAL_PLAYOUT_DELAY_NS / 1_000_000.0
             pacingResyncCount = 0
+            avSyncSamples.clear()
+            avSyncOffsetMs = 0.0
+            avSyncAverageMs = 0.0
+            avSyncP95Ms = 0.0
+            videoFramesDroppedForAvSync = 0
+            avSyncResyncCount = 0
+            syncMaster = "videoLocal"
             firstPacingPtsUs = null
             firstLocalRenderTimeNs = null
             lastDecoderError = null
@@ -1295,6 +1865,42 @@ private class StageOneVideoDecoder {
         ptsUs: Long,
     ): Boolean {
         val nowNs = System.nanoTime()
+        val audioPlaybackUs = if (audioClock.audioReadyForSync()) {
+            audioClock.audioPlaybackPositionUs()
+        } else {
+            null
+        }
+        if (audioPlaybackUs != null) {
+            syncMaster = "audio"
+            val offsetUs = ptsUs - audioPlaybackUs
+            recordAvSyncOffsetLocked(offsetUs)
+            if (offsetUs < -VIDEO_LATE_FOR_AUDIO_DROP_US) {
+                activeCodec.releaseOutputBuffer(outputIndex, false)
+                droppedFrames += 1
+                lateOutputBuffersDropped += 1
+                videoFramesDroppedForAvSync += 1
+                lateFrameDropCounter.record(elapsedRealtimeUs())
+                removeTimingForPtsLocked(ptsUs)
+                return false
+            }
+            if (kotlin.math.abs(offsetUs) > AV_SYNC_RESYNC_THRESHOLD_US) {
+                avSyncResyncCount += 1
+                firstPacingPtsUs = null
+                firstLocalRenderTimeNs = null
+            }
+            if (offsetUs > VIDEO_EARLY_FOR_AUDIO_SCHEDULE_US) {
+                val delayNs = (offsetUs * 1_000L).coerceAtMost(MAX_SCHEDULED_DELAY_NS)
+                return releaseOutputBufferAtLocked(
+                    activeCodec,
+                    outputIndex,
+                    ptsUs,
+                    nowNs + delayNs,
+                    nowNs,
+                )
+            }
+            return releaseOutputBufferAtLocked(activeCodec, outputIndex, ptsUs, nowNs, nowNs)
+        }
+        syncMaster = "videoLocal"
         if (firstPacingPtsUs == null || firstLocalRenderTimeNs == null) {
             firstPacingPtsUs = ptsUs
             firstLocalRenderTimeNs = nowNs + INITIAL_PLAYOUT_DELAY_NS
@@ -1324,6 +1930,16 @@ private class StageOneVideoDecoder {
             renderTimeNs = nowNs + MAX_SCHEDULED_DELAY_NS
         }
 
+        return releaseOutputBufferAtLocked(activeCodec, outputIndex, ptsUs, renderTimeNs, nowNs)
+    }
+
+    private fun releaseOutputBufferAtLocked(
+        activeCodec: MediaCodec,
+        outputIndex: Int,
+        ptsUs: Long,
+        renderTimeNs: Long,
+        nowNs: Long,
+    ): Boolean {
         val scheduleDelayMs = (renderTimeNs - nowNs).coerceAtLeast(0L) / 1_000_000.0
         renderScheduleDelaySamples.record(elapsedRealtimeUs(), scheduleDelayMs)
         averageRenderScheduleDelayMs =
@@ -1346,6 +1962,16 @@ private class StageOneVideoDecoder {
                 "Timed Surface release unsupported; using immediate render fallback."
             true
         }
+    }
+
+    private fun recordAvSyncOffsetLocked(offsetUs: Long) {
+        avSyncOffsetMs = offsetUs.toDouble() / 1_000.0
+        avSyncSamples.addLast(kotlin.math.abs(avSyncOffsetMs))
+        while (avSyncSamples.size > MAX_LATENCY_SAMPLES) {
+            avSyncSamples.removeFirst()
+        }
+        avSyncAverageMs = if (avSyncSamples.isEmpty()) 0.0 else avSyncSamples.average()
+        avSyncP95Ms = percentile95(avSyncSamples.toList())
     }
 
     private fun recordDecoderOutputLocked(ptsUs: Long) {
@@ -1849,6 +2475,9 @@ private enum class VideoPacketType {
     CODEC_CONFIG,
     ACCESS_UNIT,
     END_OF_STREAM,
+    AUDIO_CONFIG,
+    AUDIO_ACCESS_UNIT,
+    AUDIO_END_OF_STREAM,
 }
 
 private enum class ControlRequestType {
@@ -1899,6 +2528,9 @@ private data class VideoPacket(
                 1 -> VideoPacketType.CODEC_CONFIG
                 2 -> VideoPacketType.ACCESS_UNIT
                 3 -> VideoPacketType.END_OF_STREAM
+                4 -> VideoPacketType.AUDIO_CONFIG
+                5 -> VideoPacketType.AUDIO_ACCESS_UNIT
+                6 -> VideoPacketType.AUDIO_END_OF_STREAM
                 else -> throw IllegalArgumentException("unsupported video packet type")
             }
             val flags = header.short.toInt() and 0xFFFF
@@ -1929,6 +2561,19 @@ private data class VideoPacket(
                 }
                 VideoPacketType.END_OF_STREAM -> require(payloadLength == 0) {
                     "end-of-stream packet must not include a payload"
+                }
+                VideoPacketType.AUDIO_CONFIG -> require(
+                    payloadLength <= MAX_AUDIO_CONFIG_PAYLOAD,
+                ) {
+                    "audio config payload is larger than the configured limit"
+                }
+                VideoPacketType.AUDIO_ACCESS_UNIT -> require(
+                    payloadLength <= MAX_AUDIO_ACCESS_UNIT_PAYLOAD,
+                ) {
+                    "audio access unit payload is larger than the configured limit"
+                }
+                VideoPacketType.AUDIO_END_OF_STREAM -> require(payloadLength == 0) {
+                    "audio end-of-stream packet must not include a payload"
                 }
             }
             val payload = body.copyOfRange(headerLength, body.size)

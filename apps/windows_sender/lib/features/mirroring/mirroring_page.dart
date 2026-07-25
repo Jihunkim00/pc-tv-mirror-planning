@@ -54,6 +54,7 @@ class _MirroringPageState extends State<MirroringPage> {
                   onRefresh: _controller.loadDisplays,
                   onStart: _start,
                   onStop: _controller.stop,
+                  onSystemAudioChanged: _controller.setSystemAudioEnabled,
                 );
 
                 return Padding(
@@ -99,10 +100,7 @@ class _MirroringPageState extends State<MirroringPage> {
       return;
     }
     final port = int.tryParse(_portController.text.trim()) ?? 50720;
-    await _controller.start(
-      receiverHost: host,
-      receiverPort: port,
-    );
+    await _controller.start(receiverHost: host, receiverPort: port);
     if (_controller.state != MirrorSessionState.failed) {
       await _saveLastReceiverHost(host);
     }
@@ -280,6 +278,7 @@ class _SessionPanel extends StatelessWidget {
     required this.onRefresh,
     required this.onStart,
     required this.onStop,
+    required this.onSystemAudioChanged,
   });
 
   final MirrorController controller;
@@ -288,6 +287,7 @@ class _SessionPanel extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onStart;
   final VoidCallback onStop;
+  final ValueChanged<bool> onSystemAudioChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -305,7 +305,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 2 session',
+                  'Stage 3 session',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
@@ -336,6 +336,17 @@ class _SessionPanel extends StatelessWidget {
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
               labelText: 'Control port',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: controller.systemAudioEnabled,
+              onChanged: controller.isRunning ? null : onSystemAudioChanged,
+              title: const Text('System audio'),
+              secondary: const Icon(Icons.volume_up),
             ),
           ),
           const SizedBox(height: 16),
@@ -396,18 +407,16 @@ class _SenderCounters extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _MetricRow(
-              label: 'Performance',
-              value: snapshot.bottleneckSummary,
-            ),
+            _MetricRow(label: 'Performance', value: snapshot.bottleneckSummary),
             const Divider(height: 18),
             _MetricSection(
               title: 'Capture',
               rows: [
                 _MetricRow(
                   label: 'Target / actual',
-                  value: '${snapshot.targetFps.toStringAsFixed(1)} / '
-                      '${snapshot.capturedFps.toStringAsFixed(1)} fps',
+                  value:
+                      '${snapshot.targetFps.toStringAsFixed(1)} / '
+                      '${snapshot.admittedFrameFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
                   label: 'Callback',
@@ -420,8 +429,9 @@ class _SenderCounters extends StatelessWidget {
                       '${snapshot.captureFrameIntervalP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Dropped',
-                  value: '${snapshot.captureDroppedFrames}',
+                  label: 'Replaced / cadence',
+                  value:
+                      '${snapshot.captureReplacedFrames} / ${snapshot.cadenceSkippedFrames}',
                 ),
                 _MetricRow(
                   label: 'Queue depth',
@@ -433,6 +443,12 @@ class _SenderCounters extends StatelessWidget {
             _MetricSection(
               title: 'Convert / Encode',
               rows: [
+                _MetricRow(
+                  label: 'Admission / accepted',
+                  value:
+                      '${snapshot.admittedFrameFps.toStringAsFixed(1)} / '
+                      '${snapshot.encoderAcceptedFps.toStringAsFixed(1)} fps',
+                ),
                 _MetricRow(
                   label: 'Converted',
                   value: '${snapshot.convertedFps.toStringAsFixed(1)} fps',
@@ -464,7 +480,21 @@ class _SenderCounters extends StatelessWidget {
                 ),
                 _MetricRow(
                   label: 'Backpressure',
-                  value: '${snapshot.encoderBackpressureCount}',
+                  value:
+                      'not accepting ${snapshot.encoderNotAcceptingCount}, '
+                      'drops ${snapshot.encoderBackpressureDroppedFrames}',
+                ),
+                _MetricRow(
+                  label: 'Process in/out p95',
+                  value:
+                      '${snapshot.processInputDurationP95Ms.toStringAsFixed(1)}/'
+                      '${snapshot.processOutputDurationP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Readback / reuse',
+                  value:
+                      '${snapshot.gpuReadbackPerFrame ? 'readback' : 'zero-copy'}, '
+                      '${snapshot.textureReuseEnabled ? 'reuse' : 'allocate'}',
                 ),
                 _MetricRow(
                   label: 'Queue depth',
@@ -478,7 +508,7 @@ class _SenderCounters extends StatelessWidget {
               rows: [
                 _MetricRow(
                   label: 'Sent',
-                  value: '${snapshot.sentAccessUnitFps.toStringAsFixed(1)} fps',
+                  value: '${snapshot.sentVideoFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
                   label: 'Send duration',
@@ -502,15 +532,76 @@ class _SenderCounters extends StatelessWidget {
               ],
             ),
             const Divider(height: 18),
+            _MetricSection(
+              title: 'Audio',
+              rows: [
+                _MetricRow(
+                  label: 'State',
+                  value: snapshot.audioEnabled
+                      ? snapshot.audioCaptureState
+                      : 'disabled',
+                ),
+                _MetricRow(
+                  label: 'Device',
+                  value: snapshot.audioDeviceName.isEmpty
+                      ? 'unknown'
+                      : snapshot.audioDeviceName,
+                ),
+                _MetricRow(
+                  label: 'Input / encoded',
+                  value:
+                      '${snapshot.audioInputSampleRate} Hz ${snapshot.audioInputChannels} ch / '
+                      '${snapshot.audioEncodedSampleRate} Hz ${snapshot.audioEncodedChannels} ch',
+                ),
+                _MetricRow(
+                  label: 'Capture / sent',
+                  value:
+                      '${snapshot.audioCaptureFps.toStringAsFixed(1)} fps / '
+                      '${snapshot.sentAudioPackets}',
+                ),
+                _MetricRow(
+                  label: 'Encode avg',
+                  value:
+                      '${snapshot.audioEncodeAverageMs.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Queue / dropped',
+                  value:
+                      '${snapshot.audioQueueDepth} / ${snapshot.audioDroppedPackets}',
+                ),
+                _MetricRow(
+                  label: 'Writer wait V/A',
+                  value:
+                      '${snapshot.packetWriterVideoWaitMs.toStringAsFixed(1)}/'
+                      '${snapshot.packetWriterAudioWaitMs.toStringAsFixed(1)} ms',
+                ),
+                if (snapshot.audioLastError.isNotEmpty)
+                  _MetricRow(
+                    label: 'Audio error',
+                    value: snapshot.audioLastError,
+                  ),
+              ],
+            ),
+            const Divider(height: 18),
             _MetricRow(
-                label: 'Captured total', value: '${snapshot.capturedFrames}'),
+              label: 'Captured total',
+              value: '${snapshot.capturedFrames}',
+            ),
             _MetricRow(
               label: 'Last sequence',
               value: '${snapshot.lastProcessedFrameSequence}',
             ),
             _MetricRow(
-              label: 'Encoder input dropped',
-              value: '${snapshot.encoderInputDroppedFrames}',
+              label: 'Intentional skip',
+              value:
+                  '${snapshot.cadenceSkippedFrames} (${snapshot.cadenceDroppedFps.toStringAsFixed(1)} fps)',
+            ),
+            _MetricRow(
+              label: 'Real drops',
+              value:
+                  'conv ${snapshot.conversionBackpressureDroppedFrames}, '
+                  'enc ${snapshot.encoderBackpressureDroppedFrames}, '
+                  'net ${snapshot.transportBackpressureDroppedFrames}',
             ),
             _MetricRow(
               label: 'Config sent',
@@ -518,8 +609,8 @@ class _SenderCounters extends StatelessWidget {
             ),
             _MetricRow(label: 'Key frames', value: '${snapshot.keyFramesSent}'),
             _MetricRow(
-              label: 'Transport dropped',
-              value: '${snapshot.transportDroppedFrames}',
+              label: 'Total dropped',
+              value: '${snapshot.totalDroppedFrames}',
             ),
             _MetricRow(label: 'Packets', value: '${snapshot.packetsSent}'),
             _MetricRow(label: 'Bytes', value: '${snapshot.bytesSent}'),
@@ -529,13 +620,15 @@ class _SenderCounters extends StatelessWidget {
             ),
             _MetricRow(
               label: 'Queue depth',
-              value: '${snapshot.queueDepthCapture}/'
+              value:
+                  '${snapshot.queueDepthCapture}/'
                   '${snapshot.queueDepthEncoder}/'
                   '${snapshot.queueDepthTransport}',
             ),
             _MetricRow(
               label: 'Capture -> encode',
-              value: '${snapshot.lastCaptureToEncodeMs.toStringAsFixed(1)} ms '
+              value:
+                  '${snapshot.lastCaptureToEncodeMs.toStringAsFixed(1)} ms '
                   '(avg ${snapshot.averageCaptureToEncodeMs.toStringAsFixed(1)}, '
                   'max ${snapshot.maxCaptureToEncodeMs.toStringAsFixed(1)})',
             ),

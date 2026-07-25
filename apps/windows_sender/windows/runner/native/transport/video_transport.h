@@ -46,6 +46,16 @@ std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint64_t sequence,
                                                 bool key_frame,
                                                 const std::uint8_t* data,
                                                 std::uint32_t size);
+std::vector<std::uint8_t> BuildAacCodecConfigPacket(
+    std::uint64_t sequence,
+    std::uint64_t stream_start_pts_us,
+    const std::vector<std::uint8_t>& codec_specific_data);
+std::vector<std::uint8_t> BuildAudioAccessUnitPacket(std::uint64_t sequence,
+                                                     std::uint64_t pts_us,
+                                                     const std::uint8_t* data,
+                                                     std::uint32_t size);
+std::vector<std::uint8_t> BuildAudioEndOfStreamPacket(std::uint64_t sequence,
+                                                      std::uint64_t pts_us);
 
 }  // namespace pctv
 

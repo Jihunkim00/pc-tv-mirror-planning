@@ -10,6 +10,8 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "mirror_native_bridge.cpp"
+  "native/audio/aac_encoder.cpp"
+  "native/audio/system_audio_loopback.cpp"
   "native/capture/display_capture.cpp"
   "native/display/display_enumerator.cpp"
   "native/session/mirror_session.cpp"
@@ -47,6 +49,9 @@ target_link_libraries(${BINARY_NAME} PRIVATE "mf.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "mfplat.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "mfuuid.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "wmcodecdspuuid.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "ole32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "propsys.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "ksuser.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

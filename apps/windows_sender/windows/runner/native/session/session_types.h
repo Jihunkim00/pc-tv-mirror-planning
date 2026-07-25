@@ -18,10 +18,17 @@ struct NativeSnapshot {
   double target_fps = 30.0;
   double capture_callback_fps = 0.0;
   double captured_fps = 0.0;
+  double target_admission_fps = 0.0;
+  double admitted_frame_fps = 0.0;
   double converted_fps = 0.0;
+  double encoder_accepted_fps = 0.0;
   double encoder_input_fps = 0.0;
   double encoded_fps = 0.0;
+  double sent_video_fps = 0.0;
   double sent_access_unit_fps = 0.0;
+  double cadence_dropped_fps = 0.0;
+  double encoder_busy_dropped_fps = 0.0;
+  double conversion_busy_dropped_fps = 0.0;
   double capture_frame_interval_average_ms = 0.0;
   double capture_frame_interval_p95_ms = 0.0;
   double encode_frame_interval_average_ms = 0.0;
@@ -32,6 +39,13 @@ struct NativeSnapshot {
   double encode_duration_p95_ms = 0.0;
   double encode_to_send_average_ms = 0.0;
   std::uint64_t captured_frames = 0;
+  std::uint64_t capture_replaced_frames = 0;
+  std::uint64_t cadence_skipped_frames = 0;
+  std::uint64_t conversion_backpressure_dropped_frames = 0;
+  std::uint64_t encoder_backpressure_dropped_frames = 0;
+  std::uint64_t transport_backpressure_dropped_frames = 0;
+  std::uint64_t shutdown_dropped_frames = 0;
+  std::uint64_t total_dropped_frames = 0;
   std::uint64_t capture_dropped_frames = 0;
   std::uint64_t conversion_dropped_frames = 0;
   std::uint64_t encoder_input_dropped_frames = 0;
@@ -56,6 +70,7 @@ struct NativeSnapshot {
   double last_capture_to_encode_ms = 0.0;
   double average_capture_to_encode_ms = 0.0;
   double max_capture_to_encode_ms = 0.0;
+  double admitted_to_encoded_ratio = 0.0;
   std::string selected_encoder_name = "unknown";
   bool selected_encoder_hardware = false;
   bool selected_encoder_async = false;
@@ -64,11 +79,45 @@ struct NativeSnapshot {
   std::string encoder_output_format;
   double average_encode_duration_ms = 0.0;
   std::uint64_t encoder_backpressure_count = 0;
+  std::uint64_t encoder_not_accepting_count = 0;
+  std::uint64_t process_input_calls = 0;
+  std::uint64_t process_input_accepted = 0;
+  std::uint64_t process_input_not_accepting = 0;
+  std::uint64_t process_input_retries = 0;
+  std::uint64_t process_output_calls = 0;
+  std::uint64_t process_output_frames = 0;
+  double process_input_duration_average_ms = 0.0;
+  double process_input_duration_p95_ms = 0.0;
+  double process_output_duration_average_ms = 0.0;
+  double process_output_duration_p95_ms = 0.0;
+  std::string bgra_to_nv12_mode = "cpuBgraToNv12";
+  bool gpu_readback_per_frame = true;
+  bool texture_reuse_enabled = true;
   std::string low_latency_options_applied;
   std::string unsupported_encoder_options;
   std::string bottleneck_summary = "unknown";
   std::string last_encode_error;
   std::string last_send_error;
+  bool audio_enabled = false;
+  std::string audio_capture_state = "disabled";
+  std::string audio_device_name;
+  int audio_input_sample_rate = 0;
+  int audio_input_channels = 0;
+  int audio_encoded_sample_rate = 48000;
+  int audio_encoded_channels = 2;
+  std::uint64_t captured_audio_packets = 0;
+  std::uint64_t encoded_audio_packets = 0;
+  std::uint64_t sent_audio_packets = 0;
+  double audio_capture_fps = 0.0;
+  double audio_encode_average_ms = 0.0;
+  int audio_queue_depth = 0;
+  std::uint64_t audio_dropped_packets = 0;
+  std::string audio_last_error;
+  double video_fps_audio_disabled = 0.0;
+  double video_fps_audio_enabled = 0.0;
+  double audio_cpu_time_ms = 0.0;
+  double packet_writer_video_wait_ms = 0.0;
+  double packet_writer_audio_wait_ms = 0.0;
 };
 
 struct StartSessionOptions {
@@ -76,6 +125,7 @@ struct StartSessionOptions {
   int receiver_port = 50720;
   std::string request_json;
   std::string source_id;
+  bool audio_enabled = true;
 };
 
 }  // namespace pctv
