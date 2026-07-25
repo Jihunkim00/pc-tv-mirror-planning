@@ -19,9 +19,6 @@
 namespace pctv {
 namespace {
 
-constexpr int kOutputWidth = 1280;
-constexpr int kOutputHeight = 720;
-
 std::string HResultText(const char* operation, HRESULT hr) {
   std::ostringstream stream;
   stream << operation << " failed with HRESULT 0x" << std::hex << hr;
@@ -73,8 +70,17 @@ DisplayCapture::~DisplayCapture() {
   }
 }
 
-bool DisplayCapture::Start(const std::string& source_id, std::string* error) {
+bool DisplayCapture::Start(const std::string& source_id,
+                           int target_width,
+                           int target_height,
+                           std::string* error) {
   Stop();
+  if (target_width < 16 || target_height < 16) {
+    *error = "Invalid capture output size";
+    return false;
+  }
+  target_width_ = target_width;
+  target_height_ = target_height;
 
   try {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -281,46 +287,46 @@ void DisplayCapture::ConvertMappedBgraToNv12(
     UINT source_width,
     UINT source_height,
     Nv12Frame* frame) {
-  frame->width = kOutputWidth;
-  frame->height = kOutputHeight;
-  frame->data.resize(kOutputWidth * kOutputHeight * 3 / 2);
+  frame->width = target_width_;
+  frame->height = target_height_;
+  frame->data.resize(target_width_ * target_height_ * 3 / 2);
 
   auto* y_plane = frame->data.data();
-  auto* uv_plane = y_plane + kOutputWidth * kOutputHeight;
+  auto* uv_plane = y_plane + target_width_ * target_height_;
   const auto* source = static_cast<const std::uint8_t*>(mapped.pData);
 
-  for (int y = 0; y < kOutputHeight; ++y) {
+  for (int y = 0; y < target_height_; ++y) {
     const UINT source_y =
         static_cast<UINT>((static_cast<std::uint64_t>(y) * source_height) /
-                          kOutputHeight);
+                          target_height_);
     const auto* source_row = source + source_y * mapped.RowPitch;
-    for (int x = 0; x < kOutputWidth; ++x) {
+    for (int x = 0; x < target_width_; ++x) {
       const UINT source_x =
           static_cast<UINT>((static_cast<std::uint64_t>(x) * source_width) /
-                            kOutputWidth);
-      y_plane[y * kOutputWidth + x] = BgraToY(source_row + source_x * 4);
+                            target_width_);
+      y_plane[y * target_width_ + x] = BgraToY(source_row + source_x * 4);
     }
   }
 
-  for (int y = 0; y < kOutputHeight; y += 2) {
-    for (int x = 0; x < kOutputWidth; x += 2) {
+  for (int y = 0; y < target_height_; y += 2) {
+    for (int x = 0; x < target_width_; x += 2) {
       int u_sum = 0;
       int v_sum = 0;
       for (int oy = 0; oy < 2; ++oy) {
         const UINT source_y = static_cast<UINT>(
             (static_cast<std::uint64_t>(y + oy) * source_height) /
-            kOutputHeight);
+            target_height_);
         const auto* source_row = source + source_y * mapped.RowPitch;
         for (int ox = 0; ox < 2; ++ox) {
           const UINT source_x = static_cast<UINT>(
               (static_cast<std::uint64_t>(x + ox) * source_width) /
-              kOutputWidth);
+              target_width_);
           const auto* bgra = source_row + source_x * 4;
           u_sum += BgraToU(bgra);
           v_sum += BgraToV(bgra);
         }
       }
-      const int uv_index = (y / 2) * kOutputWidth + x;
+      const int uv_index = (y / 2) * target_width_ + x;
       uv_plane[uv_index] = static_cast<std::uint8_t>(u_sum / 4);
       uv_plane[uv_index + 1] = static_cast<std::uint8_t>(v_sum / 4);
     }

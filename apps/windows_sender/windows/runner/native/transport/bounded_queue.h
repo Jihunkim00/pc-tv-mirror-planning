@@ -101,6 +101,11 @@ class BoundedQueue {
     items_.clear();
   }
 
+  void Clear() {
+    std::scoped_lock lock(mutex_);
+    items_.clear();
+  }
+
   std::size_t Size() const {
     std::scoped_lock lock(mutex_);
     return items_.size();

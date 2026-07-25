@@ -17,11 +17,6 @@
 namespace pctv {
 namespace {
 
-constexpr UINT32 kWidth = 1280;
-constexpr UINT32 kHeight = 720;
-constexpr UINT32 kFps = 30;
-constexpr UINT32 kBitrate = 4'000'000;
-constexpr LONGLONG kFrameDuration100Ns = 10'000'000 / kFps;
 constexpr std::uint64_t kRollingWindowUs = 2'000'000;
 
 std::uint64_t NowUs() {
@@ -79,6 +74,13 @@ bool Failed(HRESULT hr, const char* operation, std::string* error) {
   }
   *error = HResultText(operation, hr);
   return true;
+}
+
+std::string VideoFormatText(const char* prefix, const VideoStreamConfig& config) {
+  std::ostringstream stream;
+  stream << prefix << " " << config.width << "x" << config.height << "@"
+         << config.fps;
+  return stream.str();
 }
 
 bool StartsWithStartCode(const std::vector<std::uint8_t>& bytes) {
@@ -409,11 +411,19 @@ H264Encoder::~H264Encoder() {
   Stop();
 }
 
-bool H264Encoder::Start(std::string* error) {
+bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
   Stop();
+  if (config.width < 16 || config.height < 16 || config.fps <= 0 ||
+      config.bitrate_kbps <= 0) {
+    *error = "Invalid H.264 encoder video profile";
+    return false;
+  }
+  config_ = config;
   {
     std::scoped_lock lock(diagnostics_mutex_);
     diagnostics_ = H264EncoderDiagnostics{};
+    diagnostics_.encoder_input_format = VideoFormatText("NV12", config_);
+    diagnostics_.encoder_output_format = VideoFormatText("H.264", config_);
     process_input_samples_.clear();
     process_output_samples_.clear();
   }
@@ -430,7 +440,7 @@ bool H264Encoder::Start(std::string* error) {
   if (CreateHardwareEncoder(&hardware_error)) {
     ApplyLowLatencyOptions(transform_.get(), &diagnostics_);
     if (!ConfigureTypes(error)) {
-      Log("Hardware H.264 encoder rejected 720p30 NV12 input; falling back: " +
+      Log("Hardware H.264 encoder rejected NV12 input; falling back: " +
           *error);
       transform_ = nullptr;
       {
@@ -461,7 +471,7 @@ bool H264Encoder::Start(std::string* error) {
   sequence_header_.clear();
   parameter_sets_ = {};
   first_pts_us_ = 0;
-  force_next_key_frame_ = true;
+  force_next_key_frame_.store(true);
   return true;
 }
 
@@ -511,9 +521,9 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   const LONGLONG sample_time =
       static_cast<LONGLONG>((frame.pts_us - first_pts_us_) * 10);
   sample->SetSampleTime(sample_time);
-  sample->SetSampleDuration(kFrameDuration100Ns);
+  sample->SetSampleDuration(10'000'000 / config_.fps);
 
-  if (force_next_key_frame_ && !ForceNextKeyFrame(error)) {
+  if (force_next_key_frame_.load() && !ForceNextKeyFrame(error)) {
     return false;
   }
 
@@ -576,6 +586,10 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   return ReadAvailableOutput(output, error);
 }
 
+void H264Encoder::RequestKeyFrame() {
+  force_next_key_frame_.store(true);
+}
+
 void H264Encoder::Stop() {
   if (transform_) {
     transform_->ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
@@ -585,7 +599,7 @@ void H264Encoder::Stop() {
   sequence_header_.clear();
   parameter_sets_ = {};
   first_pts_us_ = 0;
-  force_next_key_frame_ = false;
+  force_next_key_frame_.store(false);
   encoder_backpressure_count_ = 0;
   encoder_backpressure_dropped_frames_ = 0;
   {
@@ -681,11 +695,12 @@ bool H264Encoder::ConfigureTypes(std::string* error) {
   }
   output_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-  output_type->SetUINT32(MF_MT_AVG_BITRATE, kBitrate);
+  output_type->SetUINT32(MF_MT_AVG_BITRATE, config_.bitrate_kbps * 1000);
   output_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
   output_type->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
-  MFSetAttributeSize(output_type.get(), MF_MT_FRAME_SIZE, kWidth, kHeight);
-  MFSetAttributeRatio(output_type.get(), MF_MT_FRAME_RATE, kFps, 1);
+  MFSetAttributeSize(output_type.get(), MF_MT_FRAME_SIZE, config_.width,
+                     config_.height);
+  MFSetAttributeRatio(output_type.get(), MF_MT_FRAME_RATE, config_.fps, 1);
   MFSetAttributeRatio(output_type.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
   hr = transform_->SetOutputType(0, output_type.get(), 0);
   if (Failed(hr, "SetOutputType(H264)", error)) {
@@ -700,8 +715,9 @@ bool H264Encoder::ConfigureTypes(std::string* error) {
   input_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   input_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
   input_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-  MFSetAttributeSize(input_type.get(), MF_MT_FRAME_SIZE, kWidth, kHeight);
-  MFSetAttributeRatio(input_type.get(), MF_MT_FRAME_RATE, kFps, 1);
+  MFSetAttributeSize(input_type.get(), MF_MT_FRAME_SIZE, config_.width,
+                     config_.height);
+  MFSetAttributeRatio(input_type.get(), MF_MT_FRAME_RATE, config_.fps, 1);
   MFSetAttributeRatio(input_type.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
   hr = transform_->SetInputType(0, input_type.get(), 0);
   if (Failed(hr, "SetInputType(NV12)", error)) {
@@ -735,7 +751,7 @@ bool H264Encoder::ForceNextKeyFrame(std::string* error) {
     return false;
   }
 
-  force_next_key_frame_ = false;
+  force_next_key_frame_.store(false);
   Log("H.264 encoder requested IDR for the next output frame");
   return true;
 }
@@ -804,7 +820,9 @@ bool H264Encoder::ReadAvailableOutput(
         return false;
       }
       const DWORD buffer_size =
-          stream_info.cbSize == 0 ? kWidth * kHeight : stream_info.cbSize;
+          stream_info.cbSize == 0
+              ? static_cast<DWORD>(config_.width * config_.height)
+              : stream_info.cbSize;
       hr = MFCreateMemoryBuffer(buffer_size, buffer.put());
       if (Failed(hr, "MFCreateMemoryBuffer(output)", error)) {
         return false;

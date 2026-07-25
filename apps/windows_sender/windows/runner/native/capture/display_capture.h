@@ -24,7 +24,10 @@ class DisplayCapture {
   DisplayCapture(const DisplayCapture&) = delete;
   DisplayCapture& operator=(const DisplayCapture&) = delete;
 
-  bool Start(const std::string& source_id, std::string* error);
+  bool Start(const std::string& source_id,
+             int target_width,
+             int target_height,
+             std::string* error);
   bool CaptureNext(Nv12Frame* frame, int timeout_ms, std::string* error);
   void Stop();
 
@@ -41,6 +44,8 @@ class DisplayCapture {
   winrt::com_ptr<ID3D11Texture2D> staging_texture_;
   UINT staging_width_ = 0;
   UINT staging_height_ = 0;
+  int target_width_ = 1280;
+  int target_height_ = 720;
 
   winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice
       interop_device_{nullptr};

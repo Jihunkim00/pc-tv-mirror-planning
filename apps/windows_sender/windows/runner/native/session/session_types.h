@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "native/video/video_types.h"
+
 namespace pctv {
 
 struct NativeSnapshot {
@@ -118,6 +120,15 @@ struct NativeSnapshot {
   double audio_cpu_time_ms = 0.0;
   double packet_writer_video_wait_ms = 0.0;
   double packet_writer_audio_wait_ms = 0.0;
+  std::string playback_state = "idle";
+  std::uint64_t pause_requests_received = 0;
+  std::uint64_t resume_requests_received = 0;
+  std::uint64_t playback_command_acks_sent = 0;
+  std::uint64_t playback_command_errors_sent = 0;
+  std::uint64_t resume_codec_config_resends = 0;
+  std::string local_speaker_mute_mode = "pcAndTv";
+  std::string local_speaker_mute_state = "disabled";
+  std::string local_speaker_mute_last_error;
 };
 
 struct StartSessionOptions {
@@ -126,6 +137,8 @@ struct StartSessionOptions {
   std::string request_json;
   std::string source_id;
   bool audio_enabled = true;
+  bool tv_only_audio_requested = false;
+  VideoStreamConfig video;
 };
 
 }  // namespace pctv

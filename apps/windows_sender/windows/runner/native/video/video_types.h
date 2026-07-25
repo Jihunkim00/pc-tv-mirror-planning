@@ -6,6 +6,13 @@
 
 namespace pctv {
 
+struct VideoStreamConfig {
+  int width = 1280;
+  int height = 720;
+  int fps = 30;
+  int bitrate_kbps = 6000;
+};
+
 struct Nv12Frame {
   int width = 1280;
   int height = 720;

@@ -63,11 +63,13 @@ final class StartMirrorSessionRequest {
     required this.receiverHost,
     required this.receiverPort,
     required this.streamRequest,
+    this.tvOnlyAudioRequested = false,
   });
 
   final String receiverHost;
   final int receiverPort;
   final StreamStartRequest streamRequest;
+  final bool tvOnlyAudioRequested;
 
   Map<String, Object?> toNativeArguments() {
     return {
@@ -76,6 +78,11 @@ final class StartMirrorSessionRequest {
       'sourceId': streamRequest.sourceId,
       'requestJson': jsonEncode(streamRequest.toJson()),
       'audioEnabled': streamRequest.audio?.enabled ?? false,
+      'videoWidth': streamRequest.video.width,
+      'videoHeight': streamRequest.video.height,
+      'videoFps': streamRequest.video.fps,
+      'videoBitrateKbps': streamRequest.video.bitrateKbps,
+      'tvOnlyAudioRequested': tvOnlyAudioRequested,
     };
   }
 }
@@ -191,6 +198,15 @@ final class NativeSessionSnapshot {
     this.audioCpuTimeMs = 0,
     this.packetWriterVideoWaitMs = 0,
     this.packetWriterAudioWaitMs = 0,
+    this.playbackState = 'idle',
+    this.pauseRequestsReceived = 0,
+    this.resumeRequestsReceived = 0,
+    this.playbackCommandAcksSent = 0,
+    this.playbackCommandErrorsSent = 0,
+    this.resumeCodecConfigResends = 0,
+    this.localSpeakerMuteMode = 'pcAndTv',
+    this.localSpeakerMuteState = 'disabled',
+    this.localSpeakerMuteLastError = '',
     this.errorCode,
     this.developerMessage,
   });
@@ -304,6 +320,15 @@ final class NativeSessionSnapshot {
   final double audioCpuTimeMs;
   final double packetWriterVideoWaitMs;
   final double packetWriterAudioWaitMs;
+  final String playbackState;
+  final int pauseRequestsReceived;
+  final int resumeRequestsReceived;
+  final int playbackCommandAcksSent;
+  final int playbackCommandErrorsSent;
+  final int resumeCodecConfigResends;
+  final String localSpeakerMuteMode;
+  final String localSpeakerMuteState;
+  final String localSpeakerMuteLastError;
   final MirrorErrorCode? errorCode;
   final String? developerMessage;
 
@@ -543,6 +568,40 @@ final class NativeSessionSnapshot {
       packetWriterAudioWaitMs: _readOptionalDouble(
         json,
         'packetWriterAudioWaitMs',
+      ),
+      playbackState: _readOptionalString(
+        json,
+        'playbackState',
+        defaultValue: 'idle',
+      ),
+      pauseRequestsReceived: _readOptionalInt(json, 'pauseRequestsReceived'),
+      resumeRequestsReceived: _readOptionalInt(json, 'resumeRequestsReceived'),
+      playbackCommandAcksSent: _readOptionalInt(
+        json,
+        'playbackCommandAcksSent',
+      ),
+      playbackCommandErrorsSent: _readOptionalInt(
+        json,
+        'playbackCommandErrorsSent',
+      ),
+      resumeCodecConfigResends: _readOptionalInt(
+        json,
+        'resumeCodecConfigResends',
+      ),
+      localSpeakerMuteMode: _readOptionalString(
+        json,
+        'localSpeakerMuteMode',
+        defaultValue: 'pcAndTv',
+      ),
+      localSpeakerMuteState: _readOptionalString(
+        json,
+        'localSpeakerMuteState',
+        defaultValue: 'disabled',
+      ),
+      localSpeakerMuteLastError: _readOptionalString(
+        json,
+        'localSpeakerMuteLastError',
+        defaultValue: '',
       ),
       errorCode: errorCode == null
           ? null

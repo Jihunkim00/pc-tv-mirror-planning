@@ -55,6 +55,8 @@ class _MirroringPageState extends State<MirroringPage> {
                   onStart: _start,
                   onStop: _controller.stop,
                   onSystemAudioChanged: _controller.setSystemAudioEnabled,
+                  onTvOnlyAudioChanged: _controller.setTvOnlyAudioRequested,
+                  onVideoProfileChanged: _controller.setVideoProfile,
                 );
 
                 return Padding(
@@ -279,6 +281,8 @@ class _SessionPanel extends StatelessWidget {
     required this.onStart,
     required this.onStop,
     required this.onSystemAudioChanged,
+    required this.onTvOnlyAudioChanged,
+    required this.onVideoProfileChanged,
   });
 
   final MirrorController controller;
@@ -288,6 +292,8 @@ class _SessionPanel extends StatelessWidget {
   final VoidCallback onStart;
   final VoidCallback onStop;
   final ValueChanged<bool> onSystemAudioChanged;
+  final ValueChanged<bool> onTvOnlyAudioChanged;
+  final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -305,7 +311,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 3 session',
+                  'Stage 4 session',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
@@ -339,6 +345,34 @@ class _SessionPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          DropdownButtonFormField<SenderVideoProfile>(
+            initialValue: controller.videoProfile,
+            isExpanded: true,
+            items: SenderVideoProfile.values
+                .map(
+                  (profile) => DropdownMenuItem(
+                    value: profile,
+                    child: Text(
+                      profile.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: controller.isRunning
+                ? null
+                : (value) {
+                    if (value != null) {
+                      onVideoProfileChanged(value);
+                    }
+                  },
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Video profile',
+            ),
+          ),
+          const SizedBox(height: 8),
           Material(
             type: MaterialType.transparency,
             child: SwitchListTile(
@@ -347,6 +381,18 @@ class _SessionPanel extends StatelessWidget {
               onChanged: controller.isRunning ? null : onSystemAudioChanged,
               title: const Text('System audio'),
               secondary: const Icon(Icons.volume_up),
+            ),
+          ),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: controller.tvOnlyAudioRequested,
+              onChanged: controller.isRunning || !controller.systemAudioEnabled
+                  ? null
+                  : onTvOnlyAudioChanged,
+              title: const Text('TV-only audio'),
+              secondary: const Icon(Icons.speaker),
             ),
           ),
           const SizedBox(height: 16),
@@ -580,6 +626,37 @@ class _SenderCounters extends StatelessWidget {
                     label: 'Audio error',
                     value: snapshot.audioLastError,
                   ),
+                _MetricRow(
+                  label: 'Local speaker',
+                  value:
+                      '${snapshot.localSpeakerMuteMode} / ${snapshot.localSpeakerMuteState}',
+                ),
+                if (snapshot.localSpeakerMuteLastError.isNotEmpty)
+                  _MetricRow(
+                    label: 'Speaker route error',
+                    value: snapshot.localSpeakerMuteLastError,
+                  ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricSection(
+              title: 'Playback control',
+              rows: [
+                _MetricRow(label: 'State', value: snapshot.playbackState),
+                _MetricRow(
+                  label: 'Pause / resume',
+                  value:
+                      '${snapshot.pauseRequestsReceived} / ${snapshot.resumeRequestsReceived}',
+                ),
+                _MetricRow(
+                  label: 'ACK / error',
+                  value:
+                      '${snapshot.playbackCommandAcksSent} / ${snapshot.playbackCommandErrorsSent}',
+                ),
+                _MetricRow(
+                  label: 'Resume config resend',
+                  value: '${snapshot.resumeCodecConfigResends}',
+                ),
               ],
             ),
             const Divider(height: 18),

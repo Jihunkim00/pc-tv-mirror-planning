@@ -30,10 +30,6 @@ constexpr std::uint16_t kFlagExtendedHeader = 1 << 2;
 constexpr std::uint32_t kPacketHeaderLength = 28;
 constexpr std::uint32_t kConfigHeaderLength = 24;
 constexpr std::uint32_t kAudioConfigHeaderLength = 32;
-constexpr std::uint32_t kStageOneWidth = 1280;
-constexpr std::uint32_t kStageOneHeight = 720;
-constexpr std::uint32_t kStageOneFps = 30;
-constexpr std::uint32_t kStageOneBitrateKbps = 4000;
 constexpr std::uint32_t kAudioConfigMagic = 0x41414320;  // AAC
 constexpr std::uintptr_t kInvalidSocketValue = UINTPTR_MAX;
 
@@ -205,6 +201,11 @@ TransportResult VideoTransportClient::Connect(const std::string& host,
     return {false, "protocol mismatch: receiver did not return session.answer v1"};
   }
 
+  DWORD receive_timeout_ms = 200;
+  setsockopt(static_cast<SOCKET>(socket_), SOL_SOCKET, SO_RCVTIMEO,
+             reinterpret_cast<const char*>(&receive_timeout_ms),
+             sizeof(receive_timeout_ms));
+
   return {true, response};
 }
 
@@ -215,6 +216,47 @@ TransportResult VideoTransportClient::SendPacket(
   }
   return SendAll(reinterpret_cast<const char*>(packet.data()),
                  static_cast<int>(packet.size()));
+}
+
+TransportResult VideoTransportClient::SendControlLine(
+    const std::string& json_line) {
+  if (socket_ == kInvalidSocketValue) {
+    return {false, "video transport is not connected"};
+  }
+  const std::string payload = json_line + "\n";
+  return SendAll(payload.data(), static_cast<int>(payload.size()));
+}
+
+bool VideoTransportClient::ReceiveControlLine(std::string* json_line,
+                                              std::string* error) {
+  json_line->clear();
+  if (socket_ == kInvalidSocketValue) {
+    *error = "video transport is not connected";
+    return false;
+  }
+  std::array<char, 1> byte{};
+  while (json_line->size() < 64 * 1024) {
+    const int received = recv(static_cast<SOCKET>(socket_), byte.data(), 1, 0);
+    if (received == SOCKET_ERROR) {
+      const int code = WSAGetLastError();
+      if (code == WSAETIMEDOUT) {
+        error->clear();
+        return false;
+      }
+      *error = LastWsaError("recv");
+      return false;
+    }
+    if (received == 0) {
+      *error = "receiver closed the control stream";
+      return false;
+    }
+    if (byte[0] == '\n') {
+      return true;
+    }
+    json_line->push_back(byte[0]);
+  }
+  *error = "control line is larger than the configured limit";
+  return false;
 }
 
 void VideoTransportClient::Close() {
@@ -252,9 +294,11 @@ TransportResult VideoTransportClient::SendAll(const char* data, int length) {
 
 std::vector<std::uint8_t> BuildH264CodecConfigPacket(
     std::uint64_t sequence,
-    const H264ParameterSets& parameter_sets) {
+    const H264ParameterSets& parameter_sets,
+    const VideoStreamConfig& config) {
   if (!parameter_sets.complete() || parameter_sets.sps.size() > 0xFFFF ||
-      parameter_sets.pps.size() > 0xFFFF) {
+      parameter_sets.pps.size() > 0xFFFF || config.width <= 0 ||
+      config.height <= 0 || config.fps <= 0 || config.bitrate_kbps <= 0) {
     return {};
   }
 
@@ -271,11 +315,11 @@ std::vector<std::uint8_t> BuildH264CodecConfigPacket(
   bytes[payload + 4] = kProtocolVersion;
   bytes[payload + 5] = 0x03;
   WriteU16(bytes, payload + 6, 0);
-  WriteU16(bytes, payload + 8, static_cast<std::uint16_t>(kStageOneWidth));
-  WriteU16(bytes, payload + 10, static_cast<std::uint16_t>(kStageOneHeight));
-  WriteU16(bytes, payload + 12, static_cast<std::uint16_t>(kStageOneFps));
+  WriteU16(bytes, payload + 8, static_cast<std::uint16_t>(config.width));
+  WriteU16(bytes, payload + 10, static_cast<std::uint16_t>(config.height));
+  WriteU16(bytes, payload + 12, static_cast<std::uint16_t>(config.fps));
   WriteU16(bytes, payload + 14, 0);
-  WriteU32(bytes, payload + 16, kStageOneBitrateKbps);
+  WriteU32(bytes, payload + 16, static_cast<std::uint32_t>(config.bitrate_kbps));
   WriteU16(bytes, payload + 20,
            static_cast<std::uint16_t>(parameter_sets.sps.size()));
   WriteU16(bytes, payload + 22,

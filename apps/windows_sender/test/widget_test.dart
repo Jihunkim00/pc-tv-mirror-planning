@@ -1,13 +1,18 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 import 'package:windows_sender/app/windows_sender_app.dart';
 import 'package:windows_sender/core/native_bridge/mirror_native_api.dart';
 
 void main() {
-  testWidgets('loads displays and sends a STAGE 3 video/audio start request', (
+  testWidgets('loads displays and sends a STAGE 4 video/audio start request', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final nativeApi = _FakeMirrorNativeApi();
 
     await tester.pumpWidget(WindowsSenderApp(nativeApi: nativeApi));
@@ -17,7 +22,9 @@ void main() {
     expect(find.text('1280 x 720  DISPLAY1'), findsOneWidget);
 
     await tester.enterText(find.byType(EditableText).first, '192.168.1.40');
-    await tester.tap(find.text('Start'));
+    final startButton = find.widgetWithText(FilledButton, 'Start');
+    await tester.ensureVisible(startButton);
+    await tester.tap(startButton);
     await tester.pumpAndSettle();
 
     expect(nativeApi.lastStartRequest, isNotNull);
@@ -37,6 +44,7 @@ void main() {
       (json['video'] as Map<String, Object?>)['performanceProfile'],
       'lowLatency720p30',
     );
+    expect((json['video'] as Map<String, Object?>)['bitrateKbps'], 6000);
     expect(find.text('State: negotiating'), findsOneWidget);
   });
 
@@ -147,6 +155,15 @@ void main() {
       'audioCpuTimeMs': 0.7,
       'packetWriterVideoWaitMs': 0.5,
       'packetWriterAudioWaitMs': 0.4,
+      'playbackState': 'streaming',
+      'pauseRequestsReceived': 1,
+      'resumeRequestsReceived': 1,
+      'playbackCommandAcksSent': 2,
+      'playbackCommandErrorsSent': 0,
+      'resumeCodecConfigResends': 1,
+      'localSpeakerMuteMode': 'pcAndTv',
+      'localSpeakerMuteState': 'disabled',
+      'localSpeakerMuteLastError': '',
     });
 
     expect(snapshot.targetFps, 30);
@@ -184,6 +201,9 @@ void main() {
     expect(snapshot.audioCaptureState, 'capturing');
     expect(snapshot.sentAudioPackets, 3);
     expect(snapshot.packetWriterAudioWaitMs, 0.4);
+    expect(snapshot.playbackState, 'streaming');
+    expect(snapshot.resumeCodecConfigResends, 1);
+    expect(snapshot.localSpeakerMuteState, 'disabled');
     expect(snapshot.bottleneckSummary, 'healthy');
   });
 }

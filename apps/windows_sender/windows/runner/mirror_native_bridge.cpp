@@ -274,6 +274,25 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.packet_writer_video_wait_ms);
   map[EncodableValue("packetWriterAudioWaitMs")] =
       EncodableValue(snapshot.packet_writer_audio_wait_ms);
+  map[EncodableValue("playbackState")] =
+      EncodableValue(snapshot.playback_state);
+  map[EncodableValue("pauseRequestsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.pause_requests_received));
+  map[EncodableValue("resumeRequestsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.resume_requests_received));
+  map[EncodableValue("playbackCommandAcksSent")] =
+      EncodableValue(static_cast<int64_t>(snapshot.playback_command_acks_sent));
+  map[EncodableValue("playbackCommandErrorsSent")] =
+      EncodableValue(
+          static_cast<int64_t>(snapshot.playback_command_errors_sent));
+  map[EncodableValue("resumeCodecConfigResends")] =
+      EncodableValue(static_cast<int64_t>(snapshot.resume_codec_config_resends));
+  map[EncodableValue("localSpeakerMuteMode")] =
+      EncodableValue(snapshot.local_speaker_mute_mode);
+  map[EncodableValue("localSpeakerMuteState")] =
+      EncodableValue(snapshot.local_speaker_mute_state);
+  map[EncodableValue("localSpeakerMuteLastError")] =
+      EncodableValue(snapshot.local_speaker_mute_last_error);
   if (!snapshot.error_code.empty()) {
     map[EncodableValue("errorCode")] = EncodableValue(snapshot.error_code);
   }
@@ -326,6 +345,12 @@ class MirrorNativeBridge {
     options.request_json = ReadString(*args, "requestJson");
     options.source_id = ReadString(*args, "sourceId");
     options.audio_enabled = ReadBool(*args, "audioEnabled", true);
+    options.tv_only_audio_requested =
+        ReadBool(*args, "tvOnlyAudioRequested", false);
+    options.video.width = ReadInt(*args, "videoWidth", 1280);
+    options.video.height = ReadInt(*args, "videoHeight", 720);
+    options.video.fps = ReadInt(*args, "videoFps", 30);
+    options.video.bitrate_kbps = ReadInt(*args, "videoBitrateKbps", 6000);
     result->Success(ToEncodable(session_.Start(options)));
   }
 

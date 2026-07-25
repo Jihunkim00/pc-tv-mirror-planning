@@ -5,6 +5,31 @@ import 'package:mirror_protocol/mirror_protocol.dart';
 
 import '../../core/native_bridge/mirror_native_api.dart';
 
+enum SenderVideoProfile {
+  lowLatency720p30,
+  highQuality1080p30,
+  compatibility720p30;
+
+  String get label {
+    return switch (this) {
+      SenderVideoProfile.lowLatency720p30 => '720p30 HQ',
+      SenderVideoProfile.highQuality1080p30 => '1080p30 HQ',
+      SenderVideoProfile.compatibility720p30 => '720p30 Compat',
+    };
+  }
+
+  VideoProfile get videoProfile {
+    return switch (this) {
+      SenderVideoProfile.lowLatency720p30 =>
+        const VideoProfile.lowLatency720p30(),
+      SenderVideoProfile.highQuality1080p30 =>
+        const VideoProfile.highQuality1080p30(),
+      SenderVideoProfile.compatibility720p30 =>
+        const VideoProfile.compatibility720p30(),
+    };
+  }
+}
+
 class MirrorController extends ChangeNotifier {
   MirrorController(this._nativeApi);
 
@@ -18,6 +43,8 @@ class MirrorController extends ChangeNotifier {
   String? _activeSessionId;
   bool _busy = false;
   bool _systemAudioEnabled = true;
+  bool _tvOnlyAudioRequested = false;
+  SenderVideoProfile _videoProfile = SenderVideoProfile.lowLatency720p30;
   String? _userMessage;
   String? _developerMessage;
   Timer? _statusTimer;
@@ -30,6 +57,8 @@ class MirrorController extends ChangeNotifier {
   String? get selectedDisplayId => _selectedDisplayId;
   bool get busy => _busy;
   bool get systemAudioEnabled => _systemAudioEnabled;
+  bool get tvOnlyAudioRequested => _tvOnlyAudioRequested;
+  SenderVideoProfile get videoProfile => _videoProfile;
   String? get userMessage => _userMessage;
   String? get developerMessage => _developerMessage;
   bool get canStart => !_busy && _selectedDisplayId != null && !isRunning;
@@ -41,7 +70,9 @@ class MirrorController extends ChangeNotifier {
       _state == MirrorSessionState.negotiating ||
       _state == MirrorSessionState.waitingForSurface ||
       _state == MirrorSessionState.waitingForKeyFrame ||
-      _state == MirrorSessionState.streaming;
+      _state == MirrorSessionState.streaming ||
+      _state == MirrorSessionState.paused ||
+      _state == MirrorSessionState.resuming;
 
   Future<void> loadDisplays() async {
     _setBusy(true);
@@ -81,7 +112,36 @@ class MirrorController extends ChangeNotifier {
       return;
     }
     _systemAudioEnabled = enabled;
+    if (!enabled) {
+      _tvOnlyAudioRequested = false;
+    }
     _appendLog('System audio ${enabled ? 'enabled' : 'disabled'}.');
+    notifyListeners();
+  }
+
+  void setTvOnlyAudioRequested(bool enabled) {
+    if (_tvOnlyAudioRequested == enabled || isRunning) {
+      return;
+    }
+    _tvOnlyAudioRequested = enabled;
+    _appendLog(
+      enabled
+          ? 'TV-only audio requested; waiting for verified routing support.'
+          : 'TV-only audio request disabled.',
+    );
+    notifyListeners();
+  }
+
+  void setVideoProfile(SenderVideoProfile profile) {
+    if (_videoProfile == profile || isRunning) {
+      return;
+    }
+    _videoProfile = profile;
+    final video = profile.videoProfile;
+    _appendLog(
+      'Selected ${video.width}x${video.height}@${video.fps} '
+      '${video.bitrateKbps} kbps.',
+    );
     notifyListeners();
   }
 
@@ -104,8 +164,10 @@ class MirrorController extends ChangeNotifier {
     _state = MirrorSessionState.connecting;
     _userMessage = 'Preparing the native video path.';
     _appendLog(
-      'Starting lowLatency720p30 video session '
-      'with system audio ${_systemAudioEnabled ? 'enabled' : 'disabled'}.',
+      'Starting ${_videoProfile.videoProfile.performanceProfile.wireName} '
+      'video session '
+      'with system audio ${_systemAudioEnabled ? 'enabled' : 'disabled'} '
+      'and TV-only audio ${_tvOnlyAudioRequested ? 'requested' : 'off'}.',
     );
     notifyListeners();
 
@@ -114,7 +176,7 @@ class MirrorController extends ChangeNotifier {
       sessionId: sessionId,
       sourceType: SourceType.display,
       sourceId: sourceId,
-      video: const VideoProfile.lowLatency720p30(),
+      video: _videoProfile.videoProfile,
       audio: _systemAudioEnabled
           ? const AudioProfile.systemAacLc()
           : const AudioProfile.disabled(),
@@ -126,6 +188,7 @@ class MirrorController extends ChangeNotifier {
           receiverHost: receiverHost,
           receiverPort: receiverPort,
           streamRequest: request,
+          tvOnlyAudioRequested: _tvOnlyAudioRequested,
         ),
       );
       _activeSessionId = sessionId;
