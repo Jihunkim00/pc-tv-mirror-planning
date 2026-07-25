@@ -6,6 +6,8 @@ import 'package:mirror_protocol/mirror_protocol.dart';
 abstract interface class MirrorNativeApi {
   Future<List<DisplayInfo>> listDisplays();
 
+  Future<List<AudioDeviceInfo>> listAudioDevices();
+
   Future<NativeSessionSnapshot> startSession(StartMirrorSessionRequest request);
 
   Future<NativeSessionSnapshot> stopSession(String sessionId);
@@ -27,6 +29,14 @@ final class MethodChannelMirrorNativeApi implements MirrorNativeApi {
     final result = await _channel.invokeListMethod<Object?>('listDisplays');
     return (result ?? const <Object?>[])
         .map((item) => DisplayInfo.fromJson(_asJsonMap(item)))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<AudioDeviceInfo>> listAudioDevices() async {
+    final result = await _channel.invokeListMethod<Object?>('listAudioDevices');
+    return (result ?? const <Object?>[])
+        .map((item) => AudioDeviceInfo.fromJson(_asJsonMap(item)))
         .toList(growable: false);
   }
 
@@ -77,12 +87,16 @@ final class StartMirrorSessionRequest {
     required this.receiverPort,
     required this.streamRequest,
     this.pcLocalAudioMuteRequested = false,
+    this.tvAudioSourceDeviceId,
+    this.pcMonitorDeviceId,
   });
 
   final String receiverHost;
   final int receiverPort;
   final StreamStartRequest streamRequest;
   final bool pcLocalAudioMuteRequested;
+  final String? tvAudioSourceDeviceId;
+  final String? pcMonitorDeviceId;
 
   Map<String, Object?> toNativeArguments() {
     return {
@@ -98,7 +112,33 @@ final class StartMirrorSessionRequest {
       'videoPerformanceProfile':
           streamRequest.video.performanceProfile.wireName,
       'pcLocalAudioMuteRequested': pcLocalAudioMuteRequested,
+      if (tvAudioSourceDeviceId != null)
+        'tvAudioSourceDeviceId': tvAudioSourceDeviceId,
+      if (pcMonitorDeviceId != null) 'pcMonitorDeviceId': pcMonitorDeviceId,
     };
+  }
+}
+
+final class AudioDeviceInfo {
+  const AudioDeviceInfo({
+    required this.id,
+    required this.name,
+    required this.isDefault,
+    required this.isLikelyVirtual,
+  });
+
+  final String id;
+  final String name;
+  final bool isDefault;
+  final bool isLikelyVirtual;
+
+  factory AudioDeviceInfo.fromJson(Map<String, Object?> json) {
+    return AudioDeviceInfo(
+      id: _readString(json, 'id'),
+      name: _readString(json, 'name'),
+      isDefault: _readOptionalBool(json, 'isDefault'),
+      isLikelyVirtual: _readOptionalBool(json, 'isLikelyVirtual'),
+    );
   }
 }
 
@@ -241,6 +281,38 @@ final class NativeSessionSnapshot {
     this.audioTransportActive = false,
     this.audioRoutingMode = 'defaultRenderEndpointLoopback',
     this.audioMuteUnsupportedReason = '',
+    this.tvAudioSourceDeviceId = '',
+    this.tvAudioSourceDeviceName = '',
+    this.pcMonitorDeviceId = '',
+    this.pcMonitorDeviceName = '',
+    this.localMonitorActive = false,
+    this.localMonitorMuted = false,
+    this.localMonitorQueueDepth = 0,
+    this.localMonitorDroppedBuffers = 0,
+    this.audioCaptureFormat = '',
+    this.audioMonitorFormat = '',
+    this.audioRoutingUnsupportedReason = '',
+    this.requestedProfile = 'lowLatency720p30',
+    this.appliedProfile = 'lowLatency720p30',
+    this.profileFallbackReason = '',
+    this.outputWidth = 1280,
+    this.outputHeight = 720,
+    this.targetBitrateKbps = 6000,
+    this.encoderName = 'unknown',
+    this.hardwareEncoderActive = false,
+    this.encoderSupportsRequestedResolution = false,
+    this.receiverMaxWidth = 0,
+    this.receiverMaxHeight = 0,
+    this.receiverSupports4k30 = false,
+    this.captureFpsRecent = 0,
+    this.conversionFpsRecent = 0,
+    this.encoderInputFpsRecent = 0,
+    this.encoderOutputFpsRecent = 0,
+    this.transportVideoFpsRecent = 0,
+    this.receiverPresentedFpsRecent = 0,
+    this.conversionDurationP95Ms = 0,
+    this.encoderQueueWaitP95Ms = 0,
+    this.transportSendP95Ms = 0,
     this.errorCode,
     this.developerMessage,
   });
@@ -382,6 +454,38 @@ final class NativeSessionSnapshot {
   final bool audioTransportActive;
   final String audioRoutingMode;
   final String audioMuteUnsupportedReason;
+  final String tvAudioSourceDeviceId;
+  final String tvAudioSourceDeviceName;
+  final String pcMonitorDeviceId;
+  final String pcMonitorDeviceName;
+  final bool localMonitorActive;
+  final bool localMonitorMuted;
+  final int localMonitorQueueDepth;
+  final int localMonitorDroppedBuffers;
+  final String audioCaptureFormat;
+  final String audioMonitorFormat;
+  final String audioRoutingUnsupportedReason;
+  final String requestedProfile;
+  final String appliedProfile;
+  final String profileFallbackReason;
+  final int outputWidth;
+  final int outputHeight;
+  final int targetBitrateKbps;
+  final String encoderName;
+  final bool hardwareEncoderActive;
+  final bool encoderSupportsRequestedResolution;
+  final int receiverMaxWidth;
+  final int receiverMaxHeight;
+  final bool receiverSupports4k30;
+  final double captureFpsRecent;
+  final double conversionFpsRecent;
+  final double encoderInputFpsRecent;
+  final double encoderOutputFpsRecent;
+  final double transportVideoFpsRecent;
+  final double receiverPresentedFpsRecent;
+  final double conversionDurationP95Ms;
+  final double encoderQueueWaitP95Ms;
+  final double transportSendP95Ms;
   final MirrorErrorCode? errorCode;
   final String? developerMessage;
 
@@ -720,6 +824,104 @@ final class NativeSessionSnapshot {
         'audioMuteUnsupportedReason',
         defaultValue: '',
       ),
+      tvAudioSourceDeviceId: _readOptionalString(
+        json,
+        'tvAudioSourceDeviceId',
+        defaultValue: '',
+      ),
+      tvAudioSourceDeviceName: _readOptionalString(
+        json,
+        'tvAudioSourceDeviceName',
+        defaultValue: '',
+      ),
+      pcMonitorDeviceId: _readOptionalString(
+        json,
+        'pcMonitorDeviceId',
+        defaultValue: '',
+      ),
+      pcMonitorDeviceName: _readOptionalString(
+        json,
+        'pcMonitorDeviceName',
+        defaultValue: '',
+      ),
+      localMonitorActive: _readOptionalBool(json, 'localMonitorActive'),
+      localMonitorMuted: _readOptionalBool(json, 'localMonitorMuted'),
+      localMonitorQueueDepth: _readOptionalInt(json, 'localMonitorQueueDepth'),
+      localMonitorDroppedBuffers: _readOptionalInt(
+        json,
+        'localMonitorDroppedBuffers',
+      ),
+      audioCaptureFormat: _readOptionalString(
+        json,
+        'audioCaptureFormat',
+        defaultValue: '',
+      ),
+      audioMonitorFormat: _readOptionalString(
+        json,
+        'audioMonitorFormat',
+        defaultValue: '',
+      ),
+      audioRoutingUnsupportedReason: _readOptionalString(
+        json,
+        'audioRoutingUnsupportedReason',
+        defaultValue: '',
+      ),
+      requestedProfile: _readOptionalString(
+        json,
+        'requestedProfile',
+        defaultValue: 'lowLatency720p30',
+      ),
+      appliedProfile: _readOptionalString(
+        json,
+        'appliedProfile',
+        defaultValue: 'lowLatency720p30',
+      ),
+      profileFallbackReason: _readOptionalString(
+        json,
+        'profileFallbackReason',
+        defaultValue: '',
+      ),
+      outputWidth: _readOptionalInt(json, 'outputWidth', defaultValue: 1280),
+      outputHeight: _readOptionalInt(json, 'outputHeight', defaultValue: 720),
+      targetBitrateKbps: _readOptionalInt(
+        json,
+        'targetBitrateKbps',
+        defaultValue: 6000,
+      ),
+      encoderName: _readOptionalString(
+        json,
+        'encoderName',
+        defaultValue: 'unknown',
+      ),
+      hardwareEncoderActive: _readOptionalBool(json, 'hardwareEncoderActive'),
+      encoderSupportsRequestedResolution: _readOptionalBool(
+        json,
+        'encoderSupportsRequestedResolution',
+      ),
+      receiverMaxWidth: _readOptionalInt(json, 'receiverMaxWidth'),
+      receiverMaxHeight: _readOptionalInt(json, 'receiverMaxHeight'),
+      receiverSupports4k30: _readOptionalBool(json, 'receiverSupports4k30'),
+      captureFpsRecent: _readOptionalDouble(json, 'captureFpsRecent'),
+      conversionFpsRecent: _readOptionalDouble(json, 'conversionFpsRecent'),
+      encoderInputFpsRecent: _readOptionalDouble(json, 'encoderInputFpsRecent'),
+      encoderOutputFpsRecent: _readOptionalDouble(
+        json,
+        'encoderOutputFpsRecent',
+      ),
+      transportVideoFpsRecent: _readOptionalDouble(
+        json,
+        'transportVideoFpsRecent',
+      ),
+      receiverPresentedFpsRecent: _readOptionalDouble(
+        json,
+        'receiverPresentedFpsRecent',
+      ),
+      conversionDurationP95Ms: _readOptionalDouble(
+        json,
+        'conversionDurationP95Ms',
+      ),
+      encoderQueueWaitP95Ms: _readOptionalDouble(json, 'encoderQueueWaitP95Ms'),
+      transportSendP95Ms: _readOptionalDouble(json, 'transportSendP95Ms'),
       errorCode: errorCode == null
           ? null
           : MirrorErrorCode.fromWireName(_readString(json, 'errorCode')),

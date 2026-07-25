@@ -47,6 +47,8 @@ void main() {
     );
     expect((json['video'] as Map<String, Object?>)['bitrateKbps'], 6000);
     expect(nativeApi.lastStartRequest!.pcLocalAudioMuteRequested, isFalse);
+    expect(nativeApi.lastStartRequest!.tvAudioSourceDeviceId, 'virtual-tv');
+    expect(nativeApi.lastStartRequest!.pcMonitorDeviceId, 'speakers');
     expect(find.text('State: negotiating'), findsOneWidget);
   });
 
@@ -58,6 +60,16 @@ void main() {
     expect(profile.fps, 30);
     expect(profile.bitrateKbps, 7500);
     expect(profile.performanceProfile, PerformanceProfile.highQuality1080p30);
+  });
+
+  test('uses the STAGE 5 experimental 4K profile values', () {
+    final profile = SenderVideoProfile.experimental4k30.videoProfile;
+
+    expect(profile.width, 3840);
+    expect(profile.height, 2160);
+    expect(profile.fps, 30);
+    expect(profile.bitrateKbps, 20000);
+    expect(profile.performanceProfile, PerformanceProfile.experimental4k30);
   });
 
   test('parses sender latency, queue, and drop diagnostics', () {
@@ -197,6 +209,40 @@ void main() {
       'audioRoutingMode': 'defaultRenderEndpointLoopback',
       'audioMuteUnsupportedReason':
           'Unavailable: separate PC/TV audio routing is not configured.',
+      'audioRoutingUnsupportedReason':
+          'Unavailable: separate PC/TV audio routing is not configured.',
+      'tvAudioSourceDeviceId': 'virtual-tv',
+      'tvAudioSourceDeviceName': 'TV Mirror Virtual Audio',
+      'pcMonitorDeviceId': 'speakers',
+      'pcMonitorDeviceName': 'Speakers',
+      'localMonitorActive': true,
+      'localMonitorMuted': true,
+      'localMonitorQueueDepth': 1,
+      'localMonitorDroppedBuffers': 2,
+      'audioCaptureFormat': '48000 Hz 2 ch float32',
+      'audioMonitorFormat': '48000 Hz 2 ch float32',
+      'requestedProfile': 'experimental4k30',
+      'appliedProfile': 'highQuality1080p30',
+      'profileFallbackReason':
+          '4K unavailable: receiver decoder supports up to 1920x1080',
+      'outputWidth': 1920,
+      'outputHeight': 1080,
+      'targetBitrateKbps': 7500,
+      'encoderName': 'Intel Quick Sync H.264',
+      'hardwareEncoderActive': true,
+      'encoderSupportsRequestedResolution': false,
+      'receiverMaxWidth': 1920,
+      'receiverMaxHeight': 1080,
+      'receiverSupports4k30': false,
+      'captureFpsRecent': 29.8,
+      'conversionFpsRecent': 29.7,
+      'encoderInputFpsRecent': 29.0,
+      'encoderOutputFpsRecent': 28.8,
+      'transportVideoFpsRecent': 28.8,
+      'receiverPresentedFpsRecent': 0.0,
+      'conversionDurationP95Ms': 6.5,
+      'encoderQueueWaitP95Ms': 1.4,
+      'transportSendP95Ms': 1.2,
     });
 
     expect(snapshot.targetFps, 30);
@@ -253,6 +299,27 @@ void main() {
     expect(snapshot.audioTransportActive, isTrue);
     expect(snapshot.audioRoutingMode, 'defaultRenderEndpointLoopback');
     expect(snapshot.audioMuteUnsupportedReason, contains('Unavailable'));
+    expect(snapshot.tvAudioSourceDeviceName, 'TV Mirror Virtual Audio');
+    expect(snapshot.pcMonitorDeviceName, 'Speakers');
+    expect(snapshot.localMonitorActive, isTrue);
+    expect(snapshot.localMonitorMuted, isTrue);
+    expect(snapshot.localMonitorQueueDepth, 1);
+    expect(snapshot.localMonitorDroppedBuffers, 2);
+    expect(snapshot.audioCaptureFormat, '48000 Hz 2 ch float32');
+    expect(snapshot.audioMonitorFormat, '48000 Hz 2 ch float32');
+    expect(snapshot.requestedProfile, 'experimental4k30');
+    expect(snapshot.appliedProfile, 'highQuality1080p30');
+    expect(snapshot.profileFallbackReason, contains('receiver decoder'));
+    expect(snapshot.outputWidth, 1920);
+    expect(snapshot.outputHeight, 1080);
+    expect(snapshot.targetBitrateKbps, 7500);
+    expect(snapshot.encoderName, 'Intel Quick Sync H.264');
+    expect(snapshot.hardwareEncoderActive, isTrue);
+    expect(snapshot.encoderSupportsRequestedResolution, isFalse);
+    expect(snapshot.receiverMaxWidth, 1920);
+    expect(snapshot.receiverMaxHeight, 1080);
+    expect(snapshot.receiverSupports4k30, isFalse);
+    expect(snapshot.transportVideoFpsRecent, 28.8);
     expect(snapshot.bottleneckSummary, 'healthy');
   });
 }
@@ -272,6 +339,24 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
         y: 0,
         scaleFactor: 1,
         isPrimary: true,
+      ),
+    ];
+  }
+
+  @override
+  Future<List<AudioDeviceInfo>> listAudioDevices() async {
+    return const [
+      AudioDeviceInfo(
+        id: 'virtual-tv',
+        name: 'TV Mirror Virtual Audio',
+        isDefault: false,
+        isLikelyVirtual: true,
+      ),
+      AudioDeviceInfo(
+        id: 'speakers',
+        name: 'Speakers',
+        isDefault: true,
+        isLikelyVirtual: false,
       ),
     ];
   }

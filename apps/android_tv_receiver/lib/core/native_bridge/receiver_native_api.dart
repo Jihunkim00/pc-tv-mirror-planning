@@ -81,6 +81,11 @@ final class ReceiverSessionSnapshot {
     required this.receiverPort,
     required this.decoderReady,
     required this.surfaceRendererReady,
+    this.receiverMaxVideoWidth = 0,
+    this.receiverMaxVideoHeight = 0,
+    this.receiverSupports4k30 = false,
+    this.receiverDecoderName = 'unknown',
+    this.receiverPerformanceClass = 'unknown',
     this.receiverBindAddress = '0.0.0.0',
     this.localIpv4Addresses = const <String>[],
     this.bytesReceived = 0,
@@ -192,6 +197,11 @@ final class ReceiverSessionSnapshot {
   final int receiverPort;
   final bool decoderReady;
   final bool surfaceRendererReady;
+  final int receiverMaxVideoWidth;
+  final int receiverMaxVideoHeight;
+  final bool receiverSupports4k30;
+  final String receiverDecoderName;
+  final String receiverPerformanceClass;
   final String receiverBindAddress;
   final List<String> localIpv4Addresses;
   final int bytesReceived;
@@ -333,6 +343,14 @@ final class ReceiverSessionSnapshot {
       receiverPort: _readInt(json, 'receiverPort'),
       decoderReady: _readBool(json, 'decoderReady'),
       surfaceRendererReady: _readBool(json, 'surfaceRendererReady'),
+      receiverMaxVideoWidth: _readOptionalInt(json, 'receiverMaxVideoWidth'),
+      receiverMaxVideoHeight: _readOptionalInt(json, 'receiverMaxVideoHeight'),
+      receiverSupports4k30: _readOptionalBool(json, 'receiverSupports4k30'),
+      receiverDecoderName: _readOptionalString(json, 'receiverDecoderName'),
+      receiverPerformanceClass: _readOptionalString(
+        json,
+        'receiverPerformanceClass',
+      ),
       receiverBindAddress: _readOptionalString(
         json,
         'receiverBindAddress',

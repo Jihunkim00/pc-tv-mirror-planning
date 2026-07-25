@@ -1,5 +1,6 @@
-#include "native/session/mirror_session.h"
+﻿#include "native/session/mirror_session.h"
 
+#include "native/audio/audio_device_enumerator.h"
 #include "native/display/display_enumerator.h"
 
 #include <algorithm>
@@ -84,6 +85,152 @@ std::uint64_t ExtractJsonUint64(const std::string& json,
     ++index;
   }
   return value;
+}
+
+int ExtractJsonInt(const std::string& json,
+                   const std::string& key,
+                   int fallback = 0) {
+  const auto key_pos = json.find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return fallback;
+  }
+  const auto colon = json.find(':', key_pos);
+  if (colon == std::string::npos) {
+    return fallback;
+  }
+  auto index = colon + 1;
+  while (index < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[index])) != 0) {
+    ++index;
+  }
+  bool negative = false;
+  if (index < json.size() && json[index] == '-') {
+    negative = true;
+    ++index;
+  }
+  int value = 0;
+  bool found = false;
+  while (index < json.size() &&
+         std::isdigit(static_cast<unsigned char>(json[index])) != 0) {
+    found = true;
+    value = value * 10 + (json[index] - '0');
+    ++index;
+  }
+  return found ? (negative ? -value : value) : fallback;
+}
+
+bool ExtractJsonBool(const std::string& json,
+                     const std::string& key,
+                     bool fallback = false) {
+  const auto key_pos = json.find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return fallback;
+  }
+  const auto colon = json.find(':', key_pos);
+  if (colon == std::string::npos) {
+    return fallback;
+  }
+  auto index = colon + 1;
+  while (index < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[index])) != 0) {
+    ++index;
+  }
+  if (json.compare(index, 4, "true") == 0) {
+    return true;
+  }
+  if (json.compare(index, 5, "false") == 0) {
+    return false;
+  }
+  return fallback;
+}
+
+void ReplaceJsonNumber(std::string* json, const std::string& key, int value) {
+  const auto key_pos = json->find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return;
+  }
+  const auto colon = json->find(':', key_pos);
+  if (colon == std::string::npos) {
+    return;
+  }
+  auto begin = colon + 1;
+  while (begin < json->size() &&
+         std::isspace(static_cast<unsigned char>((*json)[begin])) != 0) {
+    ++begin;
+  }
+  auto end = begin;
+  while (end < json->size() &&
+         (std::isdigit(static_cast<unsigned char>((*json)[end])) != 0 ||
+          (*json)[end] == '-')) {
+    ++end;
+  }
+  json->replace(begin, end - begin, std::to_string(value));
+}
+
+void ReplaceJsonString(std::string* json,
+                       const std::string& key,
+                       const std::string& value) {
+  const auto key_pos = json->find("\"" + key + "\"");
+  if (key_pos == std::string::npos) {
+    return;
+  }
+  const auto colon = json->find(':', key_pos);
+  if (colon == std::string::npos) {
+    return;
+  }
+  const auto begin = json->find('"', colon + 1);
+  if (begin == std::string::npos) {
+    return;
+  }
+  const auto end = json->find('"', begin + 1);
+  if (end == std::string::npos) {
+    return;
+  }
+  json->replace(begin + 1, end - begin - 1, value);
+}
+
+bool IsExperimental4k30(const VideoStreamConfig& config) {
+  return config.performance_profile == "experimental4k30";
+}
+
+VideoStreamConfig HighQuality1080p30Fallback(const VideoStreamConfig& from) {
+  VideoStreamConfig fallback = from;
+  fallback.width = 1920;
+  fallback.height = 1080;
+  fallback.fps = 30;
+  fallback.bitrate_kbps = 7500;
+  fallback.keyframe_interval_frames = 30;
+  fallback.performance_profile = "highQuality1080p30";
+  fallback.require_hardware_encoder = false;
+  return fallback;
+}
+
+std::string RequestJsonForVideoConfig(std::string request_json,
+                                      const VideoStreamConfig& config) {
+  ReplaceJsonNumber(&request_json, "width", config.width);
+  ReplaceJsonNumber(&request_json, "height", config.height);
+  ReplaceJsonNumber(&request_json, "fps", config.fps);
+  ReplaceJsonNumber(&request_json, "bitrateKbps", config.bitrate_kbps);
+  ReplaceJsonString(&request_json, "performanceProfile",
+                    config.performance_profile);
+  return request_json;
+}
+
+bool CaptureSourceSupportsResolution(const std::string& source_id,
+                                     int width,
+                                     int height) {
+  const auto monitor = FindMonitorById(source_id);
+  if (!monitor.has_value()) {
+    return false;
+  }
+  MONITORINFOEXW info;
+  info.cbSize = sizeof(MONITORINFOEXW);
+  if (!GetMonitorInfoW(*monitor, &info)) {
+    return false;
+  }
+  const int monitor_width = info.rcMonitor.right - info.rcMonitor.left;
+  const int monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
+  return monitor_width >= width && monitor_height >= height;
 }
 
 void TrimEvents(std::deque<std::uint64_t>* events, std::uint64_t now_us) {
@@ -272,14 +419,36 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             "No HMONITOR matched sourceId " + options.source_id};
   }
 
-  video_config_ = options.video;
-  target_fps_ = static_cast<double>(std::max(1, options.video.fps));
-  target_frame_interval_us_ =
-      static_cast<std::uint64_t>(1'000'000.0 / target_fps_);
+  requested_video_config_ = options.video;
+  VideoStreamConfig applied_video = options.video;
+  std::string request_json = options.request_json;
+  std::string fallback_reason;
+  const bool requested_4k = IsExperimental4k30(options.video);
+  if (requested_4k &&
+      !CaptureSourceSupportsResolution(options.source_id, 3840, 2160)) {
+    applied_video = HighQuality1080p30Fallback(options.video);
+    request_json = RequestJsonForVideoConfig(options.request_json,
+                                             applied_video);
+    fallback_reason = "4K unavailable: capture source is below 3840x2160";
+  }
 
-  const auto signal =
-      transport_.Connect(options.receiver_host, options.receiver_port,
-                         options.request_json);
+  auto connect_receiver = [&](const std::string& json) {
+    auto signal =
+        transport_.Connect(options.receiver_host, options.receiver_port, json);
+    if (signal.ok) {
+      receiver_max_width_ =
+          ExtractJsonInt(signal.detail, "receiverMaxVideoWidth");
+      receiver_max_height_ =
+          ExtractJsonInt(signal.detail, "receiverMaxVideoHeight");
+      receiver_supports_4k30_ =
+          ExtractJsonBool(signal.detail, "receiverSupports4k30");
+      receiver_presented_fps_recent_ = static_cast<double>(
+          ExtractJsonInt(signal.detail, "receiverPresentedFpsRecent"));
+    }
+    return signal;
+  };
+
+  auto signal = connect_receiver(request_json);
   if (!signal.ok) {
     return {"failed",
             "Could not reach the TV receiver.",
@@ -291,10 +460,47 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             signal.detail};
   }
 
+  if (requested_4k && fallback_reason.empty() && !receiver_supports_4k30_) {
+    transport_.Close();
+    applied_video = HighQuality1080p30Fallback(options.video);
+    request_json = RequestJsonForVideoConfig(options.request_json,
+                                             applied_video);
+    if (receiver_max_width_ > 0 && receiver_max_height_ > 0) {
+      std::ostringstream reason;
+      reason << "4K unavailable: receiver decoder supports up to "
+             << receiver_max_width_ << "x" << receiver_max_height_;
+      fallback_reason = reason.str();
+    } else {
+      fallback_reason = "4K unavailable: receiver capability not confirmed";
+    }
+    signal = connect_receiver(request_json);
+    if (!signal.ok) {
+      return {"failed",
+              "Could not reach the TV receiver.",
+              false,
+              false,
+              false,
+              false,
+              "SIGNALING_FAILED",
+              signal.detail};
+    }
+  }
+
+  auto apply_video_config = [&]() {
+    video_config_ = applied_video;
+    requested_profile_ = options.video.performance_profile;
+    applied_profile_ = applied_video.performance_profile;
+    profile_fallback_reason_ = fallback_reason;
+    target_fps_ = static_cast<double>(std::max(1, applied_video.fps));
+    target_frame_interval_us_ =
+        static_cast<std::uint64_t>(1'000'000.0 / target_fps_);
+  };
+  apply_video_config();
+
   std::string error;
   auto capture = std::make_unique<DisplayCapture>();
-  if (!capture->Start(options.source_id, options.video.width,
-                      options.video.height, &error)) {
+  if (!capture->Start(options.source_id, applied_video.width,
+                      applied_video.height, &error)) {
     transport_.Close();
     return {"failed",
             "Could not start Windows screen capture.",
@@ -306,17 +512,64 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             error};
   }
 
-  if (!encoder_.Start(options.video, &error)) {
-    capture->Stop();
-    transport_.Close();
-    return {"failed",
-            "Could not start the H.264 encoder.",
-            true,
-            false,
-            true,
-            false,
-            "ENCODER_NOT_AVAILABLE",
-            error};
+  if (!encoder_.Start(applied_video, &error)) {
+    if (requested_4k && IsExperimental4k30(applied_video)) {
+      capture->Stop();
+      transport_.Close();
+      applied_video = HighQuality1080p30Fallback(options.video);
+      request_json = RequestJsonForVideoConfig(options.request_json,
+                                               applied_video);
+      fallback_reason =
+          "4K unavailable: hardware encoder capability check failed";
+      signal = connect_receiver(request_json);
+      if (!signal.ok) {
+        return {"failed",
+                "Could not reach the TV receiver.",
+                false,
+                false,
+                false,
+                false,
+                "SIGNALING_FAILED",
+                signal.detail};
+      }
+      apply_video_config();
+      capture = std::make_unique<DisplayCapture>();
+      if (!capture->Start(options.source_id, applied_video.width,
+                          applied_video.height, &error)) {
+        transport_.Close();
+        return {"failed",
+                "Could not start Windows screen capture.",
+                false,
+                false,
+                true,
+                false,
+                "CAPTURE_PERMISSION_DENIED",
+                error};
+      }
+      if (!encoder_.Start(applied_video, &error)) {
+        capture->Stop();
+        transport_.Close();
+        return {"failed",
+                "Could not start the H.264 encoder.",
+                true,
+                false,
+                true,
+                false,
+                "ENCODER_NOT_AVAILABLE",
+                error};
+      }
+    } else {
+      capture->Stop();
+      transport_.Close();
+      return {"failed",
+              "Could not start the H.264 encoder.",
+              true,
+              false,
+              true,
+              false,
+              "ENCODER_NOT_AVAILABLE",
+              error};
+    }
   }
 
   packet_queue_.Reset();
@@ -325,6 +578,8 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   next_audio_sequence_ = 1;
   audio_enabled_ = options.audio_enabled;
   pc_local_audio_mute_requested_ = options.pc_local_audio_mute_requested;
+  tv_audio_source_device_id_ = options.tv_audio_source_device_id;
+  pc_monitor_device_id_ = options.pc_monitor_device_id;
   paused_ = false;
   audio_config_requested_ = false;
   running_ = true;
@@ -358,7 +613,6 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
 
   return Snapshot();
 }
-
 NativeSnapshot MirrorSession::Stop() {
   running_ = false;
   packet_queue_.Close();
@@ -403,7 +657,24 @@ NativeSnapshot MirrorSession::Stop() {
 
 NativeSnapshot MirrorSession::SetPcLocalAudioMuteRequested(bool requested) {
   pc_local_audio_mute_requested_.store(requested);
+  ApplyLocalMonitorMute(requested);
   return Snapshot();
+}
+
+void MirrorSession::ApplyLocalMonitorMute(bool requested) {
+  std::scoped_lock route_lock(audio_route_mutex_);
+  if (local_monitor_renderer_ != nullptr &&
+      pc_local_audio_mute_supported_.load()) {
+    local_monitor_renderer_->SetMuted(requested);
+    local_monitor_muted_.store(requested);
+    pc_local_audio_mute_applied_.store(requested);
+    local_monitor_queue_depth_.store(local_monitor_renderer_->queue_depth());
+    local_monitor_dropped_buffers_.store(
+        local_monitor_renderer_->dropped_buffers());
+    return;
+  }
+  pc_local_audio_mute_applied_.store(false);
+  local_monitor_muted_.store(false);
 }
 
 void MirrorSession::EncodeLoop() {
@@ -634,15 +905,78 @@ void MirrorSession::AudioLoop() {
 
   std::string error;
   SystemAudioLoopback capture;
-  if (!capture.Start(&error)) {
+  if (!capture.Start(tv_audio_source_device_id_, &error)) {
     std::scoped_lock status_lock(status_mutex_);
     audio_capture_state_ = "failed";
     audio_last_error_ = error;
     return;
   }
 
+  WasapiLocalMonitorRenderer local_monitor;
+  bool local_monitor_started = false;
+  {
+    std::string routing_error;
+    const auto source_info = FindAudioRenderDeviceById(capture.device_id());
+    const auto monitor_info = FindAudioRenderDeviceById(pc_monitor_device_id_);
+    const bool source_is_virtual =
+        source_info.has_value()
+            ? source_info->is_likely_virtual
+            : IsLikelyVirtualAudioDeviceName(capture.device_name());
+    if (capture.device_id().empty()) {
+      routing_error = "Selected audio device is unavailable";
+    } else if (!source_is_virtual) {
+      routing_error = "No separate virtual audio endpoint found";
+    } else if (!monitor_info.has_value()) {
+      routing_error = "Selected PC speaker output is unavailable";
+    } else if (monitor_info->id == capture.device_id()) {
+      routing_error =
+          "TV source and PC speaker output are the same endpoint";
+    } else if (!local_monitor.Start(monitor_info->id, &routing_error)) {
+      if (routing_error.empty()) {
+        routing_error = "Local monitor renderer is not initialized";
+      }
+    } else {
+      local_monitor_started = true;
+      local_monitor.SetMuted(pc_local_audio_mute_requested_.load());
+    }
+
+    std::scoped_lock status_lock(status_mutex_);
+    tv_audio_source_device_id_ = capture.device_id();
+    tv_audio_source_device_name_ = capture.device_name();
+    pc_monitor_device_id_ = monitor_info.has_value() ? monitor_info->id : "";
+    pc_monitor_device_name_ =
+        monitor_info.has_value() ? monitor_info->name : "";
+    audio_capture_format_ = capture.capture_format();
+    audio_monitor_format_ =
+        local_monitor_started ? local_monitor.format_description() : "";
+    audio_routing_mode_ =
+        local_monitor_started ? "virtual_endpoint_monitor" : "unsupported";
+    audio_routing_unsupported_reason_ =
+        local_monitor_started ? std::string() : routing_error;
+  }
+  {
+    std::scoped_lock route_lock(audio_route_mutex_);
+    local_monitor_renderer_ = local_monitor_started ? &local_monitor : nullptr;
+  }
+  pc_local_audio_mute_supported_.store(local_monitor_started);
+  pc_local_audio_mute_applied_.store(
+      local_monitor_started && pc_local_audio_mute_requested_.load());
+  local_monitor_active_.store(local_monitor_started);
+  local_monitor_muted_.store(
+      local_monitor_started && pc_local_audio_mute_requested_.load());
+
   AacEncoder encoder;
   if (!encoder.Start(&error)) {
+    {
+      std::scoped_lock route_lock(audio_route_mutex_);
+      if (local_monitor_renderer_ == &local_monitor) {
+        local_monitor_renderer_ = nullptr;
+      }
+    }
+    local_monitor.Stop();
+    local_monitor_active_.store(false);
+    local_monitor_muted_.store(false);
+    pc_local_audio_mute_applied_.store(false);
     capture.Stop();
     std::scoped_lock status_lock(status_mutex_);
     audio_capture_state_ = "failed";
@@ -704,6 +1038,12 @@ void MirrorSession::AudioLoop() {
     }
     captured_audio_packets_.fetch_add(1);
     const auto capture_done_us = NowUs();
+    if (local_monitor_started) {
+      local_monitor.Enqueue(pcm_frame);
+      local_monitor_queue_depth_.store(local_monitor.queue_depth());
+      local_monitor_dropped_buffers_.store(local_monitor.dropped_buffers());
+      local_monitor_muted_.store(local_monitor.muted());
+    }
     {
       std::scoped_lock status_lock(status_mutex_);
       RecordEvent(&audio_capture_events_us_, capture_done_us);
@@ -745,6 +1085,16 @@ void MirrorSession::AudioLoop() {
     }
   }
   encoder.Stop();
+  {
+    std::scoped_lock route_lock(audio_route_mutex_);
+    if (local_monitor_renderer_ == &local_monitor) {
+      local_monitor_renderer_ = nullptr;
+    }
+  }
+  local_monitor.Stop();
+  local_monitor_active_.store(false);
+  local_monitor_muted_.store(false);
+  pc_local_audio_mute_applied_.store(false);
   capture.Stop();
 }
 
@@ -1194,6 +1544,12 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
     snapshot.output_resolution = resolution.str();
   }
   snapshot.current_bitrate_kbps = video_config_.bitrate_kbps;
+  snapshot.requested_profile = requested_profile_;
+  snapshot.applied_profile = applied_profile_;
+  snapshot.profile_fallback_reason = profile_fallback_reason_;
+  snapshot.output_width = video_config_.width;
+  snapshot.output_height = video_config_.height;
+  snapshot.target_bitrate_kbps = video_config_.bitrate_kbps;
   snapshot.target_frame_interval_ms = UsToMs(target_frame_interval_us_);
   snapshot.stale_video_dropped_fps =
       RollingFps(&stale_video_dropped_events_us_, now_us);
@@ -1201,6 +1557,27 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.selected_encoder_name = encoder_diagnostics.selected_encoder_name;
   snapshot.selected_encoder_hardware =
       encoder_diagnostics.selected_encoder_hardware;
+  snapshot.encoder_name = encoder_diagnostics.selected_encoder_name;
+  snapshot.hardware_encoder_active =
+      encoder_diagnostics.selected_encoder_hardware;
+  snapshot.encoder_supports_requested_resolution =
+      video_config_.width == requested_video_config_.width &&
+      video_config_.height == requested_video_config_.height &&
+      (!IsExperimental4k30(requested_video_config_) ||
+       encoder_diagnostics.selected_encoder_hardware);
+  snapshot.receiver_max_width = receiver_max_width_;
+  snapshot.receiver_max_height = receiver_max_height_;
+  snapshot.receiver_supports_4k30 = receiver_supports_4k30_;
+  snapshot.capture_fps_recent = snapshot.capture_callback_fps;
+  snapshot.conversion_fps_recent = snapshot.converted_fps;
+  snapshot.encoder_input_fps_recent = snapshot.encoder_input_fps;
+  snapshot.encoder_output_fps_recent = snapshot.encoded_fps;
+  snapshot.transport_video_fps_recent = snapshot.sent_video_fps;
+  snapshot.receiver_presented_fps_recent = receiver_presented_fps_recent_;
+  snapshot.conversion_duration_p95_ms =
+      P95SampleMs(&capture_to_convert_samples_, now_us);
+  snapshot.encoder_queue_wait_p95_ms = snapshot.video_queue_wait_p95_ms;
+  snapshot.transport_send_p95_ms = snapshot.access_unit_send_duration_p95_ms;
   snapshot.selected_encoder_async =
       encoder_diagnostics.selected_encoder_async;
   snapshot.encoder_d3d11_aware = encoder_diagnostics.encoder_d3d11_aware;
@@ -1276,8 +1653,9 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       resume_codec_config_resends_.load();
   snapshot.pc_local_audio_mute_requested =
       pc_local_audio_mute_requested_.load();
-  snapshot.pc_local_audio_mute_supported = false;
-  snapshot.pc_local_audio_mute_applied = false;
+  snapshot.pc_local_audio_mute_supported =
+      pc_local_audio_mute_supported_.load();
+  snapshot.pc_local_audio_mute_applied = pc_local_audio_mute_applied_.load();
   snapshot.pc_local_audio_original_mute_state = false;
   snapshot.audio_capture_active =
       snapshot.audio_enabled && snapshot.audio_capture_state == "capturing";
@@ -1289,18 +1667,33 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.tv_audio_streaming =
       snapshot.audio_capture_active && snapshot.audio_encoder_active &&
       snapshot.audio_transport_active;
-  snapshot.audio_routing_mode = "defaultRenderEndpointLoopback";
-  if (snapshot.pc_local_audio_mute_requested) {
-    snapshot.audio_mute_unsupported_reason =
-        "Unavailable: separate PC/TV audio routing is not configured";
-  } else {
-    snapshot.audio_mute_unsupported_reason.clear();
-  }
+  snapshot.audio_routing_mode =
+      snapshot.audio_enabled ? audio_routing_mode_ : "disabled";
+  snapshot.tv_audio_source_device_id = tv_audio_source_device_id_;
+  snapshot.tv_audio_source_device_name = tv_audio_source_device_name_;
+  snapshot.pc_monitor_device_id = pc_monitor_device_id_;
+  snapshot.pc_monitor_device_name = pc_monitor_device_name_;
+  snapshot.local_monitor_active = local_monitor_active_.load();
+  snapshot.local_monitor_muted = local_monitor_muted_.load();
+  snapshot.local_monitor_queue_depth = local_monitor_queue_depth_.load();
+  snapshot.local_monitor_dropped_buffers =
+      local_monitor_dropped_buffers_.load();
+  snapshot.audio_capture_format = audio_capture_format_;
+  snapshot.audio_monitor_format = audio_monitor_format_;
+  snapshot.audio_routing_unsupported_reason =
+      audio_routing_unsupported_reason_;
+  snapshot.audio_mute_unsupported_reason =
+      snapshot.pc_local_audio_mute_supported
+          ? std::string()
+          : audio_routing_unsupported_reason_;
   snapshot.local_speaker_mute_mode =
       snapshot.pc_local_audio_mute_requested ? "pcLocalMuteRequested"
                                              : "pcAndTv";
   snapshot.local_speaker_mute_state =
-      snapshot.pc_local_audio_mute_requested ? "unsupported" : "disabled";
+      snapshot.pc_local_audio_mute_applied
+          ? "muted"
+          : (snapshot.pc_local_audio_mute_requested ? "unsupported"
+                                                    : "disabled");
   snapshot.local_speaker_mute_last_error =
       snapshot.audio_mute_unsupported_reason;
   return snapshot;
@@ -1353,6 +1746,12 @@ void MirrorSession::ResetCounters() {
   send_completed_bytes_ = 0;
   audio_enabled_ = false;
   pc_local_audio_mute_requested_ = false;
+  pc_local_audio_mute_supported_ = false;
+  pc_local_audio_mute_applied_ = false;
+  local_monitor_active_ = false;
+  local_monitor_muted_ = false;
+  local_monitor_queue_depth_ = 0;
+  local_monitor_dropped_buffers_ = 0;
   paused_ = false;
   audio_config_requested_ = false;
   captured_audio_packets_ = 0;
@@ -1400,6 +1799,21 @@ void MirrorSession::ResetCounters() {
   last_send_error_.clear();
   audio_capture_state_ = "disabled";
   audio_device_name_.clear();
+  tv_audio_source_device_id_.clear();
+  tv_audio_source_device_name_.clear();
+  pc_monitor_device_id_.clear();
+  pc_monitor_device_name_.clear();
+  audio_routing_mode_ = "defaultRenderEndpointLoopback";
+  audio_routing_unsupported_reason_.clear();
+  audio_capture_format_.clear();
+  audio_monitor_format_.clear();
+  requested_profile_ = "lowLatency720p30";
+  applied_profile_ = "lowLatency720p30";
+  profile_fallback_reason_.clear();
+  receiver_max_width_ = 0;
+  receiver_max_height_ = 0;
+  receiver_supports_4k30_ = false;
+  receiver_presented_fps_recent_ = 0.0;
   audio_input_sample_rate_ = 0;
   audio_input_channels_ = 0;
   audio_last_error_.clear();

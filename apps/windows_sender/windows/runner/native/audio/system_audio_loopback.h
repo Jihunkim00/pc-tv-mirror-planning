@@ -24,10 +24,13 @@ class SystemAudioLoopback {
   SystemAudioLoopback& operator=(const SystemAudioLoopback&) = delete;
 
   bool Start(std::string* error);
+  bool Start(const std::string& device_id, std::string* error);
   bool CaptureNext(PcmAudioFrame* frame, int timeout_ms, std::string* error);
   void Stop();
 
   std::string device_name() const { return device_name_; }
+  std::string device_id() const { return device_id_; }
+  std::string capture_format() const { return capture_format_; }
   int input_sample_rate() const { return input_sample_rate_; }
   int input_channels() const { return input_channels_; }
   bool event_driven() const { return event_driven_; }
@@ -45,7 +48,9 @@ class SystemAudioLoopback {
   winrt::com_ptr<IAudioClient> audio_client_;
   winrt::com_ptr<IAudioCaptureClient> capture_client_;
   WAVEFORMATEX* mix_format_ = nullptr;
+  std::string device_id_;
   std::string device_name_;
+  std::string capture_format_;
   int input_sample_rate_ = 0;
   int input_channels_ = 0;
   int input_bits_per_sample_ = 0;

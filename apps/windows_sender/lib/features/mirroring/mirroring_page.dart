@@ -52,12 +52,15 @@ class _MirroringPageState extends State<MirroringPage> {
                   hostController: _hostController,
                   portController: _portController,
                   onRefresh: _controller.loadDisplays,
+                  onRefreshAudioDevices: _controller.refreshAudioDevices,
                   onStart: _start,
                   onStop: _controller.stop,
                   onSystemAudioChanged: _controller.setSystemAudioEnabled,
                   onPcLocalAudioMuteChanged:
                       _controller.setPcLocalAudioMuteRequested,
                   onVideoProfileChanged: _controller.setVideoProfile,
+                  onTvAudioSourceChanged: _controller.selectTvAudioSourceDevice,
+                  onPcMonitorDeviceChanged: _controller.selectPcMonitorDevice,
                 );
 
                 return Padding(
@@ -279,33 +282,49 @@ class _SessionPanel extends StatelessWidget {
     required this.hostController,
     required this.portController,
     required this.onRefresh,
+    required this.onRefreshAudioDevices,
     required this.onStart,
     required this.onStop,
     required this.onSystemAudioChanged,
     required this.onPcLocalAudioMuteChanged,
     required this.onVideoProfileChanged,
+    required this.onTvAudioSourceChanged,
+    required this.onPcMonitorDeviceChanged,
   });
 
   final MirrorController controller;
   final TextEditingController hostController;
   final TextEditingController portController;
   final VoidCallback onRefresh;
+  final VoidCallback onRefreshAudioDevices;
   final VoidCallback onStart;
   final VoidCallback onStop;
   final ValueChanged<bool> onSystemAudioChanged;
   final ValueChanged<bool> onPcLocalAudioMuteChanged;
   final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
+  final ValueChanged<String> onTvAudioSourceChanged;
+  final ValueChanged<String> onPcMonitorDeviceChanged;
 
   @override
   Widget build(BuildContext context) {
+    final routingReason =
+        _firstNonEmpty(
+          controller.snapshot?.audioRoutingUnsupportedReason,
+          controller.snapshot?.audioMuteUnsupportedReason,
+          controller.audioRoutingUnsupportedReason,
+        ) ??
+        '';
+    final pcMuteSupported =
+        controller.snapshot?.pcLocalAudioMuteSupported ??
+        controller.pcLocalAudioMuteSupportedBySelection;
     final pcMuteUnsupported =
-        controller.pcLocalAudioMuteRequested &&
-        !(controller.snapshot?.pcLocalAudioMuteSupported ?? false);
+        controller.pcLocalAudioMuteRequested && !pcMuteSupported;
     final pcMuteSubtitle = pcMuteUnsupported
-        ? 'Unavailable: separate PC/TV audio routing is not configured'
+        ? 'Unavailable: $routingReason'
         : controller.pcLocalAudioMuteRequested
         ? 'PC muted - TV audio continues'
         : 'PC audio on - TV audio continues';
+    final experimental4kReason = controller.experimental4kUnavailableReason;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -321,7 +340,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 4 session',
+                  'Stage 5 session',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
@@ -362,6 +381,9 @@ class _SessionPanel extends StatelessWidget {
                 .map(
                   (profile) => DropdownMenuItem(
                     value: profile,
+                    enabled:
+                        profile != SenderVideoProfile.experimental4k30 ||
+                        controller.canSelectExperimental4k30,
                     child: Text(
                       profile.label,
                       maxLines: 1,
@@ -381,6 +403,93 @@ class _SessionPanel extends StatelessWidget {
               border: OutlineInputBorder(),
               labelText: 'Video profile',
             ),
+          ),
+          if (experimental4kReason != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              experimental4kReason,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+          const SizedBox(height: 8),
+          _MetricSection(
+            title: 'Audio routing',
+            rows: [
+              DropdownButtonFormField<String>(
+                initialValue: controller.selectedTvAudioSourceDeviceId,
+                isExpanded: true,
+                items: controller.audioDevices
+                    .map(
+                      (device) => DropdownMenuItem(
+                        value: device.id,
+                        child: Text(
+                          device.isLikelyVirtual
+                              ? '${device.name} - virtual'
+                              : device.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: controller.isRunning
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          onTvAudioSourceChanged(value);
+                        }
+                      },
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'TV audio source',
+                ),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: controller.selectedPcMonitorDeviceId,
+                isExpanded: true,
+                items: controller.audioDevices
+                    .map(
+                      (device) => DropdownMenuItem(
+                        value: device.id,
+                        child: Text(
+                          device.isDefault
+                              ? '${device.name} - default'
+                              : device.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: controller.isRunning
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          onPcMonitorDeviceChanged(value);
+                        }
+                      },
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'PC speaker output',
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: controller.busy || controller.isRunning
+                    ? null
+                    : onRefreshAudioDevices,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Refresh audio devices'),
+              ),
+              if (routingReason.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  routingReason,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 8),
           Material(
@@ -446,6 +555,15 @@ class _SessionPanel extends StatelessWidget {
   }
 }
 
+String? _firstNonEmpty(String? first, String? second, String? third) {
+  for (final value in [first, second, third]) {
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  }
+  return null;
+}
+
 class _SenderCounters extends StatelessWidget {
   const _SenderCounters({required this.snapshot});
 
@@ -472,9 +590,15 @@ class _SenderCounters extends StatelessWidget {
                 _MetricRow(
                   label: 'Profile',
                   value:
-                      '${snapshot.selectedProfile} - ${snapshot.outputResolution} - '
-                      '${snapshot.currentBitrateKbps} kbps',
+                      '${snapshot.requestedProfile} -> ${snapshot.appliedProfile} - '
+                      '${snapshot.outputWidth}x${snapshot.outputHeight} - '
+                      '${snapshot.targetBitrateKbps} kbps',
                 ),
+                if (snapshot.profileFallbackReason.isNotEmpty)
+                  _MetricRow(
+                    label: 'Fallback',
+                    value: snapshot.profileFallbackReason,
+                  ),
                 _MetricRow(
                   label: 'Target / actual',
                   value:
@@ -542,9 +666,16 @@ class _SenderCounters extends StatelessWidget {
                 ),
                 _MetricRow(
                   label: 'Encoder',
-                  value: snapshot.selectedEncoderHardware
-                      ? '${snapshot.selectedEncoderName} (hardware)'
-                      : '${snapshot.selectedEncoderName} (software)',
+                  value: snapshot.hardwareEncoderActive
+                      ? '${snapshot.encoderName} (hardware)'
+                      : '${snapshot.encoderName} (software)',
+                ),
+                _MetricRow(
+                  label: '4K capability',
+                  value:
+                      'enc ${snapshot.encoderSupportsRequestedResolution}, '
+                      'tv ${snapshot.receiverSupports4k30} '
+                      '${snapshot.receiverMaxWidth}x${snapshot.receiverMaxHeight}',
                 ),
                 _MetricRow(
                   label: 'Backpressure',
@@ -683,12 +814,44 @@ class _SenderCounters extends StatelessWidget {
                 ),
                 _MetricRow(
                   label: 'Audio routing',
-                  value: snapshot.audioRoutingMode,
+                  value:
+                      '${snapshot.audioRoutingMode}, monitor ${snapshot.localMonitorActive}',
+                ),
+                _MetricRow(
+                  label: 'TV source',
+                  value: snapshot.tvAudioSourceDeviceName.isEmpty
+                      ? 'unknown'
+                      : snapshot.tvAudioSourceDeviceName,
+                ),
+                _MetricRow(
+                  label: 'PC speaker output',
+                  value: snapshot.pcMonitorDeviceName.isEmpty
+                      ? 'unknown'
+                      : snapshot.pcMonitorDeviceName,
+                ),
+                _MetricRow(
+                  label: 'Local monitor',
+                  value:
+                      'muted ${snapshot.localMonitorMuted}, queue ${snapshot.localMonitorQueueDepth}, '
+                      'drop ${snapshot.localMonitorDroppedBuffers}',
+                ),
+                _MetricRow(
+                  label: 'Audio format',
+                  value:
+                      '${snapshot.audioCaptureFormat.isEmpty ? 'unknown' : snapshot.audioCaptureFormat} / '
+                      '${snapshot.audioMonitorFormat.isEmpty ? 'unknown' : snapshot.audioMonitorFormat}',
                 ),
                 if (snapshot.audioMuteUnsupportedReason.isNotEmpty)
                   _MetricRow(
                     label: 'Speaker route error',
                     value: snapshot.audioMuteUnsupportedReason,
+                  ),
+                if (snapshot.audioRoutingUnsupportedReason.isNotEmpty &&
+                    snapshot.audioRoutingUnsupportedReason !=
+                        snapshot.audioMuteUnsupportedReason)
+                  _MetricRow(
+                    label: 'Routing error',
+                    value: snapshot.audioRoutingUnsupportedReason,
                   ),
               ],
             ),

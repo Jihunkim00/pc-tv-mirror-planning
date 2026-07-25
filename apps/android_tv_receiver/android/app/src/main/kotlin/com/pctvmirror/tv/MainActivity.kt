@@ -13,6 +13,7 @@ import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.media.MediaFormat
+import android.media.MediaCodecInfo
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -51,8 +52,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.collections.ArrayDeque
 
 class MainActivity : FlutterActivity() {
-    private val h264DecoderAvailable = hasH264Decoder()
-    private val receiverServer = StageOneReceiverServer(h264DecoderAvailable)
+    private val h264DecoderCapability = queryH264DecoderCapability()
+    private val receiverServer = StageOneReceiverServer(h264DecoderCapability)
     private var receiverControlsChannel: MethodChannel? = null
     private var fullscreenEnabled = false
 
@@ -143,21 +144,31 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun capabilities(): Map<String, Any> {
+        val profiles = mutableListOf(
+            PERFORMANCE_PROFILE_LOW_LATENCY_720P30,
+            PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
+            PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
+        )
+        if (h264DecoderCapability.supports4k30) {
+            profiles.add(PERFORMANCE_PROFILE_EXPERIMENTAL_4K30)
+        }
         return mapOf(
             "type" to "capabilities",
             "protocolVersion" to 1,
             "deviceId" to "android-tv-${Build.MODEL ?: "unknown"}",
             "deviceName" to (Build.MODEL ?: "Android TV"),
             "videoCodecs" to listOf("h264"),
-            "maxWidth" to 1920,
-            "maxHeight" to 1080,
-            "maxFps" to 30,
-            "lowLatencyDecoder" to h264DecoderAvailable,
-            "supportedPerformanceProfiles" to listOf(
-                PERFORMANCE_PROFILE_LOW_LATENCY_720P30,
-                PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
-                PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
-            ),
+            "maxWidth" to h264DecoderCapability.maxWidth,
+            "maxHeight" to h264DecoderCapability.maxHeight,
+            "maxFps" to h264DecoderCapability.maxFps,
+            "lowLatencyDecoder" to h264DecoderCapability.decoderAvailable,
+            "supportedPerformanceProfiles" to profiles,
+            "receiverMaxVideoWidth" to h264DecoderCapability.maxWidth,
+            "receiverMaxVideoHeight" to h264DecoderCapability.maxHeight,
+            "receiverSupports4k30" to h264DecoderCapability.supports4k30,
+            "receiverVideoCodec" to "h264",
+            "receiverDecoderName" to h264DecoderCapability.decoderName,
+            "receiverPerformanceClass" to h264DecoderCapability.performanceClass,
         )
     }
 }
@@ -171,6 +182,7 @@ private const val SCALE_MODE_FIT_CENTER = "fitCenter"
 private const val PERFORMANCE_PROFILE_LOW_LATENCY_720P30 = "lowLatency720p30"
 private const val PERFORMANCE_PROFILE_COMPATIBILITY_720P30 = "compatibility720p30"
 private const val PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 = "highQuality1080p30"
+private const val PERFORMANCE_PROFILE_EXPERIMENTAL_4K30 = "experimental4k30"
 private const val MAX_PACKET_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_ACCESS_UNIT_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_CODEC_CONFIG_PAYLOAD = 24 + 64 * 1024 + 64 * 1024
@@ -195,7 +207,7 @@ private const val VIDEO_EARLY_FOR_AUDIO_SCHEDULE_US = 50_000L
 private const val AV_SYNC_RESYNC_THRESHOLD_US = 150_000L
 
 private class StageOneReceiverServer(
-    private val h264DecoderAvailable: Boolean,
+    private val h264DecoderCapability: H264DecoderCapability,
 ) {
     companion object {
         const val DEFAULT_PORT = 50720
@@ -204,6 +216,8 @@ private class StageOneReceiverServer(
 
     private val audioDecoder = StageThreeAudioDecoder()
     private val decoder = StageOneVideoDecoder(audioDecoder)
+    private val h264DecoderAvailable: Boolean
+        get() = h264DecoderCapability.decoderAvailable
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -464,6 +478,7 @@ private class StageOneReceiverServer(
                 streamAnswerResponse(
                     decoderReady = h264DecoderAvailable,
                     surfaceRendererReady = decoder.hasSurface,
+                    capability = h264DecoderCapability,
                 ),
             )
             playbackState = "waitingForKeyFrame"
@@ -658,6 +673,11 @@ private class StageOneReceiverServer(
             "playbackCommandErrorsReceived" to playbackCommandErrorsReceived.get(),
             "decoderReady" to decoderReady,
             "surfaceRendererReady" to surfaceRendererReady,
+            "receiverMaxVideoWidth" to h264DecoderCapability.maxWidth,
+            "receiverMaxVideoHeight" to h264DecoderCapability.maxHeight,
+            "receiverSupports4k30" to h264DecoderCapability.supports4k30,
+            "receiverDecoderName" to h264DecoderCapability.decoderName,
+            "receiverPerformanceClass" to h264DecoderCapability.performanceClass,
             "bytesReceived" to bytesReceived.get(),
             "configPacketsReceived" to configPacketsReceived.get(),
             "accessUnitsReceived" to accessUnitsReceived.get(),
@@ -3244,18 +3264,30 @@ private fun validatePerformanceProfile(json: JSONObject) {
     require(
         profile == PERFORMANCE_PROFILE_LOW_LATENCY_720P30 ||
             profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30 ||
-            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
+            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 ||
+            profile == PERFORMANCE_PROFILE_EXPERIMENTAL_4K30,
     ) {
         "unsupported performance profile: $profile"
     }
 }
 
-private fun streamAnswerResponse(decoderReady: Boolean, surfaceRendererReady: Boolean): JSONObject {
+private fun streamAnswerResponse(
+    decoderReady: Boolean,
+    surfaceRendererReady: Boolean,
+    capability: H264DecoderCapability,
+): JSONObject {
     return JSONObject()
         .put("type", "session.answer")
         .put("protocolVersion", 1)
         .put("decoderReady", decoderReady)
         .put("surfaceRendererReady", surfaceRendererReady)
+        .put("receiverMaxVideoWidth", capability.maxWidth)
+        .put("receiverMaxVideoHeight", capability.maxHeight)
+        .put("receiverSupports4k30", capability.supports4k30)
+        .put("receiverVideoCodec", "h264")
+        .put("receiverDecoderName", capability.decoderName)
+        .put("receiverPerformanceClass", capability.performanceClass)
+        .put("receiverPresentedFpsRecent", 0)
 }
 
 private fun receiverStoppedResponse(): JSONObject {
@@ -3280,15 +3312,113 @@ private fun closeQuietly(socket: ServerSocket?) {
     }
 }
 
-private fun hasH264Decoder(): Boolean {
+private data class H264DecoderCapability(
+    val decoderAvailable: Boolean,
+    val maxWidth: Int,
+    val maxHeight: Int,
+    val maxFps: Int,
+    val supports4k30: Boolean,
+    val decoderName: String,
+    val performanceClass: String,
+)
+
+private fun queryH264DecoderCapability(): H264DecoderCapability {
     return try {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { codecInfo ->
-            !codecInfo.isEncoder &&
-                codecInfo.supportedTypes.any { type ->
-                    type.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true)
+        var best = H264DecoderCapability(
+            decoderAvailable = false,
+            maxWidth = 0,
+            maxHeight = 0,
+            maxFps = 0,
+            supports4k30 = false,
+            decoderName = "unknown",
+            performanceClass = "unavailable",
+        )
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.forEach { codecInfo ->
+            if (codecInfo.isEncoder ||
+                codecInfo.supportedTypes.none {
+                    it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true)
                 }
+            ) {
+                return@forEach
+            }
+            val capabilities = codecInfo.getCapabilitiesForType(
+                MediaFormat.MIMETYPE_VIDEO_AVC,
+            )
+            val videoCapabilities = capabilities.videoCapabilities ?: return@forEach
+            val maxWidth = videoCapabilities.supportedWidths.upper
+            val maxHeight = videoCapabilities.supportedHeights.upper
+            val maxFps = supportedFpsFor(
+                videoCapabilities,
+                minOf(maxWidth, 1920),
+                minOf(maxHeight, 1080),
+            )
+            val sizeRate4k = try {
+                videoCapabilities.areSizeAndRateSupported(3840, 2160, 30.0)
+            } catch (_: Exception) {
+                false
+            }
+            val performancePoint4k = supports4k30PerformancePoint(videoCapabilities)
+            val supports4k30 = sizeRate4k && performancePoint4k
+            val candidate = H264DecoderCapability(
+                decoderAvailable = true,
+                maxWidth = maxWidth,
+                maxHeight = maxHeight,
+                maxFps = maxFps,
+                supports4k30 = supports4k30,
+                decoderName = codecInfo.name,
+                performanceClass = if (supports4k30) "4k30" else "up_to_${maxWidth}x$maxHeight",
+            )
+            if (candidate.supports4k30 ||
+                (!best.supports4k30 && candidate.maxWidth * candidate.maxHeight > best.maxWidth * best.maxHeight)
+            ) {
+                best = candidate
+            }
+        }
+        best
+    } catch (error: Exception) {
+        Log.w(
+            "PC_TV_MIRROR",
+            "Could not query H.264 decoder capability: ${error.message ?: error.javaClass.simpleName}",
+        )
+        H264DecoderCapability(
+            decoderAvailable = false,
+            maxWidth = 0,
+            maxHeight = 0,
+            maxFps = 0,
+            supports4k30 = false,
+            decoderName = "unknown",
+            performanceClass = "query_failed",
+        )
+    }
+}
+
+private fun supportedFpsFor(
+    videoCapabilities: MediaCodecInfo.VideoCapabilities,
+    width: Int,
+    height: Int,
+): Int {
+    return try {
+        videoCapabilities.getSupportedFrameRatesFor(width, height).upper.toInt()
+    } catch (_: Exception) {
+        0
+    }
+}
+
+private fun supports4k30PerformancePoint(
+    videoCapabilities: MediaCodecInfo.VideoCapabilities,
+): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        return true
+    }
+    return try {
+        val points = videoCapabilities.supportedPerformancePoints
+        if (points.isNullOrEmpty()) {
+            true
+        } else {
+            val target = MediaCodecInfo.VideoCapabilities.PerformancePoint(3840, 2160, 30)
+            points.any { it.covers(target) }
         }
     } catch (_: Exception) {
-        false
+        true
     }
 }

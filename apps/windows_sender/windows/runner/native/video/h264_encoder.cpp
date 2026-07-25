@@ -443,6 +443,10 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
     ApplyLowLatencyOptions(transform_.get(), config_.keyframe_interval_frames,
                            &diagnostics_);
     if (!ConfigureTypes(error)) {
+      if (config_.require_hardware_encoder) {
+        Stop();
+        return false;
+      }
       Log("Hardware H.264 encoder rejected NV12 input; falling back: " +
           *error);
       transform_ = nullptr;
@@ -456,6 +460,13 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
   }
 
   if (!transform_) {
+    if (config_.require_hardware_encoder) {
+      *error = hardware_error.empty()
+                   ? "Hardware H.264 encoder is required for this profile"
+                   : hardware_error;
+      Stop();
+      return false;
+    }
     if (!CreateSoftwareEncoder(error)) {
       Stop();
       return false;

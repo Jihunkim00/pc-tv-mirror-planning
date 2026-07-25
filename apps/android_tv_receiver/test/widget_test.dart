@@ -173,6 +173,11 @@ void main() {
       'localIpv4Addresses': ['192.168.1.40'],
       'decoderReady': true,
       'surfaceRendererReady': true,
+      'receiverMaxVideoWidth': 3840,
+      'receiverMaxVideoHeight': 2160,
+      'receiverSupports4k30': true,
+      'receiverDecoderName': 'c2.vendor.avc.decoder',
+      'receiverPerformanceClass': '4k30',
       'receivedAccessUnitFps': 29.5,
       'decoderInputFps': 29.4,
       'decoderOutputFps': 29.3,
@@ -265,6 +270,11 @@ void main() {
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
     expect(snapshot.localIpv4Addresses, ['192.168.1.40']);
+    expect(snapshot.receiverMaxVideoWidth, 3840);
+    expect(snapshot.receiverMaxVideoHeight, 2160);
+    expect(snapshot.receiverSupports4k30, isTrue);
+    expect(snapshot.receiverDecoderName, 'c2.vendor.avc.decoder');
+    expect(snapshot.receiverPerformanceClass, '4k30');
     expect(snapshot.receivedAccessUnitFps, 29.5);
     expect(snapshot.releasedToSurfaceFrames, 4);
     // Legacy compatibility only; this does not prove Surface latch/render.
@@ -412,8 +422,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
@@ -435,8 +446,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
@@ -447,8 +459,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 

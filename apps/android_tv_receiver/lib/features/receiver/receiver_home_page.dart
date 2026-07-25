@@ -682,9 +682,18 @@ class _ReceiverStatusPanel extends StatelessWidget {
                       '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
           ),
           _MetricRow(
+            label: '4K',
+            value:
+                '${capabilities?.supports4k30 ?? snapshot?.receiverSupports4k30 ?? false} '
+                '${snapshot?.receiverMaxVideoWidth ?? capabilities?.maxWidth ?? 0}x'
+                '${snapshot?.receiverMaxVideoHeight ?? capabilities?.maxHeight ?? 0}',
+          ),
+          _MetricRow(
             label: 'Decoder',
             value: snapshot?.decoderReady == true
-                ? 'MediaCodec ready'
+                ? snapshot?.receiverDecoderName ??
+                      capabilities?.decoderName ??
+                      'MediaCodec ready'
                 : 'Checking',
           ),
           _MetricRow(

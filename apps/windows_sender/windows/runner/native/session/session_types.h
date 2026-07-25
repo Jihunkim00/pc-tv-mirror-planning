@@ -148,6 +148,38 @@ struct NativeSnapshot {
   bool audio_transport_active = false;
   std::string audio_routing_mode = "defaultRenderEndpointLoopback";
   std::string audio_mute_unsupported_reason;
+  std::string tv_audio_source_device_id;
+  std::string tv_audio_source_device_name;
+  std::string pc_monitor_device_id;
+  std::string pc_monitor_device_name;
+  bool local_monitor_active = false;
+  bool local_monitor_muted = false;
+  int local_monitor_queue_depth = 0;
+  std::uint64_t local_monitor_dropped_buffers = 0;
+  std::string audio_capture_format;
+  std::string audio_monitor_format;
+  std::string audio_routing_unsupported_reason;
+  std::string requested_profile = "lowLatency720p30";
+  std::string applied_profile = "lowLatency720p30";
+  std::string profile_fallback_reason;
+  int output_width = 1280;
+  int output_height = 720;
+  int target_bitrate_kbps = 6000;
+  std::string encoder_name = "unknown";
+  bool hardware_encoder_active = false;
+  bool encoder_supports_requested_resolution = false;
+  int receiver_max_width = 0;
+  int receiver_max_height = 0;
+  bool receiver_supports_4k30 = false;
+  double capture_fps_recent = 0.0;
+  double conversion_fps_recent = 0.0;
+  double encoder_input_fps_recent = 0.0;
+  double encoder_output_fps_recent = 0.0;
+  double transport_video_fps_recent = 0.0;
+  double receiver_presented_fps_recent = 0.0;
+  double conversion_duration_p95_ms = 0.0;
+  double encoder_queue_wait_p95_ms = 0.0;
+  double transport_send_p95_ms = 0.0;
 };
 
 struct StartSessionOptions {
@@ -155,6 +187,8 @@ struct StartSessionOptions {
   int receiver_port = 50720;
   std::string request_json;
   std::string source_id;
+  std::string tv_audio_source_device_id;
+  std::string pc_monitor_device_id;
   bool audio_enabled = true;
   bool pc_local_audio_mute_requested = false;
   VideoStreamConfig video;
