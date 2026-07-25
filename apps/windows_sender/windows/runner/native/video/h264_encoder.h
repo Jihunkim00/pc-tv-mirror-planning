@@ -13,6 +13,18 @@
 
 namespace pctv {
 
+struct H264EncoderDiagnostics {
+  std::string selected_encoder_name = "unknown";
+  bool selected_encoder_hardware = false;
+  bool selected_encoder_async = false;
+  bool encoder_d3d11_aware = false;
+  std::string encoder_input_format = "NV12 1280x720@30";
+  std::string encoder_output_format = "H.264 1280x720@30";
+  std::uint64_t encoder_backpressure_count = 0;
+  std::string low_latency_options_applied;
+  std::string unsupported_encoder_options;
+};
+
 class H264Encoder {
  public:
   H264Encoder();
@@ -27,8 +39,11 @@ class H264Encoder {
               std::string* error);
   void Stop();
   H264ParameterSets parameter_sets() const { return parameter_sets_; }
+  H264EncoderDiagnostics diagnostics() const { return diagnostics_; }
 
  private:
+  bool CreateHardwareEncoder(std::string* error);
+  bool CreateSoftwareEncoder(std::string* error);
   bool ConfigureTypes(std::string* error);
   bool ForceNextKeyFrame(std::string* error);
   bool RefreshSequenceHeaderFromCurrentType(bool require_header,
@@ -41,7 +56,9 @@ class H264Encoder {
   winrt::com_ptr<IMFTransform> transform_;
   std::vector<std::uint8_t> sequence_header_;
   H264ParameterSets parameter_sets_;
+  H264EncoderDiagnostics diagnostics_;
   std::uint64_t first_pts_us_ = 0;
+  std::uint64_t encoder_backpressure_count_ = 0;
   bool force_next_key_frame_ = false;
   bool mf_started_ = false;
 };

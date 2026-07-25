@@ -65,11 +65,22 @@ final class ReceiverSessionSnapshot {
     this.configPacketsReceived = 0,
     this.accessUnitsReceived = 0,
     this.keyFramesReceived = 0,
+    this.receivedAccessUnitFps = 0,
     this.decoderInputFrames = 0,
     this.decoderOutputFrames = 0,
     int? releasedToSurfaceFrames,
     int? renderedFrames,
     this.droppedFrames = 0,
+    this.decoderInputFps = 0,
+    this.decoderOutputFps = 0,
+    this.releasedToSurfaceFps = 0,
+    this.lateFrameDropFps = 0,
+    this.receivedFrameIntervalAverageMs = 0,
+    this.receivedFrameIntervalP95Ms = 0,
+    this.decoderOutputIntervalAverageMs = 0,
+    this.presentedFrameIntervalAverageMs = 0,
+    this.presentedFrameIntervalP95Ms = 0,
+    this.receiverQueueDepth = 0,
     this.codecCreateCount = 0,
     this.codecReleaseCount = 0,
     this.surfaceCreatedCount = 0,
@@ -86,7 +97,7 @@ final class ReceiverSessionSnapshot {
     this.containerHeight = 0,
     this.renderedViewWidth = 0,
     this.renderedViewHeight = 0,
-    this.scaleMode = 'fitCenter',
+    this.scaleMode = 'fit',
     this.aspectRatioError = 0,
     this.configuredWidth = 0,
     this.configuredHeight = 0,
@@ -104,7 +115,20 @@ final class ReceiverSessionSnapshot {
     this.latencyP95Ms = 0,
     this.maxReceiverQueueDepth = 0,
     this.staleAccessUnitsDropped = 0,
+    this.lateOutputBuffersDropped = 0,
+    this.frameSequenceGaps = 0,
     this.lastFrameAgeMs = 0,
+    this.currentFrameAgeMs = 0,
+    this.estimatedReceiverLatencyMs = 0,
+    this.rendererMode = 'lowLatencyPaced',
+    this.scheduledRenderFrames = 0,
+    this.immediateRenderFallbackFrames = 0,
+    this.averageRenderScheduleDelayMs = 0,
+    this.p95RenderScheduleDelayMs = 0,
+    this.playoutDelayMs = 0,
+    this.pacingResyncCount = 0,
+    this.fullscreenEnabled = false,
+    this.autoFullscreen = true,
     this.lastDecoderError,
     this.developerMessage,
     this.errorCode,
@@ -121,10 +145,21 @@ final class ReceiverSessionSnapshot {
   final int configPacketsReceived;
   final int accessUnitsReceived;
   final int keyFramesReceived;
+  final double receivedAccessUnitFps;
   final int decoderInputFrames;
   final int decoderOutputFrames;
   final int releasedToSurfaceFrames;
   final int droppedFrames;
+  final double decoderInputFps;
+  final double decoderOutputFps;
+  final double releasedToSurfaceFps;
+  final double lateFrameDropFps;
+  final double receivedFrameIntervalAverageMs;
+  final double receivedFrameIntervalP95Ms;
+  final double decoderOutputIntervalAverageMs;
+  final double presentedFrameIntervalAverageMs;
+  final double presentedFrameIntervalP95Ms;
+  final int receiverQueueDepth;
   final int codecCreateCount;
   final int codecReleaseCount;
   final int surfaceCreatedCount;
@@ -159,13 +194,47 @@ final class ReceiverSessionSnapshot {
   final double latencyP95Ms;
   final int maxReceiverQueueDepth;
   final int staleAccessUnitsDropped;
+  final int lateOutputBuffersDropped;
+  final int frameSequenceGaps;
   final double lastFrameAgeMs;
+  final double currentFrameAgeMs;
+  final double estimatedReceiverLatencyMs;
+  final String rendererMode;
+  final int scheduledRenderFrames;
+  final int immediateRenderFallbackFrames;
+  final double averageRenderScheduleDelayMs;
+  final double p95RenderScheduleDelayMs;
+  final double playoutDelayMs;
+  final int pacingResyncCount;
+  final bool fullscreenEnabled;
+  final bool autoFullscreen;
   final String? lastDecoderError;
   final String? developerMessage;
   final MirrorErrorCode? errorCode;
 
   @Deprecated('Use releasedToSurfaceFrames; latch/render is not verified.')
   int get renderedFrames => releasedToSurfaceFrames;
+
+  String get bottleneckSummary {
+    if (receivedAccessUnitFps >= 27 &&
+        releasedToSurfaceFps >= 27 &&
+        presentedFrameIntervalP95Ms <= 50) {
+      return 'healthy';
+    }
+    if (receivedAccessUnitFps >= 27 && decoderOutputFps < 27) {
+      return 'decoder_bottleneck';
+    }
+    if (decoderOutputFps >= 27 && releasedToSurfaceFps < 27) {
+      return 'presentation_bottleneck';
+    }
+    if (releasedToSurfaceFps >= 27 && presentedFrameIntervalP95Ms > 50) {
+      return 'pacing_jitter';
+    }
+    if (receivedAccessUnitFps > 0 && receivedAccessUnitFps < 27) {
+      return 'network_or_parser_bottleneck';
+    }
+    return 'warming_up';
+  }
 
   factory ReceiverSessionSnapshot.fromJson(Map<String, Object?> json) {
     final errorCode = json['errorCode'];
@@ -185,6 +254,10 @@ final class ReceiverSessionSnapshot {
       configPacketsReceived: _readOptionalInt(json, 'configPacketsReceived'),
       accessUnitsReceived: _readOptionalInt(json, 'accessUnitsReceived'),
       keyFramesReceived: _readOptionalInt(json, 'keyFramesReceived'),
+      receivedAccessUnitFps: _readOptionalDouble(
+        json,
+        'receivedAccessUnitFps',
+      ),
       decoderInputFrames: _readOptionalInt(json, 'decoderInputFrames'),
       decoderOutputFrames: _readOptionalInt(json, 'decoderOutputFrames'),
       releasedToSurfaceFrames: _readOptionalInt(
@@ -193,6 +266,34 @@ final class ReceiverSessionSnapshot {
         fallbackKey: 'renderedFrames',
       ),
       droppedFrames: _readOptionalInt(json, 'droppedFrames'),
+      decoderInputFps: _readOptionalDouble(json, 'decoderInputFps'),
+      decoderOutputFps: _readOptionalDouble(json, 'decoderOutputFps'),
+      releasedToSurfaceFps: _readOptionalDouble(
+        json,
+        'releasedToSurfaceFps',
+      ),
+      lateFrameDropFps: _readOptionalDouble(json, 'lateFrameDropFps'),
+      receivedFrameIntervalAverageMs: _readOptionalDouble(
+        json,
+        'receivedFrameIntervalAverageMs',
+      ),
+      receivedFrameIntervalP95Ms: _readOptionalDouble(
+        json,
+        'receivedFrameIntervalP95Ms',
+      ),
+      decoderOutputIntervalAverageMs: _readOptionalDouble(
+        json,
+        'decoderOutputIntervalAverageMs',
+      ),
+      presentedFrameIntervalAverageMs: _readOptionalDouble(
+        json,
+        'presentedFrameIntervalAverageMs',
+      ),
+      presentedFrameIntervalP95Ms: _readOptionalDouble(
+        json,
+        'presentedFrameIntervalP95Ms',
+      ),
+      receiverQueueDepth: _readOptionalInt(json, 'receiverQueueDepth'),
       codecCreateCount: _readOptionalInt(json, 'codecCreateCount'),
       codecReleaseCount: _readOptionalInt(json, 'codecReleaseCount'),
       surfaceCreatedCount: _readOptionalInt(json, 'surfaceCreatedCount'),
@@ -215,7 +316,7 @@ final class ReceiverSessionSnapshot {
       scaleMode: _readOptionalString(
         json,
         'scaleMode',
-        defaultValue: 'fitCenter',
+        defaultValue: 'fit',
       ),
       aspectRatioError: _readOptionalDouble(json, 'aspectRatioError'),
       configuredWidth: _readOptionalInt(json, 'configuredWidth'),
@@ -249,7 +350,39 @@ final class ReceiverSessionSnapshot {
         json,
         'staleAccessUnitsDropped',
       ),
+      lateOutputBuffersDropped: _readOptionalInt(
+        json,
+        'lateOutputBuffersDropped',
+      ),
+      frameSequenceGaps: _readOptionalInt(json, 'frameSequenceGaps'),
       lastFrameAgeMs: _readOptionalDouble(json, 'lastFrameAgeMs'),
+      currentFrameAgeMs: _readOptionalDouble(json, 'currentFrameAgeMs'),
+      estimatedReceiverLatencyMs: _readOptionalDouble(
+        json,
+        'estimatedReceiverLatencyMs',
+      ),
+      rendererMode: _readOptionalString(json, 'rendererMode'),
+      scheduledRenderFrames: _readOptionalInt(json, 'scheduledRenderFrames'),
+      immediateRenderFallbackFrames: _readOptionalInt(
+        json,
+        'immediateRenderFallbackFrames',
+      ),
+      averageRenderScheduleDelayMs: _readOptionalDouble(
+        json,
+        'averageRenderScheduleDelayMs',
+      ),
+      p95RenderScheduleDelayMs: _readOptionalDouble(
+        json,
+        'p95RenderScheduleDelayMs',
+      ),
+      playoutDelayMs: _readOptionalDouble(json, 'playoutDelayMs'),
+      pacingResyncCount: _readOptionalInt(json, 'pacingResyncCount'),
+      fullscreenEnabled: _readOptionalBool(json, 'fullscreenEnabled'),
+      autoFullscreen: _readOptionalBool(
+        json,
+        'autoFullscreen',
+        defaultValue: true,
+      ),
       lastDecoderError: json['lastDecoderError'] as String?,
       developerMessage: json['developerMessage'] as String?,
       errorCode: errorCode == null
@@ -293,10 +426,14 @@ bool _readBool(Map<String, Object?> json, String key) {
   throw FormatException('Expected bool for $key');
 }
 
-bool _readOptionalBool(Map<String, Object?> json, String key) {
+bool _readOptionalBool(
+  Map<String, Object?> json,
+  String key, {
+  bool defaultValue = false,
+}) {
   final value = json[key];
   if (value == null) {
-    return false;
+    return defaultValue;
   }
   if (value is bool) {
     return value;

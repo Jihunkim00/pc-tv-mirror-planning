@@ -305,7 +305,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 1 session',
+                  'Stage 2 session',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
@@ -394,13 +394,120 @@ class _SenderCounters extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _MetricRow(label: 'Captured', value: '${snapshot.capturedFrames}'),
             _MetricRow(
-              label: 'Capture dropped',
-              value: '${snapshot.captureDroppedFrames}',
+              label: 'Performance',
+              value: snapshot.bottleneckSummary,
             ),
-            _MetricRow(label: 'Encoded', value: '${snapshot.encodedFrames}'),
+            const Divider(height: 18),
+            _MetricSection(
+              title: 'Capture',
+              rows: [
+                _MetricRow(
+                  label: 'Target / actual',
+                  value: '${snapshot.targetFps.toStringAsFixed(1)} / '
+                      '${snapshot.capturedFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Callback',
+                  value:
+                      '${snapshot.captureCallbackFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Interval p95',
+                  value:
+                      '${snapshot.captureFrameIntervalP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Dropped',
+                  value: '${snapshot.captureDroppedFrames}',
+                ),
+                _MetricRow(
+                  label: 'Queue depth',
+                  value: '${snapshot.queueDepthCapture}',
+                ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricSection(
+              title: 'Convert / Encode',
+              rows: [
+                _MetricRow(
+                  label: 'Converted',
+                  value: '${snapshot.convertedFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Encoder input',
+                  value: '${snapshot.encoderInputFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Encoded',
+                  value: '${snapshot.encodedFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Convert path',
+                  value:
+                      '${snapshot.captureToConvertAverageMs.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Encode avg/p95',
+                  value:
+                      '${snapshot.encodeDurationAverageMs.toStringAsFixed(1)}/'
+                      '${snapshot.encodeDurationP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Encoder',
+                  value: snapshot.selectedEncoderHardware
+                      ? '${snapshot.selectedEncoderName} (hardware)'
+                      : '${snapshot.selectedEncoderName} (software)',
+                ),
+                _MetricRow(
+                  label: 'Backpressure',
+                  value: '${snapshot.encoderBackpressureCount}',
+                ),
+                _MetricRow(
+                  label: 'Queue depth',
+                  value: '${snapshot.queueDepthEncoder}',
+                ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricSection(
+              title: 'Network',
+              rows: [
+                _MetricRow(
+                  label: 'Sent',
+                  value: '${snapshot.sentAccessUnitFps.toStringAsFixed(1)} fps',
+                ),
+                _MetricRow(
+                  label: 'Send duration',
+                  value:
+                      '${snapshot.accessUnitSendDurationAverageMs.toStringAsFixed(1)}/'
+                      '${snapshot.accessUnitSendDurationP95Ms.toStringAsFixed(1)} ms',
+                ),
+                _MetricRow(
+                  label: 'Socket calls',
+                  value:
+                      '${snapshot.socketSendCallsPerSecond.toStringAsFixed(1)}/s',
+                ),
+                _MetricRow(
+                  label: 'Pending',
+                  value: '${snapshot.pendingSendBytes} B',
+                ),
+                _MetricRow(
+                  label: 'Queue depth',
+                  value: '${snapshot.queueDepthTransport}',
+                ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricRow(
+                label: 'Captured total', value: '${snapshot.capturedFrames}'),
+            _MetricRow(
+              label: 'Last sequence',
+              value: '${snapshot.lastProcessedFrameSequence}',
+            ),
             _MetricRow(
               label: 'Encoder input dropped',
               value: '${snapshot.encoderInputDroppedFrames}',
@@ -435,6 +542,25 @@ class _SenderCounters extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MetricSection extends StatelessWidget {
+  const _MetricSection({required this.title, required this.rows});
+
+  final String title;
+  final List<Widget> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        ...rows,
+      ],
     );
   }
 }

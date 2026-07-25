@@ -10,6 +10,10 @@ struct Nv12Frame {
   int width = 1280;
   int height = 720;
   std::uint64_t pts_us = 0;
+  std::uint64_t capture_callback_us = 0;
+  std::uint64_t convert_started_us = 0;
+  std::uint64_t converted_us = 0;
+  std::uint64_t convert_duration_us = 0;
   int dropped_frames = 0;
   std::vector<std::uint8_t> data;
 };

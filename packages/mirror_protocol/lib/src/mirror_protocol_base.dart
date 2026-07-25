@@ -55,6 +55,24 @@ abstract final class VideoPacketFlags {
   static const int none = 0;
   static const int keyFrame = 1 << 0;
   static const int codecConfig = 1 << 1;
+  static const int extendedHeader = 1 << 2;
+}
+
+enum PerformanceProfile {
+  lowLatency720p30('lowLatency720p30'),
+  compatibility720p30('compatibility720p30');
+
+  const PerformanceProfile(this.wireName);
+
+  final String wireName;
+
+  static PerformanceProfile fromWireName(String value) {
+    return switch (value) {
+      'lowLatency720p30' => PerformanceProfile.lowLatency720p30,
+      'compatibility720p30' => PerformanceProfile.compatibility720p30,
+      _ => throw FormatException('Unsupported performance profile: $value'),
+    };
+  }
 }
 
 enum MirrorSessionState {
@@ -176,6 +194,10 @@ final class ReceiverCapabilities {
     required this.maxHeight,
     required this.maxFps,
     required this.lowLatencyDecoder,
+    this.supportedPerformanceProfiles = const [
+      PerformanceProfile.lowLatency720p30,
+      PerformanceProfile.compatibility720p30,
+    ],
     this.protocolVersion = mirrorProtocolVersion,
   });
 
@@ -187,6 +209,7 @@ final class ReceiverCapabilities {
   final int maxHeight;
   final int maxFps;
   final bool lowLatencyDecoder;
+  final List<PerformanceProfile> supportedPerformanceProfiles;
 
   Map<String, Object?> toJson() {
     return {
@@ -199,12 +222,19 @@ final class ReceiverCapabilities {
       'maxHeight': maxHeight,
       'maxFps': maxFps,
       'lowLatencyDecoder': lowLatencyDecoder,
+      'supportedPerformanceProfiles': supportedPerformanceProfiles
+          .map((profile) => profile.wireName)
+          .toList(),
     };
   }
 
   factory ReceiverCapabilities.fromJson(Map<String, Object?> json) {
     _ensureType(json, 'capabilities');
     _ensureProtocolVersion(json);
+    final profileNames = _readOptionalStringList(
+      json,
+      'supportedPerformanceProfiles',
+    );
     return ReceiverCapabilities(
       deviceId: _readString(json, 'deviceId'),
       deviceName: _readString(json, 'deviceName'),
@@ -216,6 +246,14 @@ final class ReceiverCapabilities {
       maxHeight: _readInt(json, 'maxHeight'),
       maxFps: _readInt(json, 'maxFps'),
       lowLatencyDecoder: _readBool(json, 'lowLatencyDecoder'),
+      supportedPerformanceProfiles: profileNames.isEmpty
+          ? const [
+              PerformanceProfile.lowLatency720p30,
+              PerformanceProfile.compatibility720p30,
+            ]
+          : profileNames
+              .map(PerformanceProfile.fromWireName)
+              .toList(growable: false),
     );
   }
 }
@@ -227,6 +265,7 @@ final class VideoProfile {
     required this.height,
     required this.fps,
     required this.bitrateKbps,
+    required this.performanceProfile,
   });
 
   const VideoProfile.stageOne720p30()
@@ -234,13 +273,31 @@ final class VideoProfile {
         width = 1280,
         height = 720,
         fps = 30,
-        bitrateKbps = 4000;
+        bitrateKbps = 4000,
+        performanceProfile = PerformanceProfile.lowLatency720p30;
+
+  const VideoProfile.lowLatency720p30()
+      : codec = VideoCodec.h264,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        bitrateKbps = 4000,
+        performanceProfile = PerformanceProfile.lowLatency720p30;
+
+  const VideoProfile.compatibility720p30()
+      : codec = VideoCodec.h264,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        bitrateKbps = 3000,
+        performanceProfile = PerformanceProfile.compatibility720p30;
 
   final VideoCodec codec;
   final int width;
   final int height;
   final int fps;
   final int bitrateKbps;
+  final PerformanceProfile performanceProfile;
 
   Map<String, Object?> toJson() {
     return {
@@ -249,6 +306,7 @@ final class VideoProfile {
       'height': height,
       'fps': fps,
       'bitrateKbps': bitrateKbps,
+      'performanceProfile': performanceProfile.wireName,
     };
   }
 
@@ -259,6 +317,13 @@ final class VideoProfile {
       height: _readInt(json, 'height'),
       fps: _readInt(json, 'fps'),
       bitrateKbps: _readInt(json, 'bitrateKbps'),
+      performanceProfile: PerformanceProfile.fromWireName(
+        _readOptionalString(
+          json,
+          'performanceProfile',
+          defaultValue: PerformanceProfile.lowLatency720p30.wireName,
+        ),
+      ),
     );
   }
 }
@@ -381,7 +446,8 @@ final class VideoPacket {
     this.flags = VideoPacketFlags.none,
   });
 
-  static const int headerLength = 24;
+  static const int headerLength = 28;
+  static const int legacyHeaderLength = 24;
   static const int lengthPrefixLength = 4;
   static const int maxPayloadLength = 8 * 1024 * 1024;
   static const int _magic = 0x5054564D; // PTVM
@@ -396,33 +462,34 @@ final class VideoPacket {
 
   Uint8List encodeLengthPrefixed() {
     _checkUint16('flags', flags);
-    _checkUint32('sequenceNumber', sequenceNumber);
+    _checkUint64('sequenceNumber', sequenceNumber);
     _checkUint64('ptsUs', ptsUs);
     _checkPayloadLength(payload.length);
 
     final packetLength = headerLength + payload.length;
     final bytes = Uint8List(lengthPrefixLength + packetLength);
     final data = ByteData.sublistView(bytes);
+    final encodedFlags = flags | VideoPacketFlags.extendedHeader;
     data.setUint32(0, packetLength);
     data.setUint32(4, _magic);
     data.setUint8(8, mirrorProtocolVersion);
     data.setUint8(9, type.wireValue);
-    data.setUint16(10, flags);
+    data.setUint16(10, encodedFlags);
     data.setUint64(12, ptsUs);
-    data.setUint32(20, sequenceNumber);
-    data.setUint32(24, payload.length);
+    data.setUint64(20, sequenceNumber);
+    data.setUint32(28, payload.length);
     bytes.setRange(lengthPrefixLength + headerLength, bytes.length, payload);
     return bytes;
   }
 
   factory VideoPacket.decodeLengthPrefixed(Uint8List bytes) {
-    if (bytes.length < lengthPrefixLength + headerLength) {
+    if (bytes.length < lengthPrefixLength + legacyHeaderLength) {
       throw FormatException('Video packet is too short: ${bytes.length}');
     }
 
     final data = ByteData.sublistView(bytes);
     final packetLength = data.getUint32(0);
-    if (packetLength < headerLength) {
+    if (packetLength < legacyHeaderLength) {
       throw FormatException('Invalid video packet length: $packetLength');
     }
     if (packetLength > headerLength + maxPayloadLength) {
@@ -444,8 +511,18 @@ final class VideoPacket {
       throw FormatException('Unsupported video packet version: $version');
     }
 
-    final payloadLength = data.getUint32(24);
-    if (payloadLength != packetLength - headerLength) {
+    final flags = data.getUint16(10);
+    final packetHeaderLength = (flags & VideoPacketFlags.extendedHeader) != 0
+        ? headerLength
+        : legacyHeaderLength;
+    if (packetLength < packetHeaderLength) {
+      throw FormatException(
+          'Invalid video packet header length: $packetLength');
+    }
+    final payloadLength = data.getUint32(
+      lengthPrefixLength + packetHeaderLength - 4,
+    );
+    if (payloadLength != packetLength - packetHeaderLength) {
       throw FormatException(
         'Payload length does not match packet length: $payloadLength',
       );
@@ -453,10 +530,15 @@ final class VideoPacket {
 
     return VideoPacket(
       type: VideoPacketType.fromWireValue(data.getUint8(9)),
-      flags: data.getUint16(10),
+      flags: flags,
       ptsUs: data.getUint64(12),
-      sequenceNumber: data.getUint32(20),
-      payload: Uint8List.sublistView(bytes, lengthPrefixLength + headerLength),
+      sequenceNumber: packetHeaderLength == headerLength
+          ? data.getUint64(20)
+          : data.getUint32(20),
+      payload: Uint8List.sublistView(
+        bytes,
+        lengthPrefixLength + packetHeaderLength,
+      ),
     );
   }
 }
@@ -794,6 +876,17 @@ List<String> _readStringList(Map<String, Object?> json, String key) {
   throw FormatException('Expected string list for $key');
 }
 
+List<String> _readOptionalStringList(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return const <String>[];
+  }
+  if (value is List && value.every((item) => item is String)) {
+    return value.cast<String>();
+  }
+  throw FormatException('Expected string list for $key');
+}
+
 Map<String, Object?> _readMap(Map<String, Object?> json, String key) {
   final value = json[key];
   if (value is Map<String, Object?>) {
@@ -803,4 +896,19 @@ Map<String, Object?> _readMap(Map<String, Object?> json, String key) {
     return value.cast<String, Object?>();
   }
   throw FormatException('Expected object for $key');
+}
+
+String _readOptionalString(
+  Map<String, Object?> json,
+  String key, {
+  required String defaultValue,
+}) {
+  final value = json[key];
+  if (value == null) {
+    return defaultValue;
+  }
+  if (value is String) {
+    return value;
+  }
+  throw FormatException('Expected string for $key');
 }

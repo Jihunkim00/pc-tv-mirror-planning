@@ -9,10 +9,12 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace pctv {
@@ -28,12 +30,16 @@ class MirrorSession {
     std::vector<std::uint8_t> bytes;
     bool access_unit = false;
     bool key_frame = false;
+    std::uint64_t sequence = 0;
+    std::uint64_t encoded_done_us = 0;
   };
 
   void EncodeLoop();
   void SendLoop();
   bool SendCodecConfig(const H264ParameterSets& parameter_sets);
-  bool SendFirstAccessUnit(std::vector<std::uint8_t> packet, bool key_frame);
+  bool SendFirstAccessUnit(std::vector<std::uint8_t> packet,
+                           bool key_frame,
+                           std::uint64_t encoded_done_us);
   NativeSnapshot BuildSnapshot(const std::string& state,
                                const std::string& user_message);
   NativeSnapshot CurrentSnapshotLocked();
@@ -56,17 +62,34 @@ class MirrorSession {
   VideoTransportClient transport_;
   std::thread encode_thread_;
   std::thread send_thread_;
-  std::atomic_uint32_t next_sequence_{1};
+  std::atomic_uint64_t next_sequence_{1};
   std::atomic_uint64_t captured_frames_{0};
   std::atomic_uint64_t capture_dropped_frames_{0};
+  std::atomic_uint64_t conversion_dropped_frames_{0};
   std::atomic_uint64_t encoder_input_dropped_frames_{0};
   std::atomic_uint64_t encoded_frames_{0};
   std::atomic_uint64_t transport_dropped_frames_{0};
+  std::atomic_uint64_t duplicated_frames_{0};
+  std::atomic_uint64_t last_processed_frame_sequence_{0};
   std::atomic_uint64_t codec_config_sent_{0};
   std::atomic_uint64_t key_frames_sent_{0};
   std::atomic_uint64_t packets_sent_{0};
   std::atomic_uint64_t bytes_sent_{0};
   std::atomic_uint64_t send_completed_bytes_{0};
+  std::uint64_t last_selected_capture_pts_us_ = 0;
+  std::deque<std::uint64_t> capture_callback_events_us_;
+  std::deque<std::uint64_t> captured_events_us_;
+  std::deque<std::uint64_t> converted_events_us_;
+  std::deque<std::uint64_t> encoder_input_events_us_;
+  std::deque<std::uint64_t> encoded_events_us_;
+  std::deque<std::uint64_t> sent_access_unit_events_us_;
+  std::deque<std::uint64_t> socket_send_call_events_us_;
+  std::deque<std::pair<std::uint64_t, double>> capture_to_convert_samples_;
+  std::deque<std::pair<std::uint64_t, double>> convert_to_encode_samples_;
+  std::deque<std::pair<std::uint64_t, double>> encode_duration_samples_;
+  std::deque<std::pair<std::uint64_t, double>> encode_to_send_samples_;
+  std::deque<std::pair<std::uint64_t, double>> packet_send_duration_samples_;
+  std::deque<std::pair<std::uint64_t, double>> access_unit_send_duration_samples_;
   double last_capture_to_encode_ms_ = 0.0;
   double total_capture_to_encode_ms_ = 0.0;
   double max_capture_to_encode_ms_ = 0.0;

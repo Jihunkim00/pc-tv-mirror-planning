@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
 void main() {
-  testWidgets('starts the native receiver in video-only STAGE 1 mode', (
+  testWidgets('starts the native receiver in video-only STAGE 2 mode', (
     tester,
   ) async {
     final nativeApi = _FakeReceiverNativeApi();
@@ -19,10 +19,7 @@ void main() {
     expect(find.text('Waiting for PC video frames'), findsOneWidget);
     expect(find.text('State: listening'), findsOneWidget);
 
-    await tester.drag(find.byType(ListView).first, const Offset(0, -240));
-    await tester.pumpAndSettle();
-
-    expect(find.text('h264 1280x720@30'), findsOneWidget);
+    expect(find.text('Auto fullscreen'), findsOneWidget);
   });
 
   testWidgets('initial focus is Restart receiver', (tester) async {
@@ -31,10 +28,13 @@ void main() {
     expect(_focusedDebugLabel(), 'Restart receiver');
   });
 
-  testWidgets('D-pad down moves focus to the next ordered button', (
-    tester,
-  ) async {
+  testWidgets('D-pad down moves focus through ordered buttons', (tester) async {
     await _pumpReceiverApp(tester, _FakeReceiverNativeApi());
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+
+    expect(_focusedDebugLabel(), 'Fullscreen');
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
@@ -53,6 +53,8 @@ void main() {
 
     expect(nativeApi.startCalls, 2);
 
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -128,15 +130,13 @@ void main() {
     expect(_focusedDebugLabel(), 'Enabled last');
   });
 
-  testWidgets('streaming state restores focus to Stop receiver', (
-    tester,
-  ) async {
+  testWidgets('streaming state restores focus to Fullscreen', (tester) async {
     await _pumpReceiverApp(
       tester,
       _FakeReceiverNativeApi(startState: MirrorSessionState.streaming),
     );
 
-    expect(_focusedDebugLabel(), 'Stop receiver');
+    expect(_focusedDebugLabel(), 'Fullscreen');
   });
 
   testWidgets('waiting label is hidden after the first surface release', (
@@ -175,6 +175,17 @@ void main() {
       'localIpv4Addresses': ['192.168.1.40'],
       'decoderReady': true,
       'surfaceRendererReady': true,
+      'receivedAccessUnitFps': 29.5,
+      'decoderInputFps': 29.4,
+      'decoderOutputFps': 29.3,
+      'releasedToSurfaceFps': 29.2,
+      'lateFrameDropFps': 0.0,
+      'receivedFrameIntervalAverageMs': 33.5,
+      'receivedFrameIntervalP95Ms': 38.0,
+      'decoderOutputIntervalAverageMs': 34.0,
+      'presentedFrameIntervalAverageMs': 34.1,
+      'presentedFrameIntervalP95Ms': 39.0,
+      'receiverQueueDepth': 1,
       'releasedToSurfaceFrames': 4,
       'codecCreateCount': 1,
       'codecReleaseCount': 0,
@@ -192,7 +203,7 @@ void main() {
       'containerHeight': 700,
       'renderedViewWidth': 1000,
       'renderedViewHeight': 562,
-      'scaleMode': 'fitCenter',
+      'scaleMode': 'fit',
       'aspectRatioError': 0.001,
       'configuredWidth': 1280,
       'configuredHeight': 720,
@@ -210,11 +221,23 @@ void main() {
       'latencyP95Ms': 180.0,
       'maxReceiverQueueDepth': 3,
       'staleAccessUnitsDropped': 2,
+      'lateOutputBuffersDropped': 1,
+      'frameSequenceGaps': 0,
       'lastFrameAgeMs': 40.0,
+      'currentFrameAgeMs': 40.0,
+      'estimatedReceiverLatencyMs': 120.0,
+      'rendererMode': 'lowLatencyPaced',
+      'scheduledRenderFrames': 4,
+      'immediateRenderFallbackFrames': 0,
+      'averageRenderScheduleDelayMs': 20.0,
+      'p95RenderScheduleDelayMs': 28.0,
+      'playoutDelayMs': 30.0,
+      'pacingResyncCount': 1,
     });
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
     expect(snapshot.localIpv4Addresses, ['192.168.1.40']);
+    expect(snapshot.receivedAccessUnitFps, 29.5);
     expect(snapshot.releasedToSurfaceFrames, 4);
     // Legacy compatibility only; this does not prove Surface latch/render.
     // ignore: deprecated_member_use_from_same_package
@@ -232,7 +255,7 @@ void main() {
     expect(snapshot.sourceHeight, 720);
     expect(snapshot.containerWidth, 1000);
     expect(snapshot.renderedViewHeight, 562);
-    expect(snapshot.scaleMode, 'fitCenter');
+    expect(snapshot.scaleMode, 'fit');
     expect(snapshot.aspectRatioError, 0.001);
     expect(snapshot.configuredWidth, 1280);
     expect(snapshot.configuredHeight, 720);
@@ -244,9 +267,17 @@ void main() {
     expect(snapshot.decoderInputToOutputMs, 12.5);
     expect(snapshot.estimatedEndToEndLatencyMs, 120.0);
     expect(snapshot.latencyP95Ms, 180.0);
+    expect(snapshot.releasedToSurfaceFps, 29.2);
+    expect(snapshot.presentedFrameIntervalP95Ms, 39.0);
+    expect(snapshot.receiverQueueDepth, 1);
     expect(snapshot.maxReceiverQueueDepth, 3);
     expect(snapshot.staleAccessUnitsDropped, 2);
+    expect(snapshot.lateOutputBuffersDropped, 1);
     expect(snapshot.lastFrameAgeMs, 40.0);
+    expect(snapshot.rendererMode, 'lowLatencyPaced');
+    expect(snapshot.scheduledRenderFrames, 4);
+    expect(snapshot.pacingResyncCount, 1);
+    expect(snapshot.bottleneckSummary, 'healthy');
   });
 
   testWidgets('focused receiver button survives parent rebuild', (
@@ -272,12 +303,12 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
 
-    expect(_focusedDebugLabel(), 'Stop receiver');
+    expect(_focusedDebugLabel(), 'Fullscreen');
 
     rebuild(() {});
     await tester.pumpAndSettle();
 
-    expect(_focusedDebugLabel(), 'Stop receiver');
+    expect(_focusedDebugLabel(), 'Fullscreen');
   });
 
   testWidgets('video surface is not focusable', (tester) async {

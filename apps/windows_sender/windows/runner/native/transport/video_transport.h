@@ -12,6 +12,9 @@ namespace pctv {
 struct TransportResult {
   bool ok = false;
   std::string detail;
+  std::uint32_t send_calls = 0;
+  std::uint64_t duration_us = 0;
+  std::uint32_t bytes_sent = 0;
 };
 
 class VideoTransportClient {
@@ -36,9 +39,9 @@ class VideoTransportClient {
 };
 
 std::vector<std::uint8_t> BuildH264CodecConfigPacket(
-    std::uint32_t sequence,
+    std::uint64_t sequence,
     const H264ParameterSets& parameter_sets);
-std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint32_t sequence,
+std::vector<std::uint8_t> BuildAccessUnitPacket(std::uint64_t sequence,
                                                 std::uint64_t pts_us,
                                                 bool key_frame,
                                                 const std::uint8_t* data,
