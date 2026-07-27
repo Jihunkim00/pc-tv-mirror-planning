@@ -14,6 +14,7 @@ struct VideoStreamConfig {
   int bitrate_kbps = 6000;
   int keyframe_interval_frames = 30;
   std::string performance_profile = "lowLatency720p30";
+  bool require_hardware_encoder = false;
 };
 
 struct Nv12Frame {

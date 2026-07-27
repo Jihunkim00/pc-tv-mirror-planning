@@ -82,7 +82,8 @@ abstract final class VideoPacketFlags {
 enum PerformanceProfile {
   lowLatency720p30('lowLatency720p30'),
   compatibility720p30('compatibility720p30'),
-  highQuality1080p30('highQuality1080p30');
+  highQuality1080p30('highQuality1080p30'),
+  experimental4k30('experimental4k30');
 
   const PerformanceProfile(this.wireName);
 
@@ -93,6 +94,7 @@ enum PerformanceProfile {
       'lowLatency720p30' => PerformanceProfile.lowLatency720p30,
       'compatibility720p30' => PerformanceProfile.compatibility720p30,
       'highQuality1080p30' => PerformanceProfile.highQuality1080p30,
+      'experimental4k30' => PerformanceProfile.experimental4k30,
       _ => throw FormatException('Unsupported performance profile: $value'),
     };
   }
@@ -230,6 +232,10 @@ final class ReceiverCapabilities {
       PerformanceProfile.compatibility720p30,
       PerformanceProfile.highQuality1080p30,
     ],
+    this.supports4k30 = false,
+    this.videoCodec = 'h264',
+    this.decoderName = 'unknown',
+    this.performanceClass = 'unknown',
     this.protocolVersion = mirrorProtocolVersion,
   });
 
@@ -242,6 +248,10 @@ final class ReceiverCapabilities {
   final int maxFps;
   final bool lowLatencyDecoder;
   final List<PerformanceProfile> supportedPerformanceProfiles;
+  final bool supports4k30;
+  final String videoCodec;
+  final String decoderName;
+  final String performanceClass;
 
   Map<String, Object?> toJson() {
     return {
@@ -257,6 +267,12 @@ final class ReceiverCapabilities {
       'supportedPerformanceProfiles': supportedPerformanceProfiles
           .map((profile) => profile.wireName)
           .toList(),
+      'receiverMaxVideoWidth': maxWidth,
+      'receiverMaxVideoHeight': maxHeight,
+      'receiverSupports4k30': supports4k30,
+      'receiverVideoCodec': videoCodec,
+      'receiverDecoderName': decoderName,
+      'receiverPerformanceClass': performanceClass,
     };
   }
 
@@ -287,6 +303,22 @@ final class ReceiverCapabilities {
           : profileNames
                 .map(PerformanceProfile.fromWireName)
                 .toList(growable: false),
+      supports4k30: _readOptionalBool(json, 'receiverSupports4k30'),
+      videoCodec: _readOptionalString(
+        json,
+        'receiverVideoCodec',
+        defaultValue: 'h264',
+      ),
+      decoderName: _readOptionalString(
+        json,
+        'receiverDecoderName',
+        defaultValue: 'unknown',
+      ),
+      performanceClass: _readOptionalString(
+        json,
+        'receiverPerformanceClass',
+        defaultValue: 'unknown',
+      ),
     );
   }
 }
@@ -332,6 +364,14 @@ final class VideoProfile {
       fps = 30,
       bitrateKbps = 7500,
       performanceProfile = PerformanceProfile.highQuality1080p30;
+
+  const VideoProfile.experimental4k30()
+    : codec = VideoCodec.h264,
+      width = 3840,
+      height = 2160,
+      fps = 30,
+      bitrateKbps = 20000,
+      performanceProfile = PerformanceProfile.experimental4k30;
 
   final VideoCodec codec;
   final int width;
@@ -1263,6 +1303,21 @@ num _readNumber(Map<String, Object?> json, String key) {
 
 bool _readBool(Map<String, Object?> json, String key) {
   final value = json[key];
+  if (value is bool) {
+    return value;
+  }
+  throw FormatException('Expected bool for $key');
+}
+
+bool _readOptionalBool(
+  Map<String, Object?> json,
+  String key, {
+  bool defaultValue = false,
+}) {
+  final value = json[key];
+  if (value == null) {
+    return defaultValue;
+  }
   if (value is bool) {
     return value;
   }

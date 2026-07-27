@@ -4,8 +4,11 @@
 
 #include "native/audio/system_audio_loopback.h"
 
-#include <functiondiscoverykeys_devpkey.h>
+#include "native/audio/audio_device_enumerator.h"
+
 #include <mmreg.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <propvarutil.h>
 
 #include <algorithm>
@@ -28,7 +31,7 @@ std::string HResultText(const char* operation, HRESULT hr) {
   return stream.str();
 }
 
-std::string WideToUtf8(const wchar_t* value) {
+std::string LocalWideToUtf8(const wchar_t* value) {
   if (value == nullptr || value[0] == L'\0') {
     return {};
   }
@@ -41,6 +44,27 @@ std::string WideToUtf8(const wchar_t* value) {
   WideCharToMultiByte(CP_UTF8, 0, value, -1, output.data(), size, nullptr,
                       nullptr);
   return output;
+}
+
+std::string FormatDescription(const WAVEFORMATEX* format) {
+  if (format == nullptr) {
+    return {};
+  }
+  WORD tag = format->wFormatTag;
+  if (tag == WAVE_FORMAT_EXTENSIBLE) {
+    const auto* extensible =
+        reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format);
+    if (extensible->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
+      tag = WAVE_FORMAT_IEEE_FLOAT;
+    } else if (extensible->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
+      tag = WAVE_FORMAT_PCM;
+    }
+  }
+  std::ostringstream stream;
+  stream << format->nSamplesPerSec << " Hz " << format->nChannels << " ch "
+         << (tag == WAVE_FORMAT_IEEE_FLOAT ? "float" : "pcm")
+         << format->wBitsPerSample;
+  return stream.str();
 }
 
 std::int16_t FloatToS16(float value) {
@@ -63,6 +87,11 @@ SystemAudioLoopback::~SystemAudioLoopback() {
 }
 
 bool SystemAudioLoopback::Start(std::string* error) {
+  return Start(std::string(), error);
+}
+
+bool SystemAudioLoopback::Start(const std::string& device_id,
+                                std::string* error) {
   Stop();
 
   winrt::com_ptr<IMMDeviceEnumerator> enumerator;
@@ -73,10 +102,26 @@ bool SystemAudioLoopback::Start(std::string* error) {
     return false;
   }
 
-  hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, device_.put());
-  if (FAILED(hr)) {
-    *error = HResultText("GetDefaultAudioEndpoint(loopback render)", hr);
-    return false;
+  if (device_id.empty()) {
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, device_.put());
+    if (FAILED(hr)) {
+      *error = HResultText("GetDefaultAudioEndpoint(loopback render)", hr);
+      return false;
+    }
+  } else {
+    const auto wide_id = Utf8ToWide(device_id);
+    hr = enumerator->GetDevice(wide_id.c_str(), device_.put());
+    if (FAILED(hr)) {
+      *error = HResultText("IMMDeviceEnumerator::GetDevice(loopback render)",
+                           hr);
+      return false;
+    }
+  }
+
+  LPWSTR raw_id = nullptr;
+  if (SUCCEEDED(device_->GetId(&raw_id)) && raw_id != nullptr) {
+    device_id_ = pctv::WideToUtf8(raw_id);
+    CoTaskMemFree(raw_id);
   }
 
   winrt::com_ptr<IPropertyStore> properties;
@@ -85,7 +130,7 @@ bool SystemAudioLoopback::Start(std::string* error) {
     PropVariantInit(&name);
     if (SUCCEEDED(properties->GetValue(PKEY_Device_FriendlyName, &name)) &&
         name.vt == VT_LPWSTR) {
-      device_name_ = WideToUtf8(name.pwszVal);
+      device_name_ = LocalWideToUtf8(name.pwszVal);
     }
     PropVariantClear(&name);
   }
@@ -120,6 +165,7 @@ bool SystemAudioLoopback::Start(std::string* error) {
       input_format_tag_ = WAVE_FORMAT_PCM;
     }
   }
+  capture_format_ = FormatDescription(mix_format_);
 
   constexpr REFERENCE_TIME kBufferDuration100Ns = 1'000'000;  // 100ms.
   DWORD stream_flags =
@@ -248,6 +294,9 @@ void SystemAudioLoopback::Stop() {
   input_channels_ = 0;
   input_bits_per_sample_ = 0;
   input_format_tag_ = 0;
+  device_id_.clear();
+  device_name_.clear();
+  capture_format_.clear();
   event_driven_ = false;
 }
 

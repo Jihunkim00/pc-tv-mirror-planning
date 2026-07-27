@@ -13,6 +13,7 @@ import android.media.AudioFormat
 import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.media.MediaFormat
+import android.media.MediaCodecInfo
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -51,8 +52,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.collections.ArrayDeque
 
 class MainActivity : FlutterActivity() {
-    private val h264DecoderAvailable = hasH264Decoder()
-    private val receiverServer = StageOneReceiverServer(h264DecoderAvailable)
+    private val h264DecoderCapability = queryH264DecoderCapability()
+    private val receiverServer = StageOneReceiverServer(h264DecoderCapability)
     private var receiverControlsChannel: MethodChannel? = null
     private var fullscreenEnabled = false
 
@@ -143,21 +144,31 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun capabilities(): Map<String, Any> {
+        val profiles = mutableListOf(
+            PERFORMANCE_PROFILE_LOW_LATENCY_720P30,
+            PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
+            PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
+        )
+        if (h264DecoderCapability.supports4k30) {
+            profiles.add(PERFORMANCE_PROFILE_EXPERIMENTAL_4K30)
+        }
         return mapOf(
             "type" to "capabilities",
             "protocolVersion" to 1,
             "deviceId" to "android-tv-${Build.MODEL ?: "unknown"}",
             "deviceName" to (Build.MODEL ?: "Android TV"),
             "videoCodecs" to listOf("h264"),
-            "maxWidth" to 1920,
-            "maxHeight" to 1080,
-            "maxFps" to 30,
-            "lowLatencyDecoder" to h264DecoderAvailable,
-            "supportedPerformanceProfiles" to listOf(
-                PERFORMANCE_PROFILE_LOW_LATENCY_720P30,
-                PERFORMANCE_PROFILE_COMPATIBILITY_720P30,
-                PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
-            ),
+            "maxWidth" to h264DecoderCapability.maxWidth,
+            "maxHeight" to h264DecoderCapability.maxHeight,
+            "maxFps" to h264DecoderCapability.maxFps,
+            "lowLatencyDecoder" to h264DecoderCapability.decoderAvailable,
+            "supportedPerformanceProfiles" to profiles,
+            "receiverMaxVideoWidth" to h264DecoderCapability.maxWidth,
+            "receiverMaxVideoHeight" to h264DecoderCapability.maxHeight,
+            "receiverSupports4k30" to h264DecoderCapability.supports4k30,
+            "receiverVideoCodec" to "h264",
+            "receiverDecoderName" to h264DecoderCapability.decoderName,
+            "receiverPerformanceClass" to h264DecoderCapability.performanceClass,
         )
     }
 }
@@ -171,6 +182,7 @@ private const val SCALE_MODE_FIT_CENTER = "fitCenter"
 private const val PERFORMANCE_PROFILE_LOW_LATENCY_720P30 = "lowLatency720p30"
 private const val PERFORMANCE_PROFILE_COMPATIBILITY_720P30 = "compatibility720p30"
 private const val PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 = "highQuality1080p30"
+private const val PERFORMANCE_PROFILE_EXPERIMENTAL_4K30 = "experimental4k30"
 private const val MAX_PACKET_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_ACCESS_UNIT_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_CODEC_CONFIG_PAYLOAD = 24 + 64 * 1024 + 64 * 1024
@@ -190,12 +202,13 @@ private const val AUDIO_SAMPLE_RATE = 48000
 private const val AUDIO_CHANNELS = 2
 private const val MAX_AUDIO_ACCESS_UNIT_QUEUE_DEPTH = 8
 private const val TARGET_AUDIO_BUFFER_MS = 120
+private const val AUDIO_TRACK_RECREATE_RETRY_LIMIT = 1
 private const val VIDEO_LATE_FOR_AUDIO_DROP_US = 80_000L
 private const val VIDEO_EARLY_FOR_AUDIO_SCHEDULE_US = 50_000L
 private const val AV_SYNC_RESYNC_THRESHOLD_US = 150_000L
 
 private class StageOneReceiverServer(
-    private val h264DecoderAvailable: Boolean,
+    private val h264DecoderCapability: H264DecoderCapability,
 ) {
     companion object {
         const val DEFAULT_PORT = 50720
@@ -204,6 +217,8 @@ private class StageOneReceiverServer(
 
     private val audioDecoder = StageThreeAudioDecoder()
     private val decoder = StageOneVideoDecoder(audioDecoder)
+    private val h264DecoderAvailable: Boolean
+        get() = h264DecoderCapability.decoderAvailable
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -225,6 +240,9 @@ private class StageOneReceiverServer(
 
     @Volatile
     private var connectionId = 0L
+
+    @Volatile
+    private var receiverSessionGeneration = 0L
 
     @Volatile
     private var currentSessionId = ""
@@ -413,15 +431,23 @@ private class StageOneReceiverServer(
                 clientSocket = client
                 clientConnected = true
                 connectionId += 1
+                receiverSessionGeneration += 1
+                prepareForNewStreamingSession("TCP reconnect generation=$receiverSessionGeneration")
                 playbackState = "connecting"
                 pauseCommandPending = false
                 resumeCommandPending = false
                 try {
                     handleClient(client)
                 } finally {
+                    decoder.releaseCodec()
+                    audioDecoder.shutdownAudioSession(
+                        reason = "sender socket disconnected generation=$receiverSessionGeneration",
+                    )
                     clientConnected = false
                     clientSocket = null
                     currentSessionId = ""
+                    pauseCommandPending = false
+                    resumeCommandPending = false
                     if (running) {
                         playbackState = "disconnected"
                     }
@@ -453,7 +479,10 @@ private class StageOneReceiverServer(
 
             if (controlRequest.type == ControlRequestType.STREAM_STOP) {
                 decoder.releaseCodec()
-                audioDecoder.release()
+                audioDecoder.shutdownAudioSession(
+                    reason = "sender stream.stop generation=$receiverSessionGeneration",
+                    queueClearedOnReconnect = true,
+                )
                 playbackState = "disconnected"
                 writeJsonLine(socket, receiverStoppedResponse())
                 return
@@ -464,6 +493,7 @@ private class StageOneReceiverServer(
                 streamAnswerResponse(
                     decoderReady = h264DecoderAvailable,
                     surfaceRendererReady = decoder.hasSurface,
+                    capability = h264DecoderCapability,
                 ),
             )
             playbackState = "waitingForKeyFrame"
@@ -563,7 +593,9 @@ private class StageOneReceiverServer(
                     )
                 }
                 VideoPacketType.AUDIO_END_OF_STREAM -> {
-                    audioDecoder.release()
+                    audioDecoder.shutdownAudioSession(
+                        reason = "audio end-of-stream generation=$receiverSessionGeneration",
+                    )
                 }
             }
         }
@@ -650,6 +682,7 @@ private class StageOneReceiverServer(
             "receiverBindAddress" to BIND_ADDRESS,
             "localIpv4Addresses" to localIpv4Addresses(),
             "connectionId" to connectionId,
+            "receiverSessionGeneration" to receiverSessionGeneration,
             "sessionId" to currentSessionId,
             "playbackState" to playbackState,
             "pauseCommandPending" to pauseCommandPending,
@@ -658,6 +691,11 @@ private class StageOneReceiverServer(
             "playbackCommandErrorsReceived" to playbackCommandErrorsReceived.get(),
             "decoderReady" to decoderReady,
             "surfaceRendererReady" to surfaceRendererReady,
+            "receiverMaxVideoWidth" to h264DecoderCapability.maxWidth,
+            "receiverMaxVideoHeight" to h264DecoderCapability.maxHeight,
+            "receiverSupports4k30" to h264DecoderCapability.supports4k30,
+            "receiverDecoderName" to h264DecoderCapability.decoderName,
+            "receiverPerformanceClass" to h264DecoderCapability.performanceClass,
             "bytesReceived" to bytesReceived.get(),
             "configPacketsReceived" to configPacketsReceived.get(),
             "accessUnitsReceived" to accessUnitsReceived.get(),
@@ -735,11 +773,16 @@ private class StageOneReceiverServer(
             "videoFramesDroppedForAvSync" to decoderSnapshot.videoFramesDroppedForAvSync,
             "avSyncResyncCount" to decoderSnapshot.avSyncResyncCount,
             "syncMaster" to decoderSnapshot.syncMaster,
+            "audioSessionGeneration" to audioSnapshot.audioSessionGeneration,
             "audioDecoderName" to audioSnapshot.audioDecoderName,
+            "audioDecoderState" to audioSnapshot.audioDecoderState,
+            "audioDecoderInitialized" to audioSnapshot.audioDecoderInitialized,
+            "audioDecoderReleased" to audioSnapshot.audioDecoderReleased,
             "receivedAudioPackets" to audioSnapshot.receivedAudioPackets,
             "audioDecoderInputPackets" to audioSnapshot.audioDecoderInputPackets,
             "audioDecoderOutputBuffers" to audioSnapshot.audioDecoderOutputBuffers,
             "audioTrackWrittenFrames" to audioSnapshot.audioTrackWrittenFrames,
+            "audioBytesWritten" to audioSnapshot.audioBytesWritten,
             "audioQueueDepth" to audioSnapshot.audioQueueDepth,
             "pcmQueueDepth" to audioSnapshot.pcmQueueDepth,
             "audioBufferedDurationMs" to audioSnapshot.audioBufferedDurationMs,
@@ -751,6 +794,24 @@ private class StageOneReceiverServer(
             "audioCodec" to audioSnapshot.audioCodec,
             "audioSampleRate" to audioSnapshot.audioSampleRate,
             "audioChannels" to audioSnapshot.audioChannels,
+            "audioChannelMask" to audioSnapshot.audioChannelMask,
+            "audioEncodingFormat" to audioSnapshot.audioEncodingFormat,
+            "audioTrackState" to audioSnapshot.audioTrackState,
+            "audioTrackPlayState" to audioSnapshot.audioTrackPlayState,
+            "audioTrackInitialized" to audioSnapshot.audioTrackInitialized,
+            "audioTrackPlayCalled" to audioSnapshot.audioTrackPlayCalled,
+            "audioTrackRecreatedCount" to audioSnapshot.audioTrackRecreatedCount,
+            "audioTrackWriteErrorCount" to audioSnapshot.audioTrackWriteErrorCount,
+            "audioTrackDeadObjectCount" to audioSnapshot.audioTrackDeadObjectCount,
+            "audioQueueClearedOnReconnect" to audioSnapshot.audioQueueClearedOnReconnect,
+            "audioEosReceived" to audioSnapshot.audioEosReceived,
+            "audioPtsResetCount" to audioSnapshot.audioPtsResetCount,
+            "audioSessionResetCount" to audioSnapshot.audioSessionResetCount,
+            "lastAudioSessionResetReason" to audioSnapshot.lastAudioSessionResetReason,
+            "audioPacketsReceivedRecent" to audioSnapshot.audioPacketsReceivedRecent,
+            "audioPacketsDecodedRecent" to audioSnapshot.audioPacketsDecodedRecent,
+            "audioBytesWrittenRecent" to audioSnapshot.audioBytesWrittenRecent,
+            "tvAudioAudibleExpected" to audioSnapshot.tvAudioAudibleExpected,
         )
         audioSnapshot.audioLastError?.let { values["audioLastError"] = it }
         decoderSnapshot.outputCropLeft?.let { values["outputCropLeft"] = it }
@@ -782,6 +843,24 @@ private class StageOneReceiverServer(
         lastErrorCode = null
         decoder.resetDiagnostics()
         audioDecoder.resetDiagnostics()
+    }
+
+    private fun prepareForNewStreamingSession(reason: String) {
+        bytesReceived.set(0)
+        configPacketsReceived.set(0)
+        accessUnitsReceived.set(0)
+        keyFramesReceived.set(0)
+        playbackCommandAcksReceived.set(0)
+        playbackCommandErrorsReceived.set(0)
+        currentSessionId = ""
+        lastPacketError = null
+        lastErrorCode = null
+        decoder.releaseCodec()
+        decoder.resetDiagnostics()
+        audioDecoder.shutdownAudioSession(
+            reason = reason,
+            queueClearedOnReconnect = true,
+        )
     }
 
     private fun recordPacketError(message: String) {
@@ -917,6 +996,7 @@ private data class QueuedAudioAccessUnit(
     val ptsUs: Long,
     val sequenceNumber: Long,
     val arrivalUs: Long,
+    val generation: Long,
 )
 
 private data class AacStreamConfig(
@@ -967,11 +1047,16 @@ private data class AacStreamConfig(
 }
 
 private data class AudioSnapshot(
+    val audioSessionGeneration: Long,
     val audioDecoderName: String,
+    val audioDecoderState: String,
+    val audioDecoderInitialized: Boolean,
+    val audioDecoderReleased: Boolean,
     val receivedAudioPackets: Long,
     val audioDecoderInputPackets: Long,
     val audioDecoderOutputBuffers: Long,
     val audioTrackWrittenFrames: Long,
+    val audioBytesWritten: Long,
     val audioQueueDepth: Int,
     val pcmQueueDepth: Int,
     val audioBufferedDurationMs: Double,
@@ -983,6 +1068,24 @@ private data class AudioSnapshot(
     val audioCodec: String,
     val audioSampleRate: Int,
     val audioChannels: Int,
+    val audioChannelMask: Int,
+    val audioEncodingFormat: Int,
+    val audioTrackState: String,
+    val audioTrackPlayState: String,
+    val audioTrackInitialized: Boolean,
+    val audioTrackPlayCalled: Boolean,
+    val audioTrackRecreatedCount: Long,
+    val audioTrackWriteErrorCount: Long,
+    val audioTrackDeadObjectCount: Long,
+    val audioQueueClearedOnReconnect: Boolean,
+    val audioEosReceived: Boolean,
+    val audioPtsResetCount: Long,
+    val audioSessionResetCount: Long,
+    val lastAudioSessionResetReason: String,
+    val audioPacketsReceivedRecent: Double,
+    val audioPacketsDecodedRecent: Double,
+    val audioBytesWrittenRecent: Double,
+    val tvAudioAudibleExpected: Boolean,
     val audioLastError: String?,
 )
 
@@ -997,8 +1100,12 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     private var codec: MediaCodec? = null
     private var audioTrack: AudioTrack? = null
     private var config: AacStreamConfig? = null
+    private var audioSessionGeneration = 0L
     private var audioDecoderName = "unknown"
-    private var audioState = "muted"
+    private var audioDecoderState = "released"
+    private var audioDecoderInitialized = false
+    private var audioDecoderReleased = true
+    private var audioState = "waitingForStream"
     private var muted = false
     private var playbackPaused = false
     private var running = true
@@ -1006,6 +1113,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     private var audioDecoderInputPackets = 0L
     private var audioDecoderOutputBuffers = 0L
     private var audioTrackWrittenFrames = 0L
+    private var audioBytesWritten = 0L
     private var audioDroppedPackets = 0L
     private var audioUnderrunCount = 0L
     private var lastAudioSequence: Long? = null
@@ -1013,6 +1121,24 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     private var firstQueuedAudioPtsUs: Long? = null
     private var audioTrackBasePlaybackHead: Long? = null
     private var audioTrackBasePtsUs: Long? = null
+    private var audioTrackState = "NONE"
+    private var audioTrackPlayState = "STOPPED"
+    private var audioTrackInitialized = false
+    private var audioTrackPlayCalled = false
+    private var audioTrackRecreatedCount = 0L
+    private var audioTrackWriteErrorCount = 0L
+    private var audioTrackDeadObjectCount = 0L
+    private var audioTrackRecoveryAttemptsForGeneration = 0
+    private var audioQueueClearedOnReconnect = false
+    private var audioEosReceived = false
+    private var audioPtsResetCount = 0L
+    private var audioSessionResetCount = 0L
+    private var lastAudioSessionResetReason = "initial"
+    private var audioChannelMask = AudioFormat.CHANNEL_OUT_STEREO
+    private var audioEncodingFormat = AudioFormat.ENCODING_PCM_16BIT
+    private val receivedAudioPacketCounter = RollingEventWindow()
+    private val decodedAudioPacketCounter = RollingEventWindow()
+    private val audioBytesWrittenCounter = RollingByteWindow()
     private val workerThread = Thread({ audioLoop() }, "StageThreeAudioDecoder").apply {
         isDaemon = true
         start()
@@ -1031,18 +1157,37 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
 
     override fun audioReadyForSync(): Boolean {
         return synchronized(lock) {
-            !muted && audioState == "playing" && audioTrackBasePtsUs != null
+            !muted &&
+                audioState == "playing" &&
+                audioTrackBasePtsUs != null &&
+                audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING
         }
     }
 
     fun snapshot(): AudioSnapshot {
         return synchronized(lock) {
+            refreshAudioTrackDiagnosticsLocked()
+            val nowUs = elapsedRealtimeUs()
+            val bytesWrittenRecent = audioBytesWrittenCounter.bytesPerSecond(nowUs)
+            val audibleExpected =
+                !muted &&
+                    audioDecoderOutputBuffers > 0 &&
+                    audioTrackInitialized &&
+                    audioTrackPlayState == "PLAYING" &&
+                    audioBytesWritten > 0 &&
+                    bytesWrittenRecent > 0.0 &&
+                    audioState == "playing"
             AudioSnapshot(
+                audioSessionGeneration = audioSessionGeneration,
                 audioDecoderName = audioDecoderName,
+                audioDecoderState = audioDecoderState,
+                audioDecoderInitialized = audioDecoderInitialized,
+                audioDecoderReleased = audioDecoderReleased,
                 receivedAudioPackets = receivedAudioPackets,
                 audioDecoderInputPackets = audioDecoderInputPackets,
                 audioDecoderOutputBuffers = audioDecoderOutputBuffers,
                 audioTrackWrittenFrames = audioTrackWrittenFrames,
+                audioBytesWritten = audioBytesWritten,
                 audioQueueDepth = audioQueue.size,
                 pcmQueueDepth = 0,
                 audioBufferedDurationMs = bufferedDurationMsLocked(),
@@ -1054,6 +1199,24 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                 audioCodec = "audio/mp4a-latm",
                 audioSampleRate = config?.sampleRate ?: 0,
                 audioChannels = config?.channelCount ?: 0,
+                audioChannelMask = audioChannelMask,
+                audioEncodingFormat = audioEncodingFormat,
+                audioTrackState = audioTrackState,
+                audioTrackPlayState = audioTrackPlayState,
+                audioTrackInitialized = audioTrackInitialized,
+                audioTrackPlayCalled = audioTrackPlayCalled,
+                audioTrackRecreatedCount = audioTrackRecreatedCount,
+                audioTrackWriteErrorCount = audioTrackWriteErrorCount,
+                audioTrackDeadObjectCount = audioTrackDeadObjectCount,
+                audioQueueClearedOnReconnect = audioQueueClearedOnReconnect,
+                audioEosReceived = audioEosReceived,
+                audioPtsResetCount = audioPtsResetCount,
+                audioSessionResetCount = audioSessionResetCount,
+                lastAudioSessionResetReason = lastAudioSessionResetReason,
+                audioPacketsReceivedRecent = receivedAudioPacketCounter.fps(nowUs),
+                audioPacketsDecodedRecent = decodedAudioPacketCounter.fps(nowUs),
+                audioBytesWrittenRecent = bytesWrittenRecent,
+                tvAudioAudibleExpected = audibleExpected,
                 audioLastError = lastAudioError,
             )
         }
@@ -1064,11 +1227,17 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             muted = value
             if (value) {
                 audioTrack?.pause()
+                refreshAudioTrackDiagnosticsLocked()
+                if (audioState != "failed" && audioState != "error") {
+                    audioState = "muted"
+                }
             } else if (audioTrack != null && !playbackPaused) {
-                audioTrack?.play()
-                if (audioState != "failed") {
+                playAudioTrackLocked(audioTrack ?: return@synchronized, "unmute")
+                if (audioState != "failed" && audioState != "error") {
                     audioState = "playing"
                 }
+            } else if (audioState != "failed" && audioState != "error") {
+                audioState = if (codec == null) "waitingForStream" else "initializing"
             }
         }
     }
@@ -1079,15 +1248,17 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             audioQueue.clear()
             if (value) {
                 audioTrack?.pause()
+                refreshAudioTrackDiagnosticsLocked()
                 audioState = "paused"
             } else {
                 audioTrack?.flush()
                 audioTrackBasePlaybackHead = null
                 audioTrackBasePtsUs = null
+                audioPtsResetCount += 1
                 if (audioTrack != null && !muted) {
-                    audioTrack?.play()
+                    playAudioTrackLocked(audioTrack ?: return@synchronized, "resume")
                     audioState = "resuming"
-                } else if (audioState != "failed") {
+                } else if (audioState != "failed" && audioState != "error") {
                     audioState = if (muted) "muted" else "idle"
                 }
             }
@@ -1097,31 +1268,44 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
 
     fun resetDiagnostics() {
         synchronized(lock) {
-            audioQueue.clear()
-            receivedAudioPackets = 0
-            audioDecoderInputPackets = 0
-            audioDecoderOutputBuffers = 0
-            audioTrackWrittenFrames = 0
-            audioDroppedPackets = 0
-            audioUnderrunCount = 0
-            lastAudioSequence = null
-            lastAudioError = null
-            firstQueuedAudioPtsUs = null
-            audioTrackBasePlaybackHead = null
-            audioTrackBasePtsUs = null
-            audioState = if (playbackPaused) "paused" else if (muted) "muted" else "idle"
+            shutdownAudioSessionLocked(
+                reason = "diagnostics reset",
+                resetPlaybackPaused = true,
+                queueClearedOnReconnect = false,
+                resetCounters = true,
+            )
+            audioState = if (muted) "muted" else "waitingForStream"
+            lock.notifyAll()
+        }
+    }
+
+    fun shutdownAudioSession(reason: String, queueClearedOnReconnect: Boolean = false) {
+        synchronized(lock) {
+            shutdownAudioSessionLocked(
+                reason = reason,
+                resetPlaybackPaused = true,
+                queueClearedOnReconnect = queueClearedOnReconnect,
+                resetCounters = false,
+            )
+            audioState = if (muted) "muted" else "waitingForStream"
             lock.notifyAll()
         }
     }
 
     fun configure(value: AacStreamConfig) {
         synchronized(lock) {
-            releaseLocked("audio reconfigure")
+            shutdownAudioSessionLocked(
+                reason = "AAC config received",
+                resetPlaybackPaused = false,
+                queueClearedOnReconnect = false,
+                resetCounters = true,
+            )
             config = value
-            audioState = "configuring"
+            audioState = "initializing"
+            audioDecoderState = "initializing"
             try {
                 val newCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-                audioDecoderName = newCodec.name ?: "AAC decoder"
+                audioDecoderName = newCodec.name
                 val format = MediaFormat.createAudioFormat(
                     MediaFormat.MIMETYPE_AUDIO_AAC,
                     value.sampleRate,
@@ -1132,22 +1316,38 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                 newCodec.configure(format, null, null, 0)
                 newCodec.start()
                 codec = newCodec
+                audioDecoderState = "running"
+                audioDecoderInitialized = true
+                audioDecoderReleased = false
                 audioTrack = createAudioTrack(value)
-                if (!muted && !playbackPaused) {
-                    audioTrack?.play()
+                validateAudioTrackInitializedLocked(audioTrack ?: error("AudioTrack creation returned null"))
+                val playReady = if (!muted && !playbackPaused) {
+                    playAudioTrackLocked(audioTrack ?: return@synchronized, "AAC config")
+                } else {
+                    true
                 }
                 audioState = if (playbackPaused) {
                     "paused"
                 } else if (muted) {
                     "muted"
-                } else {
+                } else if (playReady) {
                     "playing"
+                } else {
+                    "error"
                 }
-                lastAudioError = null
+                if (playReady || muted || playbackPaused) {
+                    lastAudioError = null
+                }
             } catch (error: Exception) {
-                audioState = "failed"
+                audioState = "error"
                 lastAudioError = error.message ?: "AAC decoder configure failed."
-                releaseLocked("audio configure failed")
+                shutdownAudioSessionLocked(
+                    reason = "audio configure failed",
+                    resetPlaybackPaused = false,
+                    queueClearedOnReconnect = false,
+                    resetCounters = false,
+                )
+                audioState = "error"
             }
         }
     }
@@ -1160,6 +1360,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
     ): Boolean {
         return synchronized(lock) {
             receivedAudioPackets += 1
+            receivedAudioPacketCounter.record(arrivalUs)
             val previous = lastAudioSequence
             if (previous != null && sequenceNumber > previous + 1) {
                 audioDroppedPackets += sequenceNumber - previous - 1
@@ -1173,7 +1374,10 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             }
             if (codec == null) {
                 audioDroppedPackets += 1
-                lastAudioError = "AAC decoder is not configured yet."
+                lastAudioError = "AAC decoder is waiting for codec config."
+                if (audioState != "error" && audioState != "failed") {
+                    audioState = "waitingForStream"
+                }
                 return@synchronized false
             }
             while (audioQueue.size >= MAX_AUDIO_ACCESS_UNIT_QUEUE_DEPTH) {
@@ -1186,6 +1390,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                     ptsUs = ptsUs,
                     sequenceNumber = sequenceNumber,
                     arrivalUs = arrivalUs,
+                    generation = audioSessionGeneration,
                 ),
             )
             if (firstQueuedAudioPtsUs == null) {
@@ -1198,7 +1403,12 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
 
     fun release() {
         synchronized(lock) {
-            releaseLocked("audio release")
+            shutdownAudioSessionLocked(
+                reason = "audio release",
+                resetPlaybackPaused = true,
+                queueClearedOnReconnect = false,
+                resetCounters = false,
+            )
             audioState = if (playbackPaused) "paused" else if (muted) "muted" else "idle"
         }
     }
@@ -1225,6 +1435,14 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
 
     private fun decodeAudioAccessUnit(unit: QueuedAudioAccessUnit) {
         synchronized(lock) {
+            if (unit.generation != audioSessionGeneration) {
+                audioDroppedPackets += 1
+                return
+            }
+            if (playbackPaused) {
+                audioDroppedPackets += 1
+                return
+            }
             val activeCodec = codec ?: return
             try {
                 val inputIndex = activeCodec.dequeueInputBuffer(10_000)
@@ -1244,8 +1462,15 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                 audioDecoderInputPackets += 1
                 drainAudioOutputLocked(activeCodec)
             } catch (error: Exception) {
-                audioState = "failed"
+                audioState = "error"
                 lastAudioError = error.message ?: "AAC decode failed."
+                shutdownAudioSessionLocked(
+                    reason = "AAC decoder error",
+                    resetPlaybackPaused = false,
+                    queueClearedOnReconnect = false,
+                    resetCounters = false,
+                )
+                audioState = "error"
             }
         }
     }
@@ -1262,12 +1487,16 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                         return
                     }
                     val outputBuffer = activeCodec.getOutputBuffer(outputIndex)
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        audioEosReceived = true
+                    }
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         val pcm = ByteArray(bufferInfo.size)
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                         outputBuffer.get(pcm)
                         audioDecoderOutputBuffers += 1
+                        decodedAudioPacketCounter.record(elapsedRealtimeUs())
                         writePcmLocked(pcm, bufferInfo.presentationTimeUs)
                     }
                     activeCodec.releaseOutputBuffer(outputIndex, false)
@@ -1283,21 +1512,50 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             audioTrackBasePtsUs = ptsUs
             audioTrackBasePlaybackHead = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
         }
-        if (!muted) {
-            val written = track.write(pcm, 0, pcm.size)
-            if (written < pcm.size) {
-                audioUnderrunCount += 1
+        if (muted || playbackPaused) {
+            return
+        }
+        var activeTrack = track
+        if (!playAudioTrackLocked(activeTrack, "write")) {
+            return
+        }
+        var written = activeTrack.write(pcm, 0, pcm.size)
+        if (written == AudioTrack.ERROR_DEAD_OBJECT &&
+            audioTrackRecoveryAttemptsForGeneration < AUDIO_TRACK_RECREATE_RETRY_LIMIT
+        ) {
+            audioTrackDeadObjectCount += 1
+            if (recreateAudioTrackLocked("AudioTrack dead object")) {
+                activeTrack = audioTrack ?: return
+                written = activeTrack.write(pcm, 0, pcm.size)
             }
         }
-        audioTrackWrittenFrames += frames
+        if (written < 0) {
+            recordAudioTrackWriteErrorLocked(written)
+            return
+        }
+        if (written == 0) {
+            audioTrackWriteErrorCount += 1
+            audioUnderrunCount += 1
+            lastAudioError = "AudioTrack.write returned 0 bytes."
+            return
+        }
+        if (written < pcm.size) {
+            audioUnderrunCount += 1
+        }
+        val writtenFrames = written / (2 * (config?.channelCount ?: AUDIO_CHANNELS))
+        audioTrackWrittenFrames += writtenFrames.toLong().coerceAtMost(frames.toLong())
+        audioBytesWritten += written.toLong()
+        audioBytesWrittenCounter.record(elapsedRealtimeUs(), written)
+        lastAudioError = null
+        if (audioState != "error" && audioState != "failed") {
+            audioState = "playing"
+        }
     }
 
     private fun createAudioTrack(value: AacStreamConfig): AudioTrack {
-        val channelMask = if (value.channelCount == 1) {
-            AudioFormat.CHANNEL_OUT_MONO
-        } else {
-            AudioFormat.CHANNEL_OUT_STEREO
-        }
+        val channelMask = channelMaskFor(value.channelCount)
+        audioChannelMask = channelMask
+        audioEncodingFormat = AudioFormat.ENCODING_PCM_16BIT
         val minBuffer = AudioTrack.getMinBufferSize(
             value.sampleRate,
             channelMask,
@@ -1307,7 +1565,7 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
             minBuffer,
             value.sampleRate * value.channelCount * 2 * TARGET_AUDIO_BUFFER_MS / 1000,
         )
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val track = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val builder = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -1339,6 +1597,8 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
                 AudioTrack.MODE_STREAM,
             )
         }
+        refreshAudioTrackDiagnosticsLocked(track)
+        return track
     }
 
     private fun bufferedDurationMsLocked(): Double {
@@ -1350,8 +1610,30 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
         return ((writtenUs - playbackUs).coerceAtLeast(0L)).toDouble() / 1_000.0
     }
 
-    private fun releaseLocked(reason: String) {
+    private fun shutdownAudioSessionLocked(
+        reason: String,
+        resetPlaybackPaused: Boolean,
+        queueClearedOnReconnect: Boolean,
+        resetCounters: Boolean,
+    ) {
+        val clearedQueue = audioQueue.isNotEmpty()
         audioQueue.clear()
+        audioSessionGeneration += 1
+        audioSessionResetCount += 1
+        lastAudioSessionResetReason = reason
+        if (resetCounters) {
+            audioQueueClearedOnReconnect = false
+        }
+        audioQueueClearedOnReconnect =
+            audioQueueClearedOnReconnect || queueClearedOnReconnect || clearedQueue
+        audioEosReceived = false
+        audioPtsResetCount += 1
+        if (resetPlaybackPaused) {
+            playbackPaused = false
+        }
+        if (resetCounters) {
+            resetSessionCountersLocked()
+        }
         try {
             codec?.stop()
         } catch (_: Exception) {
@@ -1361,17 +1643,175 @@ private class StageThreeAudioDecoder : AudioPlaybackClock {
         } catch (_: Exception) {
         }
         try {
-            audioTrack?.pause()
-            audioTrack?.flush()
-            audioTrack?.release()
+            releaseAudioTrackQuietlyLocked(audioTrack, reason)
         } catch (_: Exception) {
         }
         codec = null
         audioTrack = null
+        config = null
         firstQueuedAudioPtsUs = null
         audioTrackBasePlaybackHead = null
         audioTrackBasePtsUs = null
+        audioTrackRecoveryAttemptsForGeneration = 0
+        audioDecoderState = "released"
+        audioDecoderInitialized = false
+        audioDecoderReleased = true
+        audioTrackInitialized = false
+        audioTrackPlayCalled = false
+        audioTrackState = "NONE"
+        audioTrackPlayState = "STOPPED"
         Log.i("PC_TV_MIRROR", "Audio decoder released: $reason")
+    }
+
+    private fun resetSessionCountersLocked() {
+        receivedAudioPackets = 0
+        audioDecoderInputPackets = 0
+        audioDecoderOutputBuffers = 0
+        audioTrackWrittenFrames = 0
+        audioBytesWritten = 0
+        audioDroppedPackets = 0
+        audioUnderrunCount = 0
+        lastAudioSequence = null
+        lastAudioError = null
+        receivedAudioPacketCounter.clear()
+        decodedAudioPacketCounter.clear()
+        audioBytesWrittenCounter.clear()
+    }
+
+    private fun recreateAudioTrackLocked(reason: String): Boolean {
+        val activeConfig = config ?: return false
+        audioTrackRecoveryAttemptsForGeneration += 1
+        audioState = "recovering"
+        releaseAudioTrackQuietlyLocked(audioTrack, reason)
+        audioTrack = null
+        audioTrackInitialized = false
+        audioTrackPlayCalled = false
+        audioTrackState = "NONE"
+        audioTrackPlayState = "STOPPED"
+        audioTrackBasePlaybackHead = null
+        audioTrackBasePtsUs = null
+        audioPtsResetCount += 1
+        return try {
+            val newTrack = createAudioTrack(activeConfig)
+            validateAudioTrackInitializedLocked(newTrack)
+            audioTrack = newTrack
+            audioTrackRecreatedCount += 1
+            if (!muted && !playbackPaused) {
+                playAudioTrackLocked(newTrack, "AudioTrack recreate")
+            }
+            lastAudioError = null
+            true
+        } catch (error: Exception) {
+            audioTrackWriteErrorCount += 1
+            audioState = "error"
+            lastAudioError = error.message ?: "AudioTrack recovery failed."
+            false
+        }
+    }
+
+    private fun validateAudioTrackInitializedLocked(track: AudioTrack) {
+        refreshAudioTrackDiagnosticsLocked(track)
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            audioState = "unavailable"
+            throw IllegalStateException("AudioTrack initialization failed state=$audioTrackState")
+        }
+        audioTrackInitialized = true
+        audioTrackState = audioTrackStateName(track.state)
+        audioTrackPlayState = audioTrackPlayStateName(track.playState)
+    }
+
+    private fun playAudioTrackLocked(track: AudioTrack, reason: String): Boolean {
+        refreshAudioTrackDiagnosticsLocked(track)
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            lastAudioError = "AudioTrack is not initialized for play: $reason"
+            audioState = "unavailable"
+            return false
+        }
+        if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            try {
+                track.play()
+                audioTrackPlayCalled = true
+            } catch (error: Exception) {
+                audioTrackWriteErrorCount += 1
+                audioState = "error"
+                lastAudioError = error.message ?: "AudioTrack.play failed."
+                refreshAudioTrackDiagnosticsLocked(track)
+                return false
+            }
+        }
+        refreshAudioTrackDiagnosticsLocked(track)
+        return track.playState == AudioTrack.PLAYSTATE_PLAYING
+    }
+
+    private fun recordAudioTrackWriteErrorLocked(errorCode: Int) {
+        audioTrackWriteErrorCount += 1
+        if (errorCode == AudioTrack.ERROR_DEAD_OBJECT) {
+            audioTrackDeadObjectCount += 1
+        }
+        audioState = "error"
+        lastAudioError = "AudioTrack.write failed with $errorCode"
+        refreshAudioTrackDiagnosticsLocked()
+    }
+
+    private fun releaseAudioTrackQuietlyLocked(track: AudioTrack?, reason: String) {
+        if (track == null) {
+            return
+        }
+        try {
+            track.pause()
+        } catch (_: Exception) {
+        }
+        try {
+            track.flush()
+        } catch (_: Exception) {
+        }
+        try {
+            track.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            track.release()
+        } catch (_: Exception) {
+        }
+        Log.i("PC_TV_MIRROR", "AudioTrack released: $reason")
+    }
+
+    private fun refreshAudioTrackDiagnosticsLocked(track: AudioTrack? = audioTrack) {
+        if (track == null) {
+            audioTrackState = "NONE"
+            audioTrackPlayState = "STOPPED"
+            audioTrackInitialized = false
+            return
+        }
+        audioTrackState = audioTrackStateName(track.state)
+        audioTrackPlayState = audioTrackPlayStateName(track.playState)
+        audioTrackInitialized = track.state == AudioTrack.STATE_INITIALIZED
+    }
+
+    private fun channelMaskFor(channelCount: Int): Int {
+        return if (channelCount == 1) {
+            AudioFormat.CHANNEL_OUT_MONO
+        } else {
+            AudioFormat.CHANNEL_OUT_STEREO
+        }
+    }
+
+    private fun audioTrackStateName(value: Int): String {
+        return when (value) {
+            AudioTrack.STATE_INITIALIZED -> "INITIALIZED"
+            AudioTrack.STATE_NO_STATIC_DATA -> "NO_STATIC_DATA"
+            AudioTrack.STATE_UNINITIALIZED -> "UNINITIALIZED"
+            else -> "UNKNOWN_$value"
+        }
+    }
+
+    private fun audioTrackPlayStateName(value: Int): String {
+        return when (value) {
+            AudioTrack.PLAYSTATE_PLAYING -> "PLAYING"
+            AudioTrack.PLAYSTATE_PAUSED -> "PAUSED"
+            AudioTrack.PLAYSTATE_STOPPED -> "STOPPED"
+            else -> "UNKNOWN_$value"
+        }
     }
 }
 
@@ -2992,6 +3432,38 @@ private class RollingEventWindow(
     }
 }
 
+private class RollingByteWindow(
+    private val windowUs: Long = ROLLING_WINDOW_US,
+) {
+    private val samples = ArrayDeque<Pair<Long, Int>>()
+
+    fun record(timeUs: Long, bytes: Int) {
+        samples.addLast(timeUs to bytes)
+        trim(timeUs)
+    }
+
+    fun clear() {
+        samples.clear()
+    }
+
+    fun bytesPerSecond(nowUs: Long): Double {
+        trim(nowUs)
+        if (samples.isEmpty()) {
+            return 0.0
+        }
+        val spanUs = (samples.last().first - samples.first().first).coerceAtLeast(1L)
+        val total = samples.sumOf { it.second.toLong() }
+        return total.toDouble() * 1_000_000.0 / spanUs.toDouble()
+    }
+
+    private fun trim(nowUs: Long) {
+        val cutoff = if (nowUs > windowUs) nowUs - windowUs else 0L
+        while (samples.isNotEmpty() && samples.first().first < cutoff) {
+            samples.removeFirst()
+        }
+    }
+}
+
 private class RollingSampleWindow(
     private val windowUs: Long = ROLLING_WINDOW_US,
 ) {
@@ -3244,18 +3716,30 @@ private fun validatePerformanceProfile(json: JSONObject) {
     require(
         profile == PERFORMANCE_PROFILE_LOW_LATENCY_720P30 ||
             profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30 ||
-            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30,
+            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 ||
+            profile == PERFORMANCE_PROFILE_EXPERIMENTAL_4K30,
     ) {
         "unsupported performance profile: $profile"
     }
 }
 
-private fun streamAnswerResponse(decoderReady: Boolean, surfaceRendererReady: Boolean): JSONObject {
+private fun streamAnswerResponse(
+    decoderReady: Boolean,
+    surfaceRendererReady: Boolean,
+    capability: H264DecoderCapability,
+): JSONObject {
     return JSONObject()
         .put("type", "session.answer")
         .put("protocolVersion", 1)
         .put("decoderReady", decoderReady)
         .put("surfaceRendererReady", surfaceRendererReady)
+        .put("receiverMaxVideoWidth", capability.maxWidth)
+        .put("receiverMaxVideoHeight", capability.maxHeight)
+        .put("receiverSupports4k30", capability.supports4k30)
+        .put("receiverVideoCodec", "h264")
+        .put("receiverDecoderName", capability.decoderName)
+        .put("receiverPerformanceClass", capability.performanceClass)
+        .put("receiverPresentedFpsRecent", 0)
 }
 
 private fun receiverStoppedResponse(): JSONObject {
@@ -3280,15 +3764,113 @@ private fun closeQuietly(socket: ServerSocket?) {
     }
 }
 
-private fun hasH264Decoder(): Boolean {
+private data class H264DecoderCapability(
+    val decoderAvailable: Boolean,
+    val maxWidth: Int,
+    val maxHeight: Int,
+    val maxFps: Int,
+    val supports4k30: Boolean,
+    val decoderName: String,
+    val performanceClass: String,
+)
+
+private fun queryH264DecoderCapability(): H264DecoderCapability {
     return try {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { codecInfo ->
-            !codecInfo.isEncoder &&
-                codecInfo.supportedTypes.any { type ->
-                    type.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true)
+        var best = H264DecoderCapability(
+            decoderAvailable = false,
+            maxWidth = 0,
+            maxHeight = 0,
+            maxFps = 0,
+            supports4k30 = false,
+            decoderName = "unknown",
+            performanceClass = "unavailable",
+        )
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.forEach { codecInfo ->
+            if (codecInfo.isEncoder ||
+                codecInfo.supportedTypes.none {
+                    it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true)
                 }
+            ) {
+                return@forEach
+            }
+            val capabilities = codecInfo.getCapabilitiesForType(
+                MediaFormat.MIMETYPE_VIDEO_AVC,
+            )
+            val videoCapabilities = capabilities.videoCapabilities ?: return@forEach
+            val maxWidth = videoCapabilities.supportedWidths.upper
+            val maxHeight = videoCapabilities.supportedHeights.upper
+            val maxFps = supportedFpsFor(
+                videoCapabilities,
+                minOf(maxWidth, 1920),
+                minOf(maxHeight, 1080),
+            )
+            val sizeRate4k = try {
+                videoCapabilities.areSizeAndRateSupported(3840, 2160, 30.0)
+            } catch (_: Exception) {
+                false
+            }
+            val performancePoint4k = supports4k30PerformancePoint(videoCapabilities)
+            val supports4k30 = sizeRate4k && performancePoint4k
+            val candidate = H264DecoderCapability(
+                decoderAvailable = true,
+                maxWidth = maxWidth,
+                maxHeight = maxHeight,
+                maxFps = maxFps,
+                supports4k30 = supports4k30,
+                decoderName = codecInfo.name,
+                performanceClass = if (supports4k30) "4k30" else "up_to_${maxWidth}x$maxHeight",
+            )
+            if (candidate.supports4k30 ||
+                (!best.supports4k30 && candidate.maxWidth * candidate.maxHeight > best.maxWidth * best.maxHeight)
+            ) {
+                best = candidate
+            }
+        }
+        best
+    } catch (error: Exception) {
+        Log.w(
+            "PC_TV_MIRROR",
+            "Could not query H.264 decoder capability: ${error.message ?: error.javaClass.simpleName}",
+        )
+        H264DecoderCapability(
+            decoderAvailable = false,
+            maxWidth = 0,
+            maxHeight = 0,
+            maxFps = 0,
+            supports4k30 = false,
+            decoderName = "unknown",
+            performanceClass = "query_failed",
+        )
+    }
+}
+
+private fun supportedFpsFor(
+    videoCapabilities: MediaCodecInfo.VideoCapabilities,
+    width: Int,
+    height: Int,
+): Int {
+    return try {
+        videoCapabilities.getSupportedFrameRatesFor(width, height).upper.toInt()
+    } catch (_: Exception) {
+        0
+    }
+}
+
+private fun supports4k30PerformancePoint(
+    videoCapabilities: MediaCodecInfo.VideoCapabilities,
+): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        return true
+    }
+    return try {
+        val points = videoCapabilities.supportedPerformancePoints
+        if (points.isNullOrEmpty()) {
+            true
+        } else {
+            val target = MediaCodecInfo.VideoCapabilities.PerformancePoint(3840, 2160, 30)
+            points.any { it.covers(target) }
         }
     } catch (_: Exception) {
-        false
+        true
     }
 }

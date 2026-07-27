@@ -3,6 +3,7 @@
 
 #include "native/audio/aac_encoder.h"
 #include "native/audio/system_audio_loopback.h"
+#include "native/audio/wasapi_local_monitor_renderer.h"
 #include "native/capture/display_capture.h"
 #include "native/session/session_types.h"
 #include "native/transport/bounded_queue.h"
@@ -74,10 +75,12 @@ class MirrorSession {
   void SetLastEncodeError(const std::string& error);
   void SetLastSendError(const std::string& error);
   void MarkFirstAccessUnitSent();
+  void ApplyLocalMonitorMute(bool requested);
 
   std::mutex mutex_;
   std::mutex status_mutex_;
   std::mutex transport_send_mutex_;
+  std::mutex audio_route_mutex_;
   std::condition_variable status_changed_;
   std::atomic_bool running_{false};
   std::string last_source_id_;
@@ -91,6 +94,7 @@ class MirrorSession {
   std::thread send_thread_;
   std::thread control_thread_;
   VideoStreamConfig video_config_;
+  VideoStreamConfig requested_video_config_;
   double target_fps_ = 30.0;
   std::uint64_t target_frame_interval_us_ = 33'333;
   std::atomic_bool paused_{false};
@@ -166,9 +170,31 @@ class MirrorSession {
   std::string last_send_error_;
   std::string audio_capture_state_ = "disabled";
   std::string audio_device_name_;
+  std::string tv_audio_source_device_id_;
+  std::string tv_audio_source_device_name_;
+  std::string pc_monitor_device_id_;
+  std::string pc_monitor_device_name_;
+  std::string audio_routing_mode_ = "defaultRenderEndpointLoopback";
+  std::string audio_routing_unsupported_reason_;
+  std::string audio_capture_format_;
+  std::string audio_monitor_format_;
+  std::string requested_profile_ = "lowLatency720p30";
+  std::string applied_profile_ = "lowLatency720p30";
+  std::string profile_fallback_reason_;
+  int receiver_max_width_ = 0;
+  int receiver_max_height_ = 0;
+  bool receiver_supports_4k30_ = false;
+  double receiver_presented_fps_recent_ = 0.0;
   int audio_input_sample_rate_ = 0;
   int audio_input_channels_ = 0;
   std::string audio_last_error_;
+  WasapiLocalMonitorRenderer* local_monitor_renderer_ = nullptr;
+  std::atomic_bool pc_local_audio_mute_supported_{false};
+  std::atomic_bool pc_local_audio_mute_applied_{false};
+  std::atomic_bool local_monitor_active_{false};
+  std::atomic_bool local_monitor_muted_{false};
+  std::atomic_int local_monitor_queue_depth_{0};
+  std::atomic_uint64_t local_monitor_dropped_buffers_{0};
 };
 
 }  // namespace pctv

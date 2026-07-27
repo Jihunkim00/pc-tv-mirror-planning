@@ -30,10 +30,19 @@ void main() {
         deviceId: 'tv-dev-1',
         deviceName: 'Development TV',
         videoCodecs: [VideoCodec.h264],
-        maxWidth: 1280,
-        maxHeight: 720,
+        maxWidth: 3840,
+        maxHeight: 2160,
         maxFps: 30,
         lowLatencyDecoder: true,
+        supports4k30: true,
+        decoderName: 'c2.vendor.avc.decoder',
+        performanceClass: '4k30',
+        supportedPerformanceProfiles: [
+          PerformanceProfile.lowLatency720p30,
+          PerformanceProfile.compatibility720p30,
+          PerformanceProfile.highQuality1080p30,
+          PerformanceProfile.experimental4k30,
+        ],
       );
 
       final copy = ReceiverCapabilities.fromJson(capabilities.toJson());
@@ -42,10 +51,14 @@ void main() {
       expect(copy.deviceId, capabilities.deviceId);
       expect(copy.videoCodecs, [VideoCodec.h264]);
       expect(copy.lowLatencyDecoder, isTrue);
+      expect(copy.supports4k30, isTrue);
+      expect(copy.decoderName, 'c2.vendor.avc.decoder');
+      expect(copy.performanceClass, '4k30');
       expect(copy.supportedPerformanceProfiles, [
         PerformanceProfile.lowLatency720p30,
         PerformanceProfile.compatibility720p30,
         PerformanceProfile.highQuality1080p30,
+        PerformanceProfile.experimental4k30,
       ]);
     });
   });
@@ -94,6 +107,28 @@ void main() {
       expect(
         StreamStartRequest.fromJson(json).video.performanceProfile,
         PerformanceProfile.highQuality1080p30,
+      );
+    });
+
+    test('encodes the STAGE 5 experimental 4K30 profile', () {
+      const request = StreamStartRequest(
+        sessionId: 'session-4k',
+        sourceType: SourceType.display,
+        sourceId: r'\\.\DISPLAY1',
+        video: VideoProfile.experimental4k30(),
+      );
+
+      final json = request.toJson();
+      final video = json['video'] as Map<String, Object?>;
+
+      expect(video['width'], 3840);
+      expect(video['height'], 2160);
+      expect(video['fps'], 30);
+      expect(video['bitrateKbps'], 20000);
+      expect(video['performanceProfile'], 'experimental4k30');
+      expect(
+        StreamStartRequest.fromJson(json).video.performanceProfile,
+        PerformanceProfile.experimental4k30,
       );
     });
 

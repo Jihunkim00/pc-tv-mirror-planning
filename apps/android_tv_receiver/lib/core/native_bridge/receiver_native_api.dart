@@ -81,6 +81,11 @@ final class ReceiverSessionSnapshot {
     required this.receiverPort,
     required this.decoderReady,
     required this.surfaceRendererReady,
+    this.receiverMaxVideoWidth = 0,
+    this.receiverMaxVideoHeight = 0,
+    this.receiverSupports4k30 = false,
+    this.receiverDecoderName = 'unknown',
+    this.receiverPerformanceClass = 'unknown',
     this.receiverBindAddress = '0.0.0.0',
     this.localIpv4Addresses = const <String>[],
     this.bytesReceived = 0,
@@ -157,10 +162,15 @@ final class ReceiverSessionSnapshot {
     this.avSyncResyncCount = 0,
     this.syncMaster = 'videoLocal',
     this.audioDecoderName = 'unknown',
+    this.audioSessionGeneration = 0,
+    this.audioDecoderState = 'released',
+    this.audioDecoderInitialized = false,
+    this.audioDecoderReleased = true,
     this.receivedAudioPackets = 0,
     this.audioDecoderInputPackets = 0,
     this.audioDecoderOutputBuffers = 0,
     this.audioTrackWrittenFrames = 0,
+    this.audioBytesWritten = 0,
     this.audioQueueDepth = 0,
     this.pcmQueueDepth = 0,
     this.audioBufferedDurationMs = 0,
@@ -172,8 +182,27 @@ final class ReceiverSessionSnapshot {
     this.audioCodec = 'audio/mp4a-latm',
     this.audioSampleRate = 0,
     this.audioChannels = 0,
+    this.audioChannelMask = 0,
+    this.audioEncodingFormat = 0,
+    this.audioTrackState = 'NONE',
+    this.audioTrackPlayState = 'STOPPED',
+    this.audioTrackInitialized = false,
+    this.audioTrackPlayCalled = false,
+    this.audioTrackRecreatedCount = 0,
+    this.audioTrackWriteErrorCount = 0,
+    this.audioTrackDeadObjectCount = 0,
+    this.audioQueueClearedOnReconnect = false,
+    this.audioEosReceived = false,
+    this.audioPtsResetCount = 0,
+    this.audioSessionResetCount = 0,
+    this.lastAudioSessionResetReason = '',
+    this.audioPacketsReceivedRecent = 0,
+    this.audioPacketsDecodedRecent = 0,
+    this.audioBytesWrittenRecent = 0,
+    this.tvAudioAudibleExpected = false,
     this.audioLastError,
     this.connectionId = 0,
+    this.receiverSessionGeneration = 0,
     this.sessionId = '',
     this.playbackState = 'disconnected',
     this.pauseCommandPending = false,
@@ -192,6 +221,11 @@ final class ReceiverSessionSnapshot {
   final int receiverPort;
   final bool decoderReady;
   final bool surfaceRendererReady;
+  final int receiverMaxVideoWidth;
+  final int receiverMaxVideoHeight;
+  final bool receiverSupports4k30;
+  final String receiverDecoderName;
+  final String receiverPerformanceClass;
   final String receiverBindAddress;
   final List<String> localIpv4Addresses;
   final int bytesReceived;
@@ -266,11 +300,16 @@ final class ReceiverSessionSnapshot {
   final int videoFramesDroppedForAvSync;
   final int avSyncResyncCount;
   final String syncMaster;
+  final int audioSessionGeneration;
   final String audioDecoderName;
+  final String audioDecoderState;
+  final bool audioDecoderInitialized;
+  final bool audioDecoderReleased;
   final int receivedAudioPackets;
   final int audioDecoderInputPackets;
   final int audioDecoderOutputBuffers;
   final int audioTrackWrittenFrames;
+  final int audioBytesWritten;
   final int audioQueueDepth;
   final int pcmQueueDepth;
   final double audioBufferedDurationMs;
@@ -282,8 +321,27 @@ final class ReceiverSessionSnapshot {
   final String audioCodec;
   final int audioSampleRate;
   final int audioChannels;
+  final int audioChannelMask;
+  final int audioEncodingFormat;
+  final String audioTrackState;
+  final String audioTrackPlayState;
+  final bool audioTrackInitialized;
+  final bool audioTrackPlayCalled;
+  final int audioTrackRecreatedCount;
+  final int audioTrackWriteErrorCount;
+  final int audioTrackDeadObjectCount;
+  final bool audioQueueClearedOnReconnect;
+  final bool audioEosReceived;
+  final int audioPtsResetCount;
+  final int audioSessionResetCount;
+  final String lastAudioSessionResetReason;
+  final double audioPacketsReceivedRecent;
+  final double audioPacketsDecodedRecent;
+  final double audioBytesWrittenRecent;
+  final bool tvAudioAudibleExpected;
   final String? audioLastError;
   final int connectionId;
+  final int receiverSessionGeneration;
   final String sessionId;
   final String playbackState;
   final bool pauseCommandPending;
@@ -333,6 +391,14 @@ final class ReceiverSessionSnapshot {
       receiverPort: _readInt(json, 'receiverPort'),
       decoderReady: _readBool(json, 'decoderReady'),
       surfaceRendererReady: _readBool(json, 'surfaceRendererReady'),
+      receiverMaxVideoWidth: _readOptionalInt(json, 'receiverMaxVideoWidth'),
+      receiverMaxVideoHeight: _readOptionalInt(json, 'receiverMaxVideoHeight'),
+      receiverSupports4k30: _readOptionalBool(json, 'receiverSupports4k30'),
+      receiverDecoderName: _readOptionalString(json, 'receiverDecoderName'),
+      receiverPerformanceClass: _readOptionalString(
+        json,
+        'receiverPerformanceClass',
+      ),
       receiverBindAddress: _readOptionalString(
         json,
         'receiverBindAddress',
@@ -470,7 +536,22 @@ final class ReceiverSessionSnapshot {
         'syncMaster',
         defaultValue: 'videoLocal',
       ),
+      audioSessionGeneration: _readOptionalInt(json, 'audioSessionGeneration'),
       audioDecoderName: _readOptionalString(json, 'audioDecoderName'),
+      audioDecoderState: _readOptionalString(
+        json,
+        'audioDecoderState',
+        defaultValue: 'released',
+      ),
+      audioDecoderInitialized: _readOptionalBool(
+        json,
+        'audioDecoderInitialized',
+      ),
+      audioDecoderReleased: _readOptionalBool(
+        json,
+        'audioDecoderReleased',
+        defaultValue: true,
+      ),
       receivedAudioPackets: _readOptionalInt(json, 'receivedAudioPackets'),
       audioDecoderInputPackets: _readOptionalInt(
         json,
@@ -484,6 +565,7 @@ final class ReceiverSessionSnapshot {
         json,
         'audioTrackWrittenFrames',
       ),
+      audioBytesWritten: _readOptionalInt(json, 'audioBytesWritten'),
       audioQueueDepth: _readOptionalInt(json, 'audioQueueDepth'),
       pcmQueueDepth: _readOptionalInt(json, 'pcmQueueDepth'),
       audioBufferedDurationMs: _readOptionalDouble(
@@ -505,8 +587,63 @@ final class ReceiverSessionSnapshot {
       ),
       audioSampleRate: _readOptionalInt(json, 'audioSampleRate'),
       audioChannels: _readOptionalInt(json, 'audioChannels'),
+      audioChannelMask: _readOptionalInt(json, 'audioChannelMask'),
+      audioEncodingFormat: _readOptionalInt(json, 'audioEncodingFormat'),
+      audioTrackState: _readOptionalString(
+        json,
+        'audioTrackState',
+        defaultValue: 'NONE',
+      ),
+      audioTrackPlayState: _readOptionalString(
+        json,
+        'audioTrackPlayState',
+        defaultValue: 'STOPPED',
+      ),
+      audioTrackInitialized: _readOptionalBool(json, 'audioTrackInitialized'),
+      audioTrackPlayCalled: _readOptionalBool(json, 'audioTrackPlayCalled'),
+      audioTrackRecreatedCount: _readOptionalInt(
+        json,
+        'audioTrackRecreatedCount',
+      ),
+      audioTrackWriteErrorCount: _readOptionalInt(
+        json,
+        'audioTrackWriteErrorCount',
+      ),
+      audioTrackDeadObjectCount: _readOptionalInt(
+        json,
+        'audioTrackDeadObjectCount',
+      ),
+      audioQueueClearedOnReconnect: _readOptionalBool(
+        json,
+        'audioQueueClearedOnReconnect',
+      ),
+      audioEosReceived: _readOptionalBool(json, 'audioEosReceived'),
+      audioPtsResetCount: _readOptionalInt(json, 'audioPtsResetCount'),
+      audioSessionResetCount: _readOptionalInt(json, 'audioSessionResetCount'),
+      lastAudioSessionResetReason: _readOptionalString(
+        json,
+        'lastAudioSessionResetReason',
+        defaultValue: '',
+      ),
+      audioPacketsReceivedRecent: _readOptionalDouble(
+        json,
+        'audioPacketsReceivedRecent',
+      ),
+      audioPacketsDecodedRecent: _readOptionalDouble(
+        json,
+        'audioPacketsDecodedRecent',
+      ),
+      audioBytesWrittenRecent: _readOptionalDouble(
+        json,
+        'audioBytesWrittenRecent',
+      ),
+      tvAudioAudibleExpected: _readOptionalBool(json, 'tvAudioAudibleExpected'),
       audioLastError: json['audioLastError'] as String?,
       connectionId: _readOptionalInt(json, 'connectionId'),
+      receiverSessionGeneration: _readOptionalInt(
+        json,
+        'receiverSessionGeneration',
+      ),
       sessionId: _readOptionalString(json, 'sessionId', defaultValue: ''),
       playbackState: _readOptionalString(
         json,

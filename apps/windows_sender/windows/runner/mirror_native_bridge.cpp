@@ -10,11 +10,13 @@
 #include <string>
 
 #include "native/display/display_enumerator.h"
+#include "native/audio/audio_device_enumerator.h"
 #include "native/session/mirror_session.h"
 
 namespace {
 
 using flutter::EncodableMap;
+using flutter::EncodableList;
 using flutter::EncodableValue;
 using flutter::MethodCall;
 using flutter::MethodResult;
@@ -331,6 +333,69 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.audio_routing_mode);
   map[EncodableValue("audioMuteUnsupportedReason")] =
       EncodableValue(snapshot.audio_mute_unsupported_reason);
+  map[EncodableValue("tvAudioSourceDeviceId")] =
+      EncodableValue(snapshot.tv_audio_source_device_id);
+  map[EncodableValue("tvAudioSourceDeviceName")] =
+      EncodableValue(snapshot.tv_audio_source_device_name);
+  map[EncodableValue("pcMonitorDeviceId")] =
+      EncodableValue(snapshot.pc_monitor_device_id);
+  map[EncodableValue("pcMonitorDeviceName")] =
+      EncodableValue(snapshot.pc_monitor_device_name);
+  map[EncodableValue("localMonitorActive")] =
+      EncodableValue(snapshot.local_monitor_active);
+  map[EncodableValue("localMonitorMuted")] =
+      EncodableValue(snapshot.local_monitor_muted);
+  map[EncodableValue("localMonitorQueueDepth")] =
+      EncodableValue(snapshot.local_monitor_queue_depth);
+  map[EncodableValue("localMonitorDroppedBuffers")] =
+      EncodableValue(
+          static_cast<int64_t>(snapshot.local_monitor_dropped_buffers));
+  map[EncodableValue("audioCaptureFormat")] =
+      EncodableValue(snapshot.audio_capture_format);
+  map[EncodableValue("audioMonitorFormat")] =
+      EncodableValue(snapshot.audio_monitor_format);
+  map[EncodableValue("audioRoutingUnsupportedReason")] =
+      EncodableValue(snapshot.audio_routing_unsupported_reason);
+  map[EncodableValue("requestedProfile")] =
+      EncodableValue(snapshot.requested_profile);
+  map[EncodableValue("appliedProfile")] =
+      EncodableValue(snapshot.applied_profile);
+  map[EncodableValue("profileFallbackReason")] =
+      EncodableValue(snapshot.profile_fallback_reason);
+  map[EncodableValue("outputWidth")] = EncodableValue(snapshot.output_width);
+  map[EncodableValue("outputHeight")] = EncodableValue(snapshot.output_height);
+  map[EncodableValue("targetBitrateKbps")] =
+      EncodableValue(snapshot.target_bitrate_kbps);
+  map[EncodableValue("encoderName")] =
+      EncodableValue(snapshot.encoder_name);
+  map[EncodableValue("hardwareEncoderActive")] =
+      EncodableValue(snapshot.hardware_encoder_active);
+  map[EncodableValue("encoderSupportsRequestedResolution")] =
+      EncodableValue(snapshot.encoder_supports_requested_resolution);
+  map[EncodableValue("receiverMaxWidth")] =
+      EncodableValue(snapshot.receiver_max_width);
+  map[EncodableValue("receiverMaxHeight")] =
+      EncodableValue(snapshot.receiver_max_height);
+  map[EncodableValue("receiverSupports4k30")] =
+      EncodableValue(snapshot.receiver_supports_4k30);
+  map[EncodableValue("captureFpsRecent")] =
+      EncodableValue(snapshot.capture_fps_recent);
+  map[EncodableValue("conversionFpsRecent")] =
+      EncodableValue(snapshot.conversion_fps_recent);
+  map[EncodableValue("encoderInputFpsRecent")] =
+      EncodableValue(snapshot.encoder_input_fps_recent);
+  map[EncodableValue("encoderOutputFpsRecent")] =
+      EncodableValue(snapshot.encoder_output_fps_recent);
+  map[EncodableValue("transportVideoFpsRecent")] =
+      EncodableValue(snapshot.transport_video_fps_recent);
+  map[EncodableValue("receiverPresentedFpsRecent")] =
+      EncodableValue(snapshot.receiver_presented_fps_recent);
+  map[EncodableValue("conversionDurationP95Ms")] =
+      EncodableValue(snapshot.conversion_duration_p95_ms);
+  map[EncodableValue("encoderQueueWaitP95Ms")] =
+      EncodableValue(snapshot.encoder_queue_wait_p95_ms);
+  map[EncodableValue("transportSendP95Ms")] =
+      EncodableValue(snapshot.transport_send_p95_ms);
   if (!snapshot.error_code.empty()) {
     map[EncodableValue("errorCode")] = EncodableValue(snapshot.error_code);
   }
@@ -347,6 +412,21 @@ class MirrorNativeBridge {
               std::unique_ptr<MethodResult<EncodableValue>> result) {
     if (call.method_name() == "listDisplays") {
       result->Success(pctv::ListDisplays());
+      return;
+    }
+
+    if (call.method_name() == "listAudioDevices") {
+      EncodableList devices;
+      for (const auto& device : pctv::EnumerateAudioRenderDevices()) {
+        EncodableMap item;
+        item[EncodableValue("id")] = EncodableValue(device.id);
+        item[EncodableValue("name")] = EncodableValue(device.name);
+        item[EncodableValue("isDefault")] = EncodableValue(device.is_default);
+        item[EncodableValue("isLikelyVirtual")] =
+            EncodableValue(device.is_likely_virtual);
+        devices.emplace_back(item);
+      }
+      result->Success(EncodableValue(devices));
       return;
     }
 
@@ -395,6 +475,9 @@ class MirrorNativeBridge {
     options.request_json = ReadString(*args, "requestJson");
     options.source_id = ReadString(*args, "sourceId");
     options.audio_enabled = ReadBool(*args, "audioEnabled", true);
+    options.tv_audio_source_device_id =
+        ReadString(*args, "tvAudioSourceDeviceId");
+    options.pc_monitor_device_id = ReadString(*args, "pcMonitorDeviceId");
     options.pc_local_audio_mute_requested = ReadBool(
         *args, "pcLocalAudioMuteRequested",
         ReadBool(*args, "tvOnlyAudioRequested", false));
@@ -408,6 +491,8 @@ class MirrorNativeBridge {
       options.video.performance_profile = "lowLatency720p30";
     }
     options.video.keyframe_interval_frames = options.video.fps;
+    options.video.require_hardware_encoder =
+        options.video.performance_profile == "experimental4k30";
     result->Success(ToEncodable(session_.Start(options)));
   }
 

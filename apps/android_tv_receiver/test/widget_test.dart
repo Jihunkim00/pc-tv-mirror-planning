@@ -173,6 +173,11 @@ void main() {
       'localIpv4Addresses': ['192.168.1.40'],
       'decoderReady': true,
       'surfaceRendererReady': true,
+      'receiverMaxVideoWidth': 3840,
+      'receiverMaxVideoHeight': 2160,
+      'receiverSupports4k30': true,
+      'receiverDecoderName': 'c2.vendor.avc.decoder',
+      'receiverPerformanceClass': '4k30',
       'receivedAccessUnitFps': 29.5,
       'decoderInputFps': 29.4,
       'decoderOutputFps': 29.3,
@@ -239,10 +244,15 @@ void main() {
       'avSyncResyncCount': 2,
       'syncMaster': 'audio',
       'audioDecoderName': 'c2.android.aac.decoder',
+      'audioSessionGeneration': 8,
+      'audioDecoderState': 'running',
+      'audioDecoderInitialized': true,
+      'audioDecoderReleased': false,
       'receivedAudioPackets': 10,
       'audioDecoderInputPackets': 9,
       'audioDecoderOutputBuffers': 8,
       'audioTrackWrittenFrames': 8192,
+      'audioBytesWritten': 32768,
       'audioQueueDepth': 1,
       'pcmQueueDepth': 0,
       'audioBufferedDurationMs': 96.0,
@@ -254,7 +264,26 @@ void main() {
       'audioCodec': 'audio/mp4a-latm',
       'audioSampleRate': 48000,
       'audioChannels': 2,
+      'audioChannelMask': 12,
+      'audioEncodingFormat': 2,
+      'audioTrackState': 'INITIALIZED',
+      'audioTrackPlayState': 'PLAYING',
+      'audioTrackInitialized': true,
+      'audioTrackPlayCalled': true,
+      'audioTrackRecreatedCount': 1,
+      'audioTrackWriteErrorCount': 2,
+      'audioTrackDeadObjectCount': 1,
+      'audioQueueClearedOnReconnect': true,
+      'audioEosReceived': false,
+      'audioPtsResetCount': 3,
+      'audioSessionResetCount': 4,
+      'lastAudioSessionResetReason': 'TCP reconnect generation=8',
+      'audioPacketsReceivedRecent': 47.0,
+      'audioPacketsDecodedRecent': 46.0,
+      'audioBytesWrittenRecent': 188416.0,
+      'tvAudioAudibleExpected': true,
       'connectionId': 3,
+      'receiverSessionGeneration': 8,
       'sessionId': 'session-3',
       'playbackState': 'streaming',
       'pauseCommandPending': false,
@@ -265,6 +294,11 @@ void main() {
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
     expect(snapshot.localIpv4Addresses, ['192.168.1.40']);
+    expect(snapshot.receiverMaxVideoWidth, 3840);
+    expect(snapshot.receiverMaxVideoHeight, 2160);
+    expect(snapshot.receiverSupports4k30, isTrue);
+    expect(snapshot.receiverDecoderName, 'c2.vendor.avc.decoder');
+    expect(snapshot.receiverPerformanceClass, '4k30');
     expect(snapshot.receivedAccessUnitFps, 29.5);
     expect(snapshot.releasedToSurfaceFrames, 4);
     // Legacy compatibility only; this does not prove Surface latch/render.
@@ -312,9 +346,31 @@ void main() {
     expect(snapshot.syncMaster, 'audio');
     expect(snapshot.audioState, 'playing');
     expect(snapshot.audioDecoderName, 'c2.android.aac.decoder');
+    expect(snapshot.audioSessionGeneration, 8);
+    expect(snapshot.audioDecoderState, 'running');
+    expect(snapshot.audioDecoderInitialized, isTrue);
+    expect(snapshot.audioDecoderReleased, isFalse);
     expect(snapshot.audioBufferedDurationMs, 96.0);
     expect(snapshot.audioTrackWrittenFrames, 8192);
+    expect(snapshot.audioBytesWritten, 32768);
+    expect(snapshot.audioTrackState, 'INITIALIZED');
+    expect(snapshot.audioTrackPlayState, 'PLAYING');
+    expect(snapshot.audioTrackInitialized, isTrue);
+    expect(snapshot.audioTrackPlayCalled, isTrue);
+    expect(snapshot.audioTrackRecreatedCount, 1);
+    expect(snapshot.audioTrackWriteErrorCount, 2);
+    expect(snapshot.audioTrackDeadObjectCount, 1);
+    expect(snapshot.audioQueueClearedOnReconnect, isTrue);
+    expect(snapshot.audioEosReceived, isFalse);
+    expect(snapshot.audioPtsResetCount, 3);
+    expect(snapshot.audioSessionResetCount, 4);
+    expect(snapshot.lastAudioSessionResetReason, 'TCP reconnect generation=8');
+    expect(snapshot.audioPacketsReceivedRecent, 47.0);
+    expect(snapshot.audioPacketsDecodedRecent, 46.0);
+    expect(snapshot.audioBytesWrittenRecent, 188416.0);
+    expect(snapshot.tvAudioAudibleExpected, isTrue);
     expect(snapshot.connectionId, 3);
+    expect(snapshot.receiverSessionGeneration, 8);
     expect(snapshot.sessionId, 'session-3');
     expect(snapshot.playbackState, 'streaming');
     expect(snapshot.playbackCommandAcksReceived, 2);
@@ -412,8 +468,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
@@ -435,8 +492,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
@@ -447,8 +505,9 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
       surfaceRendererReady: true,
-      releasedToSurfaceFrames:
-          startState == MirrorSessionState.streaming ? 1 : 0,
+      releasedToSurfaceFrames: startState == MirrorSessionState.streaming
+          ? 1
+          : 0,
     );
   }
 
