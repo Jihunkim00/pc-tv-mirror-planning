@@ -111,6 +111,26 @@ void main() {
         PerformanceProfile.highQuality1080p30,
       );
     });
+    test('encodes the FHD 1080p60 Mirror profile', () {
+      const request = StreamStartRequest(
+        sessionId: 'session-fhd60',
+        sourceType: SourceType.display,
+        sourceId: r'\\.\DISPLAY1',
+        video: VideoProfile.highQuality1080p60(),
+      );
+
+      final video = request.toJson()['video'] as Map<String, Object?>;
+
+      expect(video['width'], 1920);
+      expect(video['height'], 1080);
+      expect(video['fps'], 60);
+      expect(video['bitrateKbps'], 14000);
+      expect(video['performanceProfile'], 'highQuality1080p60');
+      expect(
+        StreamStartRequest.fromJson(request.toJson()).video.performanceProfile,
+        PerformanceProfile.highQuality1080p60,
+      );
+    });
     test('encodes the FHD 1080p24 Cinema profile', () {
       const request = StreamStartRequest(
         sessionId: 'session-cinema',

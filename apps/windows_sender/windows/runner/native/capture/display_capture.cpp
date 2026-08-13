@@ -42,6 +42,16 @@ std::uint8_t BgraToU(const std::uint8_t* bgra) {
   const int r = bgra[2];
   return ClampByte(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
 }
+std::optional<std::uint64_t> SystemRelativeTimeNs(
+    const winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame& frame) {
+  try {
+    const auto time = frame.SystemRelativeTime();
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(time).count());
+  } catch (...) {
+    return std::nullopt;
+  }
+}
 
 std::uint8_t BgraToV(const std::uint8_t* bgra) {
   const int b = bgra[0];
@@ -63,6 +73,8 @@ DisplayCapture::DisplayCapture() {
 }
 
 DisplayCapture::~DisplayCapture() {
+  first_system_relative_time_ns_.reset();
+  fallback_stream_start_us_ = NowUs();
   Stop();
   if (frame_event_ != nullptr) {
     CloseHandle(frame_event_);
@@ -75,6 +87,9 @@ bool DisplayCapture::Start(const std::string& source_id,
                            int target_height,
                            std::string* error) {
   Stop();
+  first_system_relative_time_ns_.reset();
+  wgc_pts_valid_ = true;
+  fallback_stream_start_us_ = NowUs();
   if (target_width < 16 || target_height < 16) {
     *error = "Invalid capture output size";
     return false;
@@ -199,8 +214,33 @@ bool DisplayCapture::CaptureNext(
     }
 
     frame->width = target_width_;
+    const auto source_time_ns = SystemRelativeTimeNs(capture_frame);
+    const auto fallback_pts_us =
+        capture_callback_us >= fallback_stream_start_us_
+            ? capture_callback_us - fallback_stream_start_us_
+            : 0;
+    frame->capture_system_relative_time_ns = source_time_ns.value_or(0);
+    frame->source_timestamp_delta_us = 0;
+    frame->video_pts_source = "legacy_stage5";
+    frame->pts_us = fallback_pts_us;
+    if (wgc_pts_valid_) {
+      if (!source_time_ns.has_value() || *source_time_ns == 0) {
+        wgc_pts_valid_ = false;
+      } else if (!first_system_relative_time_ns_.has_value()) {
+        first_system_relative_time_ns_ = *source_time_ns;
+      } else if (*source_time_ns < *first_system_relative_time_ns_) {
+        wgc_pts_valid_ = false;
+      }
+    }
+    if (wgc_pts_valid_ && source_time_ns.has_value() &&
+        first_system_relative_time_ns_.has_value() &&
+        *source_time_ns >= *first_system_relative_time_ns_) {
+      frame->source_timestamp_delta_us =
+          (*source_time_ns - *first_system_relative_time_ns_) / 1000;
+      frame->pts_us = frame->source_timestamp_delta_us;
+      frame->video_pts_source = "wgc_system_relative_time";
+    }
     frame->height = target_height_;
-    frame->pts_us = capture_callback_us;
     frame->capture_callback_us = capture_callback_us;
     frame->convert_started_us = capture_callback_us;
     frame->converted_us = capture_callback_us;

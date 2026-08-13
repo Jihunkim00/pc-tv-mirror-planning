@@ -101,6 +101,27 @@ final class ReceiverSessionSnapshot {
     this.decoderInputFps = 0,
     this.decoderOutputFps = 0,
     this.releasedToSurfaceFps = 0,
+    this.codecRenderedFrames = 0,
+    this.codecRenderedFpsRecent = 0,
+    this.renderedIntervalP50Ms = 0,
+    this.renderedIntervalP95Ms = 0,
+    this.renderedIntervalMaxMs = 0,
+    this.renderedJitterP95Ms = 0,
+    this.longFrameGapCountRecent = 0,
+    this.videoPtsSource = 'unavailable',
+    this.videoPtsDiscontinuityCount = 0,
+    this.videoPtsRegressionCount = 0,
+    this.videoPtsDuplicateCount = 0,
+    this.videoPtsIntervalP50Ms = 0,
+    this.videoPtsIntervalP95Ms = 0,
+    this.videoPtsIntervalMaxMs = 0,
+    this.ptsDriftMs = 0,
+    this.displayModeId = 0,
+    this.displayWidth = 0,
+    this.displayHeight = 0,
+    this.displayRefreshRateHz = 0,
+    this.surfaceRequestedRateFps = 0,
+    this.frameRateModeMatch = 'NOT_MATCHED',
     this.actualPresentedFps = 0,
     this.lateFrameDropFps = 0,
     this.receivedFrameIntervalAverageMs = 0,
@@ -148,8 +169,9 @@ final class ReceiverSessionSnapshot {
     this.lastFrameAgeMs = 0,
     this.currentFrameAgeMs = 0,
     this.estimatedReceiverLatencyMs = 0,
-    this.rendererMode = 'lowLatencyPaced',
+    this.rendererMode = 'immediate',
     this.scheduledRenderFrames = 0,
+    this.immediateRenderFrames = 0,
     this.immediateRenderFallbackFrames = 0,
     this.averageRenderScheduleDelayMs = 0,
     this.p95RenderScheduleDelayMs = 0,
@@ -240,6 +262,27 @@ final class ReceiverSessionSnapshot {
   final double decoderInputFps;
   final double decoderOutputFps;
   final double releasedToSurfaceFps;
+  final int codecRenderedFrames;
+  final double codecRenderedFpsRecent;
+  final double renderedIntervalP50Ms;
+  final double renderedIntervalP95Ms;
+  final double renderedIntervalMaxMs;
+  final double renderedJitterP95Ms;
+  final int longFrameGapCountRecent;
+  final String videoPtsSource;
+  final int videoPtsDiscontinuityCount;
+  final int videoPtsRegressionCount;
+  final int videoPtsDuplicateCount;
+  final double videoPtsIntervalP50Ms;
+  final double videoPtsIntervalP95Ms;
+  final double videoPtsIntervalMaxMs;
+  final double ptsDriftMs;
+  final int displayModeId;
+  final int displayWidth;
+  final int displayHeight;
+  final double displayRefreshRateHz;
+  final double surfaceRequestedRateFps;
+  final String frameRateModeMatch;
   final double actualPresentedFps;
   final double lateFrameDropFps;
   final double receivedFrameIntervalAverageMs;
@@ -289,6 +332,7 @@ final class ReceiverSessionSnapshot {
   final double estimatedReceiverLatencyMs;
   final String rendererMode;
   final int scheduledRenderFrames;
+  final int immediateRenderFrames;
   final int immediateRenderFallbackFrames;
   final double averageRenderScheduleDelayMs;
   final double p95RenderScheduleDelayMs;
@@ -421,6 +465,42 @@ final class ReceiverSessionSnapshot {
       decoderInputFps: _readOptionalDouble(json, 'decoderInputFps'),
       decoderOutputFps: _readOptionalDouble(json, 'decoderOutputFps'),
       releasedToSurfaceFps: _readOptionalDouble(json, 'releasedToSurfaceFps'),
+      codecRenderedFrames: _readOptionalInt(json, 'codecRenderedFrames'),
+      codecRenderedFpsRecent: _readOptionalDouble(
+        json,
+        'codecRenderedFpsRecent',
+      ),
+      renderedIntervalP50Ms: _readOptionalDouble(json, 'renderedIntervalP50Ms'),
+      renderedIntervalP95Ms: _readOptionalDouble(json, 'renderedIntervalP95Ms'),
+      renderedIntervalMaxMs: _readOptionalDouble(json, 'renderedIntervalMaxMs'),
+      renderedJitterP95Ms: _readOptionalDouble(json, 'renderedJitterP95Ms'),
+      longFrameGapCountRecent: _readOptionalInt(
+        json,
+        'longFrameGapCountRecent',
+      ),
+      videoPtsSource: _readOptionalString(json, 'videoPtsSource'),
+      videoPtsDiscontinuityCount: _readOptionalInt(
+        json,
+        'videoPtsDiscontinuityCount',
+      ),
+      videoPtsRegressionCount: _readOptionalInt(
+        json,
+        'videoPtsRegressionCount',
+      ),
+      videoPtsDuplicateCount: _readOptionalInt(json, 'videoPtsDuplicateCount'),
+      videoPtsIntervalP50Ms: _readOptionalDouble(json, 'videoPtsIntervalP50Ms'),
+      videoPtsIntervalP95Ms: _readOptionalDouble(json, 'videoPtsIntervalP95Ms'),
+      videoPtsIntervalMaxMs: _readOptionalDouble(json, 'videoPtsIntervalMaxMs'),
+      ptsDriftMs: _readOptionalDouble(json, 'ptsDriftMs'),
+      displayModeId: _readOptionalInt(json, 'displayModeId'),
+      displayWidth: _readOptionalInt(json, 'displayWidth'),
+      displayHeight: _readOptionalInt(json, 'displayHeight'),
+      displayRefreshRateHz: _readOptionalDouble(json, 'displayRefreshRateHz'),
+      surfaceRequestedRateFps: _readOptionalDouble(
+        json,
+        'surfaceRequestedRateFps',
+      ),
+      frameRateModeMatch: _readOptionalString(json, 'frameRateModeMatch'),
       actualPresentedFps: _readOptionalDouble(json, 'actualPresentedFps'),
       lateFrameDropFps: _readOptionalDouble(json, 'lateFrameDropFps'),
       receivedFrameIntervalAverageMs: _readOptionalDouble(
@@ -509,6 +589,7 @@ final class ReceiverSessionSnapshot {
       ),
       rendererMode: _readOptionalString(json, 'rendererMode'),
       scheduledRenderFrames: _readOptionalInt(json, 'scheduledRenderFrames'),
+      immediateRenderFrames: _readOptionalInt(json, 'immediateRenderFrames'),
       immediateRenderFallbackFrames: _readOptionalInt(
         json,
         'immediateRenderFallbackFrames',

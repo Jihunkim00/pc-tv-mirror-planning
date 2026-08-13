@@ -196,6 +196,28 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.target_frame_interval_ms);
   map[EncodableValue("staleVideoDroppedFps")] =
       EncodableValue(snapshot.stale_video_dropped_fps);
+  map[EncodableValue("sourceDisplayWidth")] =
+      EncodableValue(snapshot.source_display_width);
+  map[EncodableValue("sourceDisplayHeight")] =
+      EncodableValue(snapshot.source_display_height);
+  map[EncodableValue("sourceDisplayRefreshHz")] =
+      EncodableValue(snapshot.source_display_refresh_hz);
+  map[EncodableValue("sourceDisplayDeviceName")] =
+      EncodableValue(snapshot.source_display_device_name);
+  map[EncodableValue("captureSystemRelativeTimeNs")] =
+      EncodableValue(static_cast<int64_t>(snapshot.capture_system_relative_time_ns));
+  map[EncodableValue("senderGeneratedPtsUs")] =
+      EncodableValue(static_cast<int64_t>(snapshot.sender_generated_pts_us));
+  map[EncodableValue("sourceTimestampDeltaUs")] =
+      EncodableValue(static_cast<int64_t>(snapshot.source_timestamp_delta_us));
+  map[EncodableValue("videoPtsSource")] = EncodableValue(snapshot.video_pts_source);
+  map[EncodableValue("captureIntervalFromSourceP50Ms")] =
+      EncodableValue(snapshot.capture_interval_from_source_p50_ms);
+  map[EncodableValue("captureIntervalFromSourceP95Ms")] = EncodableValue(snapshot.capture_interval_from_source_p95_ms);
+  map[EncodableValue("captureIntervalFromSourceMaxMs")] =
+      EncodableValue(snapshot.capture_interval_from_source_max_ms);
+  map[EncodableValue("receiverMaxFps")] =
+      EncodableValue(snapshot.receiver_max_fps);
   map[EncodableValue("selectedEncoderName")] =
       EncodableValue(snapshot.selected_encoder_name);
   map[EncodableValue("selectedEncoderHardware")] =
@@ -390,6 +412,26 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.transport_video_fps_recent);
   map[EncodableValue("receiverPresentedFpsRecent")] =
       EncodableValue(snapshot.receiver_presented_fps_recent);
+  map[EncodableValue("receiverReceivedFpsRecent")] =
+      EncodableValue(snapshot.receiver_received_fps_recent);
+  map[EncodableValue("receiverDecoderInputFpsRecent")] =
+      EncodableValue(snapshot.receiver_decoder_input_fps_recent);
+  map[EncodableValue("receiverDecoderOutputFpsRecent")] =
+      EncodableValue(snapshot.receiver_decoder_output_fps_recent);
+  map[EncodableValue("receiverDecoderOutputReleased")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_output_released));
+  map[EncodableValue("receiverDecoderOutputReleasedImmediate")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_output_released_immediate));
+  map[EncodableValue("receiverDecoderOutputReleasedScheduled")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_output_released_scheduled));
+  map[EncodableValue("receiverOnFrameRenderedCallbacks")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_on_frame_rendered_callbacks));
+  map[EncodableValue("receiverVideoRenderMode")] =
+      EncodableValue(snapshot.receiver_video_render_mode);
+  map[EncodableValue("receiverPtsIntervalP50Ms")] =
+      EncodableValue(snapshot.receiver_pts_interval_p50_ms);
+  map[EncodableValue("receiverPtsRegressionCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_pts_regression_count));
   map[EncodableValue("conversionDurationP95Ms")] =
       EncodableValue(snapshot.conversion_duration_p95_ms);
   map[EncodableValue("encoderQueueWaitP95Ms")] =

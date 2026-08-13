@@ -486,6 +486,7 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
   sequence_header_.clear();
   parameter_sets_ = {};
   first_pts_us_ = 0;
+  first_pts_set_ = false;
   force_next_key_frame_.store(true);
   return true;
 }
@@ -530,7 +531,7 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   buffer->SetCurrentLength(static_cast<DWORD>(frame.data.size()));
   sample->AddBuffer(buffer.get());
 
-  if (first_pts_us_ == 0) {
+  if (!first_pts_set_) {
     first_pts_us_ = frame.pts_us;
   }
   const LONGLONG sample_time =
@@ -614,6 +615,7 @@ void H264Encoder::Stop() {
   sequence_header_.clear();
   parameter_sets_ = {};
   first_pts_us_ = 0;
+  first_pts_set_ = false;
   force_next_key_frame_.store(false);
   encoder_backpressure_count_ = 0;
   encoder_backpressure_dropped_frames_ = 0;

@@ -1,3 +1,4 @@
+// ignore_for_file: prefer_interpolation_to_compose_strings
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -34,6 +35,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
   int _focusRestoreRetryCount = 0;
   bool _fullscreenMode = false;
   bool _autoFullscreen = true;
+  bool _showPlaybackDebug = false;
   bool _autoFullscreenEnteredForSession = false;
   bool _userExitedFullscreen = false;
   String _scaleMode = 'fit';
@@ -303,6 +305,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                       showNativeSurface: widget.showNativeSurface,
                       controller: _controller,
                       scaleMode: _scaleMode,
+                      showPlaybackDebug: _showPlaybackDebug,
                       fullscreen: true,
                     )
                   : SafeArea(
@@ -318,6 +321,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                                 showNativeSurface: widget.showNativeSurface,
                                 controller: _controller,
                                 scaleMode: _scaleMode,
+                                showPlaybackDebug: _showPlaybackDebug,
                               ),
                             ),
                             const SizedBox(width: 24),
@@ -336,6 +340,7 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                                   userExitedFullscreen: _userExitedFullscreen,
                                   scaleMode: _scaleMode,
                                   fullscreenEnabled: _fullscreenMode,
+                                  showPlaybackDebug: _showPlaybackDebug,
                                   onRestart: _restartReceiver,
                                   onEnterFullscreen: () =>
                                       _enterFullscreen(explicit: true),
@@ -348,6 +353,11 @@ class _ReceiverHomePageState extends State<ReceiverHomePage> {
                                   onScaleModeChanged: (value) {
                                     setState(() {
                                       _scaleMode = value;
+                                    });
+                                  },
+                                  onPlaybackDebugChanged: (value) {
+                                    setState(() {
+                                      _showPlaybackDebug = value;
                                     });
                                   },
                                 ),
@@ -426,6 +436,7 @@ class _VideoSurface extends StatelessWidget {
     required this.controller,
     required this.scaleMode,
     this.fullscreen = false,
+    required this.showPlaybackDebug,
     super.key,
   });
 
@@ -444,6 +455,7 @@ class _VideoSurface extends StatelessWidget {
   final ReceiverController controller;
   final String scaleMode;
   final bool fullscreen;
+  final bool showPlaybackDebug;
 
   @override
   Widget build(BuildContext context) {
@@ -497,6 +509,18 @@ class _VideoSurface extends StatelessWidget {
               );
             },
           ),
+        if (showPlaybackDebug)
+          Positioned(
+            left: 8,
+            top: 8,
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: controller,
+                builder: (context, _) =>
+                    _PlaybackDebugOverlay(snapshot: controller.snapshot),
+              ),
+            ),
+          ),
       ],
     );
     return Focus(
@@ -528,6 +552,79 @@ class _VideoSurface extends StatelessWidget {
   }
 }
 
+class _PlaybackDebugOverlay extends StatelessWidget {
+  const _PlaybackDebugOverlay({required this.snapshot});
+
+  final ReceiverSessionSnapshot? snapshot;
+
+  String _rate(double value) =>
+      value <= 0 ? 'unavailable' : value.toStringAsFixed(1);
+  String _ms(double value) =>
+      value <= 0 ? 'unavailable' : value.toStringAsFixed(1) + ' ms';
+
+  @override
+  Widget build(BuildContext context) {
+    final value = snapshot;
+    final lines = <String>[
+      'VIDEO DEBUG',
+      'Render mode ' + (value?.rendererMode ?? 'immediate'),
+      'Release immediate/scheduled ' +
+          (value?.immediateRenderFrames ?? 0).toString() +
+          ' / ' +
+          (value?.scheduledRenderFrames ?? 0).toString(),
+      'Input ' +
+          _rate(value?.receivedAccessUnitFps ?? 0) +
+          '  Decoder ' +
+          _rate(value?.decoderOutputFps ?? 0),
+      'Codec rendered ' + _rate(value?.codecRenderedFpsRecent ?? 0),
+      'Render p50/p95/max ' +
+          _ms(value?.renderedIntervalP50Ms ?? 0) +
+          ' / ' +
+          _ms(value?.renderedIntervalP95Ms ?? 0) +
+          ' / ' +
+          _ms(value?.renderedIntervalMaxMs ?? 0),
+      'Jitter p95 ' +
+          _ms(value?.renderedJitterP95Ms ?? 0) +
+          '  Gaps ' +
+          (value?.longFrameGapCountRecent ?? 0).toString(),
+      'Drops ' +
+          (value?.droppedFrames ?? 0).toString() +
+          '  PTS ' +
+          (value?.videoPtsSource ?? 'unavailable') +
+          ' drift ' +
+          _ms(value?.ptsDriftMs ?? 0),
+      'Display ' +
+          (value?.displayWidth ?? 0).toString() +
+          'x' +
+          (value?.displayHeight ?? 0).toString() +
+          '@' +
+          _rate(value?.displayRefreshRateHz ?? 0),
+      'Surface ' +
+          _rate(value?.surfaceRequestedRateFps ?? 0) +
+          '  Mode ' +
+          (value?.frameRateModeMatch ?? 'NOT_MATCHED'),
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          lines.join('\n'),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            height: 1.15,
+            fontFamily: 'monospace',
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ReceiverStatusPanel extends StatelessWidget {
   const _ReceiverStatusPanel({
     required this.controller,
@@ -544,6 +641,8 @@ class _ReceiverStatusPanel extends StatelessWidget {
     required this.onStop,
     required this.onAutoFullscreenChanged,
     required this.onScaleModeChanged,
+    required this.showPlaybackDebug,
+    required this.onPlaybackDebugChanged,
   });
 
   final ReceiverController controller;
@@ -560,6 +659,8 @@ class _ReceiverStatusPanel extends StatelessWidget {
   final VoidCallback onStop;
   final ValueChanged<bool> onAutoFullscreenChanged;
   final ValueChanged<String> onScaleModeChanged;
+  final bool showPlaybackDebug;
+  final ValueChanged<bool> onPlaybackDebugChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -643,6 +744,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
+
           Material(
             type: MaterialType.transparency,
             child: SwitchListTile(
@@ -652,6 +754,17 @@ class _ReceiverStatusPanel extends StatelessWidget {
               title: const Text('Auto fullscreen'),
             ),
           ),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('FPS debug overlay'),
+              subtitle: const Text('Actual codec render/display timing'),
+              value: showPlaybackDebug,
+              onChanged: onPlaybackDebugChanged,
+            ),
+          ),
+          const SizedBox(height: 8),
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(value: 'fit', label: Text('Fit')),

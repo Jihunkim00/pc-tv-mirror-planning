@@ -83,6 +83,7 @@ enum PerformanceProfile {
   lowLatency720p30('lowLatency720p30'),
   compatibility720p30('compatibility720p30'),
   highQuality1080p30('highQuality1080p30'),
+  highQuality1080p60('highQuality1080p60'),
   cinema1080p24('cinema1080p24'),
   experimental4k30('experimental4k30');
 
@@ -95,6 +96,7 @@ enum PerformanceProfile {
       'lowLatency720p30' => PerformanceProfile.lowLatency720p30,
       'compatibility720p30' => PerformanceProfile.compatibility720p30,
       'highQuality1080p30' => PerformanceProfile.highQuality1080p30,
+      'highQuality1080p60' => PerformanceProfile.highQuality1080p60,
       'cinema1080p24' => PerformanceProfile.cinema1080p24,
       'experimental4k30' => PerformanceProfile.experimental4k30,
       _ => throw FormatException('Unsupported performance profile: $value'),
@@ -182,6 +184,7 @@ final class DisplayInfo {
     required this.y,
     required this.scaleFactor,
     required this.isPrimary,
+    this.refreshRateHz = 0,
   });
 
   final String id;
@@ -192,6 +195,7 @@ final class DisplayInfo {
   final int y;
   final double scaleFactor;
   final bool isPrimary;
+  final double refreshRateHz;
 
   Map<String, Object?> toJson() {
     return {
@@ -203,6 +207,7 @@ final class DisplayInfo {
       'y': y,
       'scaleFactor': scaleFactor,
       'isPrimary': isPrimary,
+      'refreshRateHz': refreshRateHz,
     };
   }
 
@@ -216,6 +221,7 @@ final class DisplayInfo {
       y: _readInt(json, 'y'),
       scaleFactor: _readNumber(json, 'scaleFactor').toDouble(),
       isPrimary: _readBool(json, 'isPrimary'),
+      refreshRateHz: _readOptionalDouble(json, 'refreshRateHz'),
     );
   }
 }
@@ -233,6 +239,7 @@ final class ReceiverCapabilities {
       PerformanceProfile.lowLatency720p30,
       PerformanceProfile.compatibility720p30,
       PerformanceProfile.highQuality1080p30,
+      PerformanceProfile.highQuality1080p60,
       PerformanceProfile.cinema1080p24,
     ],
     this.supports4k30 = false,
@@ -367,6 +374,14 @@ final class VideoProfile {
       fps = 30,
       bitrateKbps = 7500,
       performanceProfile = PerformanceProfile.highQuality1080p30;
+
+  const VideoProfile.highQuality1080p60()
+    : codec = VideoCodec.h264,
+      width = 1920,
+      height = 1080,
+      fps = 60,
+      bitrateKbps = 14000,
+      performanceProfile = PerformanceProfile.highQuality1080p60;
 
   const VideoProfile.cinema1080p24()
     : codec = VideoCodec.h264,
@@ -1311,6 +1326,21 @@ num _readNumber(Map<String, Object?> json, String key) {
   }
   throw FormatException('Expected number for $key');
 }
+double _readOptionalDouble(
+  Map<String, Object?> json,
+  String key, {
+  double defaultValue = 0,
+}) {
+  final value = json[key];
+  if (value == null) {
+    return defaultValue;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  throw FormatException('Expected number for $key');
+}
+
 
 bool _readBool(Map<String, Object?> json, String key) {
   final value = json[key];

@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.Display
 import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
@@ -154,6 +155,12 @@ class MainActivity : FlutterActivity() {
         }
         if (h264DecoderCapability.maxWidth >= 1920 &&
             h264DecoderCapability.maxHeight >= 1080 &&
+            h264DecoderCapability.maxFps >= 60
+        ) {
+            profiles.add(PERFORMANCE_PROFILE_HIGH_QUALITY_1080P60)
+        }
+        if (h264DecoderCapability.maxWidth >= 1920 &&
+            h264DecoderCapability.maxHeight >= 1080 &&
             h264DecoderCapability.maxFps >= 24
         ) {
             profiles.add(PERFORMANCE_PROFILE_CINEMA_1080P24)
@@ -161,6 +168,7 @@ class MainActivity : FlutterActivity() {
         return mapOf(
             "type" to "capabilities",
             "protocolVersion" to 1,
+            "receiverMaxVideoFps" to h264DecoderCapability.maxFps,
             "deviceId" to "android-tv-${Build.MODEL ?: "unknown"}",
             "deviceName" to (Build.MODEL ?: "Android TV"),
             "videoCodecs" to listOf("h264"),
@@ -180,6 +188,7 @@ class MainActivity : FlutterActivity() {
 }
 
 private const val VIDEO_SOURCE_WIDTH = 1280
+private const val PERFORMANCE_PROFILE_HIGH_QUALITY_1080P60 = "highQuality1080p60"
 private const val VIDEO_SOURCE_HEIGHT = 720
 private const val VIDEO_SOURCE_FPS = 30
 private const val SCALE_MODE_FIT = "fit"
@@ -235,6 +244,9 @@ private class StageOneReceiverServer(
 
     @Volatile
     private var acceptThread: Thread? = null
+
+    @Volatile
+    private var statsThread: Thread? = null
 
     @Volatile
     private var running = false
@@ -317,6 +329,7 @@ private class StageOneReceiverServer(
 
     fun stop(): Map<String, Any> {
         running = false
+        stopStatsThread()
         closeQuietly(clientSocket)
         closeQuietly(serverSocket)
         clientSocket = null
@@ -404,6 +417,10 @@ private class StageOneReceiverServer(
 
     fun onVideoLayout(metrics: VideoLayoutMetrics) {
         decoder.updateVideoLayout(metrics)
+    }
+
+    fun onDisplayMetrics(value: DisplayMetricsSnapshot?) {
+        decoder.updateDisplayMetrics(value)
     }
 
     fun onSurfaceCreated(
@@ -504,10 +521,92 @@ private class StageOneReceiverServer(
                 ),
             )
             playbackState = "waitingForKeyFrame"
-            readVideoPackets(input)
+            startStatsThread(socket)
+            try {
+                readVideoPackets(input)
+            } finally {
+                stopStatsThread()
+            }
         }
     }
 
+    private fun startStatsThread(socket: Socket) {
+        stopStatsThread()
+        statsThread = Thread({
+            while (running && clientSocket === socket) {
+                try {
+                    Thread.sleep(1000)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                if (!running || clientSocket !== socket) break
+                try {
+                    synchronized(socketWriteLock) {
+                        writeJsonLine(socket, videoStatsResponse(decoder.snapshot()))
+                    }
+                } catch (error: IOException) {
+                    recordPacketError(error.message ?: "Periodic receiver stats send failed.")
+                    break
+                }
+            }
+        }, "StageOneReceiverStats").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun stopStatsThread() {
+        val thread = statsThread ?: return
+        statsThread = null
+        thread.interrupt()
+        if (thread !== Thread.currentThread()) {
+            try {
+                thread.join(250)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+
+    private fun videoStatsResponse(snapshot: DecoderSnapshot): JSONObject {
+        return JSONObject()
+            .put("type", "VIDEO_STATS")
+            .put("protocolVersion", 1)
+            .put("sessionId", currentSessionId)
+            .put("receiverTimestampUs", elapsedRealtimeUs())
+            .put("receivedAccessUnitFps", snapshot.receivedAccessUnitFps)
+            .put("receivedVideoFps", snapshot.receivedAccessUnitFps)
+            .put("decoderInputQueued", snapshot.decoderInputFrames)
+            .put("decoderOutputAvailable", snapshot.decoderOutputFrames)
+            .put("decoderInputFps", snapshot.decoderInputFps)
+            .put("decoderOutputFps", snapshot.decoderOutputFps)
+            .put("decoderOutputReleased", snapshot.releasedToSurfaceFrames)
+            .put("decoderOutputReleasedImmediate", snapshot.immediateRenderFrames)
+            .put("decoderOutputReleasedScheduled", snapshot.scheduledRenderFrames)
+            .put("codecRenderedFpsRecent", snapshot.codecRenderedFpsRecent)
+            .put("onFrameRenderedCallbackCount", snapshot.codecRenderedFrames)
+            .put("receiverVideoRenderMode", snapshot.rendererMode)
+            .put("renderedIntervalP50Ms", snapshot.renderedIntervalP50Ms)
+            .put("renderedIntervalP95Ms", snapshot.renderedIntervalP95Ms)
+            .put("renderedIntervalMaxMs", snapshot.renderedIntervalMaxMs)
+            .put("renderedJitterP95Ms", snapshot.renderedJitterP95Ms)
+            .put("longFrameGapCountRecent", snapshot.longFrameGapCountRecent)
+            .put("droppedFrames", snapshot.droppedFrames)
+            .put("videoPtsSource", snapshot.videoPtsSource)
+            .put("videoPtsDiscontinuityCount", snapshot.videoPtsDiscontinuityCount)
+            .put("videoPtsRegressionCount", snapshot.videoPtsRegressionCount)
+            .put("videoPtsDuplicateCount", snapshot.videoPtsDuplicateCount)
+            .put("videoPtsIntervalP50Ms", snapshot.videoPtsIntervalP50Ms)
+            .put("videoPtsIntervalP95Ms", snapshot.videoPtsIntervalP95Ms)
+            .put("videoPtsIntervalMaxMs", snapshot.videoPtsIntervalMaxMs)
+            .put("ptsDriftMs", snapshot.ptsDriftMs)
+            .put("displayModeId", snapshot.displayModeId)
+            .put("displayWidth", snapshot.displayWidth)
+            .put("displayHeight", snapshot.displayHeight)
+            .put("displayRefreshRateHz", snapshot.displayRefreshRateHz)
+            .put("surfaceRequestedRateFps", snapshot.surfaceRequestedRateFps)
+            .put("frameRateModeMatch", snapshot.frameRateModeMatch)
+    }
     private fun readVideoPackets(input: InputStream) {
         while (running) {
             val message = try {
@@ -716,6 +815,27 @@ private class StageOneReceiverServer(
             "decoderInputFps" to decoderSnapshot.decoderInputFps,
             "decoderOutputFps" to decoderSnapshot.decoderOutputFps,
             "releasedToSurfaceFps" to decoderSnapshot.releasedToSurfaceFps,
+            "codecRenderedFrames" to decoderSnapshot.codecRenderedFrames,
+            "codecRenderedFpsRecent" to decoderSnapshot.codecRenderedFpsRecent,
+            "renderedIntervalP50Ms" to decoderSnapshot.renderedIntervalP50Ms,
+            "renderedIntervalP95Ms" to decoderSnapshot.renderedIntervalP95Ms,
+            "renderedIntervalMaxMs" to decoderSnapshot.renderedIntervalMaxMs,
+            "renderedJitterP95Ms" to decoderSnapshot.renderedJitterP95Ms,
+            "longFrameGapCountRecent" to decoderSnapshot.longFrameGapCountRecent,
+            "videoPtsSource" to decoderSnapshot.videoPtsSource,
+            "videoPtsDiscontinuityCount" to decoderSnapshot.videoPtsDiscontinuityCount,
+            "videoPtsRegressionCount" to decoderSnapshot.videoPtsRegressionCount,
+            "videoPtsDuplicateCount" to decoderSnapshot.videoPtsDuplicateCount,
+            "videoPtsIntervalP50Ms" to decoderSnapshot.videoPtsIntervalP50Ms,
+            "videoPtsIntervalP95Ms" to decoderSnapshot.videoPtsIntervalP95Ms,
+            "videoPtsIntervalMaxMs" to decoderSnapshot.videoPtsIntervalMaxMs,
+            "ptsDriftMs" to decoderSnapshot.ptsDriftMs,
+            "displayModeId" to decoderSnapshot.displayModeId,
+            "displayWidth" to decoderSnapshot.displayWidth,
+            "displayHeight" to decoderSnapshot.displayHeight,
+            "displayRefreshRateHz" to decoderSnapshot.displayRefreshRateHz,
+            "surfaceRequestedRateFps" to decoderSnapshot.surfaceRequestedRateFps,
+            "frameRateModeMatch" to decoderSnapshot.frameRateModeMatch,
             "lateFrameDropFps" to decoderSnapshot.lateFrameDropFps,
             "receivedFrameIntervalAverageMs" to
                 decoderSnapshot.receivedFrameIntervalAverageMs,
@@ -766,6 +886,7 @@ private class StageOneReceiverServer(
             "estimatedReceiverLatencyMs" to decoderSnapshot.estimatedReceiverLatencyMs,
             "rendererMode" to decoderSnapshot.rendererMode,
             "scheduledRenderFrames" to decoderSnapshot.scheduledRenderFrames,
+            "immediateRenderFrames" to decoderSnapshot.immediateRenderFrames,
             "immediateRenderFallbackFrames" to
                 decoderSnapshot.immediateRenderFallbackFrames,
             "averageRenderScheduleDelayMs" to
@@ -773,7 +894,7 @@ private class StageOneReceiverServer(
             "p95RenderScheduleDelayMs" to decoderSnapshot.p95RenderScheduleDelayMs,
             "playoutDelayMs" to decoderSnapshot.playoutDelayMs,
             "pacingResyncCount" to decoderSnapshot.pacingResyncCount,
-            "actualPresentedFps" to decoderSnapshot.releasedToSurfaceFps,
+            "actualPresentedFps" to decoderSnapshot.codecRenderedFpsRecent,
             "avSyncOffsetMs" to decoderSnapshot.avSyncOffsetMs,
             "avSyncAverageMs" to decoderSnapshot.avSyncAverageMs,
             "avSyncP95Ms" to decoderSnapshot.avSyncP95Ms,
@@ -893,6 +1014,27 @@ private data class DecoderSnapshot(
     val decoderInputFps: Double,
     val decoderOutputFps: Double,
     val releasedToSurfaceFps: Double,
+    val codecRenderedFrames: Long,
+    val codecRenderedFpsRecent: Double,
+    val renderedIntervalP50Ms: Double,
+    val renderedIntervalP95Ms: Double,
+    val renderedIntervalMaxMs: Double,
+    val renderedJitterP95Ms: Double,
+    val longFrameGapCountRecent: Long,
+    val videoPtsSource: String,
+    val videoPtsDiscontinuityCount: Long,
+    val videoPtsRegressionCount: Long,
+    val videoPtsDuplicateCount: Long,
+    val videoPtsIntervalP50Ms: Double,
+    val videoPtsIntervalP95Ms: Double,
+    val videoPtsIntervalMaxMs: Double,
+    val ptsDriftMs: Double,
+    val displayModeId: Int,
+    val displayWidth: Int,
+    val displayHeight: Int,
+    val displayRefreshRateHz: Double,
+    val surfaceRequestedRateFps: Double,
+    val frameRateModeMatch: String,
     val lateFrameDropFps: Double,
     val receivedFrameIntervalAverageMs: Double,
     val receivedFrameIntervalP95Ms: Double,
@@ -941,6 +1083,7 @@ private data class DecoderSnapshot(
     val estimatedReceiverLatencyMs: Double,
     val rendererMode: String,
     val scheduledRenderFrames: Long,
+    val immediateRenderFrames: Long,
     val immediateRenderFallbackFrames: Long,
     val averageRenderScheduleDelayMs: Double,
     val p95RenderScheduleDelayMs: Double,
@@ -955,6 +1098,25 @@ private data class DecoderSnapshot(
     val lastDecoderError: String?,
 )
 
+private data class DisplayMetricsSnapshot(
+    val modeId: Int,
+    val width: Int,
+    val height: Int,
+    val refreshRateHz: Double,
+) {
+    companion object {
+        fun from(display: Display?): DisplayMetricsSnapshot? {
+            if (display == null) return null
+            val mode = display.mode
+            return DisplayMetricsSnapshot(
+                modeId = mode.modeId,
+                width = mode.physicalWidth,
+                height = mode.physicalHeight,
+                refreshRateHz = mode.refreshRate.toDouble(),
+            )
+        }
+    }
+}
 private data class VideoLayoutMetrics(
     val sourceWidth: Int,
     val sourceHeight: Int,
@@ -1842,6 +2004,14 @@ private class StageOneVideoDecoder(
     private val decoderOutputCounter = RollingEventWindow()
     private val releasedToSurfaceCounter = RollingEventWindow()
     private val lateFrameDropCounter = RollingEventWindow()
+    private val codecRenderedCounter = RollingEventWindow()
+    private val renderedJitterSamples = RollingSampleWindow()
+    private val videoPtsIntervalSamples = RollingSampleWindow()
+    private val longFrameGapCounter = RollingEventWindow()
+    private var codecRenderedFrames = 0L
+    private var lastCodecRenderNs: Long? = null
+    private var lastVideoPtsUs: Long? = null
+    private var videoPtsSource = "unavailable"
     private val renderScheduleDelaySamples = RollingSampleWindow()
     private var needsKeyFrame = true
     private var decoderInputFrames = 0L
@@ -1890,14 +2060,21 @@ private class StageOneVideoDecoder(
     private var receiverQueueDepth = 0
     private var maxReceiverQueueDepth = 0
     private var staleAccessUnitsDropped = 0L
+    private var videoPtsDiscontinuityCount = 0L
+    private var videoPtsRegressionCount = 0L
+    private var videoPtsDuplicateCount = 0L
+    private var ptsDriftMs = 0.0
+    private var displayMetrics: DisplayMetricsSnapshot? = null
+    private var surfaceRequestedRateFps = 0.0
     private var lateOutputBuffersDropped = 0L
     private var frameSequenceGaps = 0L
     private var lastFrameSequence: Long? = null
     private var lastFrameAgeMs = 0.0
     private var currentFrameAgeMs = 0.0
     private var estimatedReceiverLatencyMs = 0.0
-    private var rendererMode = "lowLatencyPaced"
+    private var rendererMode = "immediate"
     private var scheduledRenderFrames = 0L
+    private var immediateRenderFrames = 0L
     private var immediateRenderFallbackFrames = 0L
     private var averageRenderScheduleDelayMs = 0.0
     private var p95RenderScheduleDelayMs = 0.0
@@ -1933,6 +2110,27 @@ private class StageOneVideoDecoder(
                 decoderInputFps = decoderInputCounter.fps(nowUs),
                 decoderOutputFps = decoderOutputCounter.fps(nowUs),
                 releasedToSurfaceFps = releasedToSurfaceCounter.fps(nowUs),
+                codecRenderedFrames = codecRenderedFrames,
+                codecRenderedFpsRecent = codecRenderedCounter.fps(nowUs),
+                renderedIntervalP50Ms = codecRenderedCounter.p50IntervalMs(nowUs),
+                renderedIntervalP95Ms = codecRenderedCounter.p95IntervalMs(nowUs),
+                renderedIntervalMaxMs = codecRenderedCounter.maxIntervalMs(nowUs),
+                renderedJitterP95Ms = renderedJitterSamples.p95Ms(nowUs),
+                longFrameGapCountRecent = longFrameGapCounter.count(nowUs),
+                videoPtsSource = videoPtsSource,
+                videoPtsDiscontinuityCount = videoPtsDiscontinuityCount,
+                videoPtsRegressionCount = videoPtsRegressionCount,
+                videoPtsDuplicateCount = videoPtsDuplicateCount,
+                videoPtsIntervalP50Ms = videoPtsIntervalSamples.p50Ms(nowUs),
+                videoPtsIntervalP95Ms = videoPtsIntervalSamples.p95Ms(nowUs),
+                videoPtsIntervalMaxMs = videoPtsIntervalSamples.maxMs(nowUs),
+                ptsDriftMs = ptsDriftMs,
+                displayModeId = displayMetrics?.modeId ?: 0,
+                displayWidth = displayMetrics?.width ?: 0,
+                displayHeight = displayMetrics?.height ?: 0,
+                displayRefreshRateHz = displayMetrics?.refreshRateHz ?: 0.0,
+                surfaceRequestedRateFps = surfaceRequestedRateFps,
+                frameRateModeMatch = frameRateModeMatchLocked(),
                 lateFrameDropFps = lateFrameDropCounter.fps(nowUs),
                 receivedFrameIntervalAverageMs =
                     receivedAccessUnitCounter.averageIntervalMs(nowUs),
@@ -1986,6 +2184,7 @@ private class StageOneVideoDecoder(
                 estimatedReceiverLatencyMs = estimatedReceiverLatencyMs,
                 rendererMode = rendererMode,
                 scheduledRenderFrames = scheduledRenderFrames,
+                immediateRenderFrames = immediateRenderFrames,
                 immediateRenderFallbackFrames = immediateRenderFallbackFrames,
                 averageRenderScheduleDelayMs = averageRenderScheduleDelayMs,
                 p95RenderScheduleDelayMs = p95RenderScheduleDelayMs,
@@ -2018,6 +2217,18 @@ private class StageOneVideoDecoder(
             decoderInputCounter.clear()
             decoderOutputCounter.clear()
             releasedToSurfaceCounter.clear()
+            codecRenderedCounter.clear()
+            renderedJitterSamples.clear()
+            videoPtsIntervalSamples.clear()
+            longFrameGapCounter.clear()
+            codecRenderedFrames = 0
+            lastCodecRenderNs = null
+            lastVideoPtsUs = null
+            videoPtsSource = "unavailable"
+            videoPtsDiscontinuityCount = 0
+            videoPtsRegressionCount = 0
+            videoPtsDuplicateCount = 0
+            ptsDriftMs = 0.0
             lateFrameDropCounter.clear()
             renderScheduleDelaySamples.clear()
             outputWidth = 0
@@ -2046,8 +2257,9 @@ private class StageOneVideoDecoder(
             lastFrameAgeMs = 0.0
             currentFrameAgeMs = 0.0
             estimatedReceiverLatencyMs = 0.0
-            rendererMode = "lowLatencyPaced"
+            rendererMode = "immediate"
             scheduledRenderFrames = 0
+            immediateRenderFrames = 0
             immediateRenderFallbackFrames = 0
             averageRenderScheduleDelayMs = 0.0
             p95RenderScheduleDelayMs = 0.0
@@ -2079,6 +2291,62 @@ private class StageOneVideoDecoder(
         }
     }
 
+    fun updateDisplayMetrics(value: DisplayMetricsSnapshot?) {
+        synchronized(lock) {
+            displayMetrics = value
+        }
+    }
+
+    private fun frameRateModeMatchLocked(): String {
+        val refresh = displayMetrics?.refreshRateHz ?: return "NOT_MATCHED"
+        val requested = surfaceRequestedRateFps
+        if (refresh <= 0.0 || requested <= 0.0) return "NOT_MATCHED"
+        val ratio = refresh / requested
+        return if (kotlin.math.abs(ratio - kotlin.math.round(ratio)) < 0.03) {
+            "MATCHED"
+        } else {
+            "NOT_MATCHED"
+        }
+    }
+
+    private fun registerCodecRenderListenerLocked(activeCodec: MediaCodec) {
+        try {
+            activeCodec.setOnFrameRenderedListener(
+                MediaCodec.OnFrameRenderedListener { _, _, nanoTime ->
+                    synchronized(lock) {
+                        val previousNs = lastCodecRenderNs
+                        if (previousNs != null && nanoTime > previousNs) {
+                            val intervalMs = (nanoTime - previousNs) / 1_000_000.0
+                            val nowUs = elapsedRealtimeUs()
+                            renderedJitterSamples.record(
+                                nowUs,
+                                kotlin.math.abs(intervalMs - expectedFrameIntervalMsLocked()),
+                            )
+                            if (intervalMs > longGapThresholdMsLocked()) {
+                                longFrameGapCounter.record(nowUs)
+                            }
+                        }
+                        lastCodecRenderNs = nanoTime
+                        codecRenderedFrames += 1
+                        codecRenderedCounter.record(elapsedRealtimeUs())
+                    }
+                },
+                null,
+            )
+        } catch (error: Exception) {
+            lastDecoderError = "Codec render callback unavailable: ${error.message ?: "unknown"}"
+        }
+    }
+
+    private fun expectedFrameIntervalMsLocked(): Double {
+        val fps = config?.fps ?: VIDEO_SOURCE_FPS
+        return 1_000.0 / fps.coerceAtLeast(1)
+    }
+
+    private fun longGapThresholdMsLocked(): Double {
+        return if ((config?.fps ?: VIDEO_SOURCE_FPS) >= 50) 25.0 else 55.0
+    }
+
     fun setPaused(value: Boolean) {
         synchronized(lock) {
             paused = value
@@ -2086,7 +2354,7 @@ private class StageOneVideoDecoder(
             receiverQueueDepth = 0
             needsKeyFrame = true
             resetPacingLocked()
-            rendererMode = if (value) "paused" else "resuming"
+            rendererMode = if (value) "paused" else "immediate"
             lock.notifyAll()
         }
     }
@@ -2186,6 +2454,7 @@ private class StageOneVideoDecoder(
     fun configure(value: H264StreamConfig) {
         synchronized(lock) {
             val newFingerprint = H264ConfigFingerprint.from(value)
+            surfaceRequestedRateFps = value.fps.toDouble()
             val previousFingerprint = configFingerprint
             val changed = previousFingerprint != newFingerprint
             Log.i(
@@ -2241,6 +2510,33 @@ private class StageOneVideoDecoder(
             }
 
             dropStaleQueuedAccessUnitsLocked(arrivalUs)
+            videoPtsSource = "packet_pts"
+            val previousPtsUs = lastVideoPtsUs
+            if (previousPtsUs != null) {
+                when {
+                    ptsUs < previousPtsUs -> videoPtsRegressionCount += 1
+                    ptsUs == previousPtsUs -> videoPtsDuplicateCount += 1
+                    else -> {
+                        val intervalMs = (ptsUs - previousPtsUs).toDouble() / 1_000.0
+                        videoPtsIntervalSamples.record(arrivalUs, intervalMs)
+                        if (intervalMs > expectedFrameIntervalMsLocked() * 2.5) {
+                            videoPtsDiscontinuityCount += 1
+                        }
+                    }
+                }
+            }
+            if (firstCapturePtsUs == null) {
+                firstCapturePtsUs = ptsUs
+                firstArrivalUs = arrivalUs
+            }
+            val firstPts = firstCapturePtsUs
+            val firstArrival = firstArrivalUs
+            if (firstPts != null && firstArrival != null) {
+                ptsDriftMs = ((arrivalUs - firstArrival) - (ptsUs - firstPts)).toDouble() / 1_000.0
+            }
+            if (previousPtsUs == null || ptsUs > previousPtsUs) {
+                lastVideoPtsUs = ptsUs
+            }
             while (accessUnitQueue.size >= MAX_ACCESS_UNIT_QUEUE_DEPTH) {
                 val dropIndex = accessUnitQueue.indexOfFirst { !it.keyFrame }
                 if (dropIndex < 0) {
@@ -2359,7 +2655,7 @@ private class StageOneVideoDecoder(
                 recordDecoderInputLocked(unit.ptsUs, unit.arrivalUs, decoderInputUs)
             if (unit.keyFrame) {
                 needsKeyFrame = false
-                rendererMode = "lowLatencyPaced"
+                rendererMode = "immediate"
             }
                 drainOutputLocked(activeCodec)
                 lastDecoderError = null
@@ -2452,9 +2748,10 @@ private class StageOneVideoDecoder(
             format.setByteBuffer("csd-0", ByteBuffer.wrap(activeConfig.sps))
             format.setByteBuffer("csd-1", ByteBuffer.wrap(activeConfig.pps))
             applyOptionalDecoderLowLatencyFormatOptions(format)
-            applyCinemaFrameRateHintLocked(activeSurface, activeConfig)
+            applyVideoFrameRateHintLocked(activeSurface, activeConfig)
             newCodec.configure(format, activeSurface, null, 0)
             newCodec.start()
+            registerCodecRenderListenerLocked(newCodec)
             codec = newCodec
             newCodec = null
             configuredFingerprint = activeFingerprint
@@ -2478,13 +2775,12 @@ private class StageOneVideoDecoder(
         }
     }
 
-    private fun applyCinemaFrameRateHintLocked(
+    private fun applyVideoFrameRateHintLocked(
         activeSurface: Surface,
         activeConfig: H264StreamConfig,
     ) {
-        if (activeConfig.width != 1920 ||
-            activeConfig.height != 1080 ||
-            activeConfig.fps != 24
+        if (activeConfig.width != 1920 || activeConfig.height != 1080 ||
+            (activeConfig.fps != 24 && activeConfig.fps != 60)
         ) {
             return
         }
@@ -2493,7 +2789,7 @@ private class StageOneVideoDecoder(
         }
         try {
             activeSurface.setFrameRate(
-                24.0f,
+                activeConfig.fps.toFloat(),
                 Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
                 Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS,
             )
@@ -2518,11 +2814,7 @@ private class StageOneVideoDecoder(
                         decoderOutputFrames += 1
                         decoderOutputCounter.record(elapsedRealtimeUs())
                         if (render) {
-                            val released = releaseOutputBufferWithPacingLocked(
-                                activeCodec,
-                                outputIndex,
-                                bufferInfo.presentationTimeUs,
-                            )
+                            val released = releaseOutputBufferImmediatelyLocked(activeCodec, outputIndex)
                             if (released) {
                                 recordDecoderOutputLocked(bufferInfo.presentationTimeUs)
                                 releasedToSurfaceFrames += 1
@@ -2556,111 +2848,26 @@ private class StageOneVideoDecoder(
         networkToDecoderInputMs = usToMs(decoderInputUs - arrivalUs)
     }
 
-    private fun releaseOutputBufferWithPacingLocked(
+    private fun releaseOutputBufferImmediatelyLocked(
         activeCodec: MediaCodec,
         outputIndex: Int,
-        ptsUs: Long,
     ): Boolean {
-        val nowNs = System.nanoTime()
-        val audioPlaybackUs = if (audioClock.audioReadyForSync()) {
-            audioClock.audioPlaybackPositionUs()
-        } else {
-            null
-        }
-        if (audioPlaybackUs != null) {
-            syncMaster = "audio"
-            val offsetUs = ptsUs - audioPlaybackUs
-            recordAvSyncOffsetLocked(offsetUs)
-            if (offsetUs < -VIDEO_LATE_FOR_AUDIO_DROP_US) {
-                activeCodec.releaseOutputBuffer(outputIndex, false)
-                droppedFrames += 1
-                lateOutputBuffersDropped += 1
-                videoFramesDroppedForAvSync += 1
-                lateFrameDropCounter.record(elapsedRealtimeUs())
-                removeTimingForPtsLocked(ptsUs)
-                return false
-            }
-            if (kotlin.math.abs(offsetUs) > AV_SYNC_RESYNC_THRESHOLD_US) {
-                avSyncResyncCount += 1
-                firstPacingPtsUs = null
-                firstLocalRenderTimeNs = null
-            }
-            if (offsetUs > VIDEO_EARLY_FOR_AUDIO_SCHEDULE_US) {
-                val delayNs = (offsetUs * 1_000L).coerceAtMost(MAX_SCHEDULED_DELAY_NS)
-                return releaseOutputBufferAtLocked(
-                    activeCodec,
-                    outputIndex,
-                    ptsUs,
-                    nowNs + delayNs,
-                    nowNs,
-                )
-            }
-            return releaseOutputBufferAtLocked(activeCodec, outputIndex, ptsUs, nowNs, nowNs)
-        }
-        syncMaster = "videoLocal"
-        if (firstPacingPtsUs == null || firstLocalRenderTimeNs == null) {
-            firstPacingPtsUs = ptsUs
-            firstLocalRenderTimeNs = nowNs + INITIAL_PLAYOUT_DELAY_NS
-        }
-
-        val basePtsUs = firstPacingPtsUs ?: ptsUs
-        var baseRenderNs = firstLocalRenderTimeNs ?: nowNs
-        var renderTimeNs = baseRenderNs + (ptsUs - basePtsUs) * 1_000L
-        if (renderTimeNs < nowNs - BACKLOG_RECOVERY_THRESHOLD_NS) {
-            pacingResyncCount += 1
-            firstPacingPtsUs = ptsUs
-            firstLocalRenderTimeNs = nowNs + INITIAL_PLAYOUT_DELAY_NS
-            baseRenderNs = firstLocalRenderTimeNs ?: nowNs
-            renderTimeNs = baseRenderNs
-        }
-
-        if (renderTimeNs < nowNs - LATE_DROP_THRESHOLD_NS) {
-            activeCodec.releaseOutputBuffer(outputIndex, false)
-            droppedFrames += 1
-            lateOutputBuffersDropped += 1
-            lateFrameDropCounter.record(elapsedRealtimeUs())
-            removeTimingForPtsLocked(ptsUs)
-            return false
-        }
-
-        if (renderTimeNs > nowNs + MAX_SCHEDULED_DELAY_NS) {
-            renderTimeNs = nowNs + MAX_SCHEDULED_DELAY_NS
-        }
-
-        return releaseOutputBufferAtLocked(activeCodec, outputIndex, ptsUs, renderTimeNs, nowNs)
-    }
-
-    private fun releaseOutputBufferAtLocked(
-        activeCodec: MediaCodec,
-        outputIndex: Int,
-        ptsUs: Long,
-        renderTimeNs: Long,
-        nowNs: Long,
-    ): Boolean {
-        val scheduleDelayMs = (renderTimeNs - nowNs).coerceAtLeast(0L) / 1_000_000.0
-        renderScheduleDelaySamples.record(elapsedRealtimeUs(), scheduleDelayMs)
-        averageRenderScheduleDelayMs =
-            renderScheduleDelaySamples.averageMs(elapsedRealtimeUs())
-        p95RenderScheduleDelayMs =
-            renderScheduleDelaySamples.p95Ms(elapsedRealtimeUs())
-        playoutDelayMs = INITIAL_PLAYOUT_DELAY_NS / 1_000_000.0
-
         return try {
-            activeCodec.releaseOutputBuffer(outputIndex, renderTimeNs)
-            scheduledRenderFrames += 1
+            activeCodec.releaseOutputBuffer(outputIndex, true)
+            rendererMode = "immediate"
+            immediateRenderFrames += 1
             releasedToSurfaceCounter.record(elapsedRealtimeUs())
             true
         } catch (error: Exception) {
-            rendererMode = "immediateFallback"
             immediateRenderFallbackFrames += 1
-            activeCodec.releaseOutputBuffer(outputIndex, true)
-            releasedToSurfaceCounter.record(elapsedRealtimeUs())
-            lastDecoderError =
-                "Timed Surface release unsupported; using immediate render fallback."
-            true
+            lastDecoderError = error.message ?: "Immediate Surface release failed."
+            try {
+                activeCodec.releaseOutputBuffer(outputIndex, false)
+            } catch (_: Exception) {
+            }
+            false
         }
     }
-
     private fun recordAvSyncOffsetLocked(offsetUs: Long) {
         avSyncOffsetMs = offsetUs.toDouble() / 1_000.0
         avSyncSamples.addLast(kotlin.math.abs(avSyncOffsetMs))
@@ -2859,7 +3066,9 @@ private class MirrorSurfacePlatformView(
             } else {
                 false
             }
-            receiverServer.onSurfaceCreated(
+            receiverServer.onDisplayMetrics(DisplayMetricsSnapshot.from(rootView.display))
+            receiverServer.onDisplayMetrics(DisplayMetricsSnapshot.from(rootView.display))
+        receiverServer.onSurfaceCreated(
                 holder.surface,
                 frame.width(),
                 frame.height(),
@@ -2874,6 +3083,7 @@ private class MirrorSurfacePlatformView(
             width: Int,
             height: Int,
         ) {
+            receiverServer.onDisplayMetrics(DisplayMetricsSnapshot.from(rootView.display))
             receiverServer.onSurfaceChanged(holder.surface, width, height)
         }
 
@@ -2991,6 +3201,7 @@ private class MirrorTexturePlatformView(
         } else {
             false
         }
+        receiverServer.onDisplayMetrics(DisplayMetricsSnapshot.from(rootView.display))
         receiverServer.onSurfaceCreated(
             surface,
             width,
@@ -3006,6 +3217,7 @@ private class MirrorTexturePlatformView(
         height: Int,
     ) {
         outputSurface?.let { surface ->
+            receiverServer.onDisplayMetrics(DisplayMetricsSnapshot.from(rootView.display))
             receiverServer.onSurfaceChanged(surface, width, height)
         }
     }
@@ -3443,6 +3655,15 @@ private class RollingEventWindow(
         return percentile95(intervalsMs(nowUs))
     }
 
+    fun p50IntervalMs(nowUs: Long): Double = percentile50(intervalsMs(nowUs))
+
+    fun maxIntervalMs(nowUs: Long): Double = intervalsMs(nowUs).maxOrNull() ?: 0.0
+
+    fun count(nowUs: Long): Long {
+        trim(nowUs)
+        return eventsUs.size.toLong()
+    }
+
     private fun intervalsMs(nowUs: Long): List<Double> {
         trim(nowUs)
         if (eventsUs.size < 2) {
@@ -3518,6 +3739,10 @@ private class RollingSampleWindow(
         return percentile95(values(nowUs))
     }
 
+    fun p50Ms(nowUs: Long): Double = percentile50(values(nowUs))
+
+    fun maxMs(nowUs: Long): Double = values(nowUs).maxOrNull() ?: 0.0
+
     private fun values(nowUs: Long): List<Double> {
         trim(nowUs)
         return samples.map { it.second }
@@ -3538,6 +3763,12 @@ private fun percentile95(values: List<Double>): Double {
     val sorted = values.sorted()
     return sorted[((sorted.size - 1) * 95) / 100]
 }
+private fun percentile50(values: List<Double>): Double {
+    if (values.isEmpty()) return 0.0
+    val sorted = values.sorted()
+    return sorted[(sorted.size - 1) / 2]
+}
+
 
 private fun calculateVideoLayoutMetrics(
     containerWidth: Int,
@@ -3749,6 +3980,7 @@ private fun validatePerformanceProfile(json: JSONObject) {
             profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30 ||
             profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 ||
             profile == PERFORMANCE_PROFILE_CINEMA_1080P24 ||
+            profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P60 ||
             profile == PERFORMANCE_PROFILE_EXPERIMENTAL_4K30,
     ) {
         "unsupported performance profile: $profile"
@@ -3767,6 +3999,7 @@ private fun streamAnswerResponse(
         .put("surfaceRendererReady", surfaceRendererReady)
         .put("receiverMaxVideoWidth", capability.maxWidth)
         .put("receiverMaxVideoHeight", capability.maxHeight)
+        .put("receiverMaxVideoFps", capability.maxFps)
         .put("receiverSupports4k30", capability.supports4k30)
         .put("receiverVideoCodec", "h264")
         .put("receiverDecoderName", capability.decoderName)

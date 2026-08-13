@@ -8,6 +8,7 @@ import '../../core/native_bridge/mirror_native_api.dart';
 enum SenderVideoProfile {
   lowLatency720p30,
   highQuality1080p30,
+  highQuality1080p60,
   cinema1080p24,
   compatibility720p30,
   experimental4k30;
@@ -18,6 +19,7 @@ enum SenderVideoProfile {
       SenderVideoProfile.highQuality1080p30 => '1080p30 HQ',
       SenderVideoProfile.cinema1080p24 => '1080p24 Cinema',
       SenderVideoProfile.compatibility720p30 => '720p30 Compat',
+      SenderVideoProfile.highQuality1080p60 => '1080p60 Mirror',
       SenderVideoProfile.experimental4k30 => '4K 30fps (Experimental)',
     };
   }
@@ -28,6 +30,8 @@ enum SenderVideoProfile {
       SenderVideoProfile.highQuality1080p30 => 'Balanced 1080p30 H.264',
       SenderVideoProfile.cinema1080p24 =>
         'FHD 24fps Cinema H.264 with display pacing',
+      SenderVideoProfile.highQuality1080p60 =>
+        'FHD 60fps Mirror H.264 at 14 Mbps',
       SenderVideoProfile.compatibility720p30 => 'Lower bitrate 720p30 H.264',
       SenderVideoProfile.experimental4k30 =>
         'Requires compatible hardware encoder, Android TV decoder, and wired LAN',
@@ -43,6 +47,8 @@ enum SenderVideoProfile {
       SenderVideoProfile.cinema1080p24 => const VideoProfile.cinema1080p24(),
       SenderVideoProfile.compatibility720p30 =>
         const VideoProfile.compatibility720p30(),
+      SenderVideoProfile.highQuality1080p60 =>
+        const VideoProfile.highQuality1080p60(),
       SenderVideoProfile.experimental4k30 =>
         const VideoProfile.experimental4k30(),
     };
@@ -78,6 +84,7 @@ class MirrorController extends ChangeNotifier {
   NativeSessionSnapshot? get snapshot => _snapshot;
   List<String> get log => List.unmodifiable(_log);
   String? get selectedDisplayId => _selectedDisplayId;
+  String? get activeSessionId => _activeSessionId;
   String? get selectedTvAudioSourceDeviceId => _selectedTvAudioSourceDeviceId;
   String? get selectedPcMonitorDeviceId => _selectedPcMonitorDeviceId;
   bool get busy => _busy;

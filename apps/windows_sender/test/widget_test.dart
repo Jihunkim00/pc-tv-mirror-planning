@@ -61,6 +61,15 @@ void main() {
     expect(profile.bitrateKbps, 7500);
     expect(profile.performanceProfile, PerformanceProfile.highQuality1080p30);
   });
+  test('uses the FHD 1080p60 Mirror profile values', () {
+    final profile = SenderVideoProfile.highQuality1080p60.videoProfile;
+
+    expect(profile.width, 1920);
+    expect(profile.height, 1080);
+    expect(profile.fps, 60);
+    expect(profile.bitrateKbps, 14000);
+    expect(profile.performanceProfile, PerformanceProfile.highQuality1080p60);
+  });
   test('uses the FHD 1080p24 Cinema profile values', () {
     final profile = SenderVideoProfile.cinema1080p24.videoProfile;
 

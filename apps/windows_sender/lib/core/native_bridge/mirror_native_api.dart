@@ -214,6 +214,17 @@ final class NativeSessionSnapshot {
     this.outputResolution = '1280x720',
     this.currentBitrateKbps = 6000,
     this.targetFrameIntervalMs = 33.333,
+    this.sourceDisplayWidth = 0,
+    this.sourceDisplayHeight = 0,
+    this.sourceDisplayRefreshHz = 0,
+    this.sourceDisplayDeviceName = '',
+    this.captureSystemRelativeTimeNs = 0,
+    this.senderGeneratedPtsUs = 0,
+    this.sourceTimestampDeltaUs = 0,
+    this.videoPtsSource = 'unavailable',
+    this.captureIntervalFromSourceP50Ms = 0,
+    this.captureIntervalFromSourceP95Ms = 0,
+    this.captureIntervalFromSourceMaxMs = 0,
     this.staleVideoDroppedFps = 0,
     this.selectedEncoderName = 'unknown',
     this.selectedEncoderHardware = false,
@@ -302,6 +313,7 @@ final class NativeSessionSnapshot {
     this.hardwareEncoderActive = false,
     this.encoderSupportsRequestedResolution = false,
     this.receiverMaxWidth = 0,
+    this.receiverMaxFps = 0,
     this.receiverMaxHeight = 0,
     this.receiverSupports4k30 = false,
     this.captureFpsRecent = 0,
@@ -310,6 +322,16 @@ final class NativeSessionSnapshot {
     this.encoderOutputFpsRecent = 0,
     this.transportVideoFpsRecent = 0,
     this.receiverPresentedFpsRecent = 0,
+    this.receiverReceivedFpsRecent = 0,
+    this.receiverDecoderInputFpsRecent = 0,
+    this.receiverDecoderOutputFpsRecent = 0,
+    this.receiverDecoderOutputReleased = 0,
+    this.receiverDecoderOutputReleasedImmediate = 0,
+    this.receiverDecoderOutputReleasedScheduled = 0,
+    this.receiverOnFrameRenderedCallbacks = 0,
+    this.receiverVideoRenderMode = 'unavailable',
+    this.receiverPtsIntervalP50Ms = 0,
+    this.receiverPtsRegressionCount = 0,
     this.conversionDurationP95Ms = 0,
     this.encoderQueueWaitP95Ms = 0,
     this.transportSendP95Ms = 0,
@@ -387,6 +409,17 @@ final class NativeSessionSnapshot {
   final String outputResolution;
   final int currentBitrateKbps;
   final double targetFrameIntervalMs;
+  final int sourceDisplayWidth;
+  final int sourceDisplayHeight;
+  final double sourceDisplayRefreshHz;
+  final String sourceDisplayDeviceName;
+  final int captureSystemRelativeTimeNs;
+  final int senderGeneratedPtsUs;
+  final int sourceTimestampDeltaUs;
+  final String videoPtsSource;
+  final double captureIntervalFromSourceP50Ms;
+  final double captureIntervalFromSourceP95Ms;
+  final double captureIntervalFromSourceMaxMs;
   final double staleVideoDroppedFps;
   final String selectedEncoderName;
   final bool selectedEncoderHardware;
@@ -474,6 +507,7 @@ final class NativeSessionSnapshot {
   final String encoderName;
   final bool hardwareEncoderActive;
   final bool encoderSupportsRequestedResolution;
+  final int receiverMaxFps;
   final int receiverMaxWidth;
   final int receiverMaxHeight;
   final bool receiverSupports4k30;
@@ -483,6 +517,16 @@ final class NativeSessionSnapshot {
   final double encoderOutputFpsRecent;
   final double transportVideoFpsRecent;
   final double receiverPresentedFpsRecent;
+  final double receiverReceivedFpsRecent;
+  final double receiverDecoderInputFpsRecent;
+  final double receiverDecoderOutputFpsRecent;
+  final int receiverDecoderOutputReleased;
+  final int receiverDecoderOutputReleasedImmediate;
+  final int receiverDecoderOutputReleasedScheduled;
+  final int receiverOnFrameRenderedCallbacks;
+  final String receiverVideoRenderMode;
+  final double receiverPtsIntervalP50Ms;
+  final int receiverPtsRegressionCount;
   final double conversionDurationP95Ms;
   final double encoderQueueWaitP95Ms;
   final double transportSendP95Ms;
@@ -636,6 +680,39 @@ final class NativeSessionSnapshot {
         json,
         'outputResolution',
         defaultValue: '1280x720',
+      ),
+      sourceDisplayWidth: _readOptionalInt(json, 'sourceDisplayWidth'),
+      sourceDisplayHeight: _readOptionalInt(json, 'sourceDisplayHeight'),
+      sourceDisplayRefreshHz: _readOptionalDouble(
+        json,
+        'sourceDisplayRefreshHz',
+      ),
+      sourceDisplayDeviceName: _readOptionalString(
+        json,
+        'sourceDisplayDeviceName',
+      ),
+      captureSystemRelativeTimeNs: _readOptionalInt(
+        json,
+        'captureSystemRelativeTimeNs',
+      ),
+      senderGeneratedPtsUs: _readOptionalInt(json, 'senderGeneratedPtsUs'),
+      sourceTimestampDeltaUs: _readOptionalInt(json, 'sourceTimestampDeltaUs'),
+      videoPtsSource: _readOptionalString(
+        json,
+        'videoPtsSource',
+        defaultValue: 'unavailable',
+      ),
+      captureIntervalFromSourceP50Ms: _readOptionalDouble(
+        json,
+        'captureIntervalFromSourceP50Ms',
+      ),
+      captureIntervalFromSourceP95Ms: _readOptionalDouble(
+        json,
+        'captureIntervalFromSourceP95Ms',
+      ),
+      captureIntervalFromSourceMaxMs: _readOptionalDouble(
+        json,
+        'captureIntervalFromSourceMaxMs',
       ),
       currentBitrateKbps: _readOptionalInt(
         json,
@@ -899,6 +976,7 @@ final class NativeSessionSnapshot {
         'encoderSupportsRequestedResolution',
       ),
       receiverMaxWidth: _readOptionalInt(json, 'receiverMaxWidth'),
+      receiverMaxFps: _readOptionalInt(json, 'receiverMaxFps'),
       receiverMaxHeight: _readOptionalInt(json, 'receiverMaxHeight'),
       receiverSupports4k30: _readOptionalBool(json, 'receiverSupports4k30'),
       captureFpsRecent: _readOptionalDouble(json, 'captureFpsRecent'),
@@ -915,6 +993,47 @@ final class NativeSessionSnapshot {
       receiverPresentedFpsRecent: _readOptionalDouble(
         json,
         'receiverPresentedFpsRecent',
+      ),
+      receiverReceivedFpsRecent: _readOptionalDouble(
+        json,
+        'receiverReceivedFpsRecent',
+      ),
+      receiverDecoderInputFpsRecent: _readOptionalDouble(
+        json,
+        'receiverDecoderInputFpsRecent',
+      ),
+      receiverDecoderOutputFpsRecent: _readOptionalDouble(
+        json,
+        'receiverDecoderOutputFpsRecent',
+      ),
+      receiverDecoderOutputReleased: _readOptionalInt(
+        json,
+        'receiverDecoderOutputReleased',
+      ),
+      receiverDecoderOutputReleasedImmediate: _readOptionalInt(
+        json,
+        'receiverDecoderOutputReleasedImmediate',
+      ),
+      receiverDecoderOutputReleasedScheduled: _readOptionalInt(
+        json,
+        'receiverDecoderOutputReleasedScheduled',
+      ),
+      receiverOnFrameRenderedCallbacks: _readOptionalInt(
+        json,
+        'receiverOnFrameRenderedCallbacks',
+      ),
+      receiverVideoRenderMode: _readOptionalString(
+        json,
+        'receiverVideoRenderMode',
+        defaultValue: 'unavailable',
+      ),
+      receiverPtsIntervalP50Ms: _readOptionalDouble(
+        json,
+        'receiverPtsIntervalP50Ms',
+      ),
+      receiverPtsRegressionCount: _readOptionalInt(
+        json,
+        'receiverPtsRegressionCount',
       ),
       conversionDurationP95Ms: _readOptionalDouble(
         json,

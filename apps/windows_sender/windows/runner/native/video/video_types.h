@@ -20,6 +20,9 @@ struct VideoStreamConfig {
 struct Nv12Frame {
   int width = 1280;
   int height = 720;
+  std::uint64_t capture_system_relative_time_ns = 0;
+  std::uint64_t source_timestamp_delta_us = 0;
+  std::string video_pts_source = "fallback_frame_clock";
   std::uint64_t pts_us = 0;
   std::uint64_t capture_callback_us = 0;
   std::uint64_t convert_started_us = 0;

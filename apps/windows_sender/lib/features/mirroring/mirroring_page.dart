@@ -1,9 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
 import '../../core/native_bridge/mirror_native_api.dart';
+import 'diagnostics_clipboard_formatter.dart';
 import 'mirror_controller.dart';
 
 class MirroringPage extends StatefulWidget {
@@ -27,6 +29,28 @@ class _MirroringPageState extends State<MirroringPage> {
     _hostController = TextEditingController();
     _portController = TextEditingController(text: '50720');
     _loadLastReceiverHost();
+  }
+
+  Future<void> _copyDiagnostics() async {
+    final text = DiagnosticsClipboardFormatter.format(
+      snapshot: _controller.snapshot,
+      sourceDisplay: _controller.selectedDisplay,
+      sessionId: _controller.activeSessionId,
+    );
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Diagnostics copied to clipboard.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not copy diagnostics: $error')),
+        );
+      }
+    }
   }
 
   @override
@@ -61,6 +85,7 @@ class _MirroringPageState extends State<MirroringPage> {
                   onVideoProfileChanged: _controller.setVideoProfile,
                   onTvAudioSourceChanged: _controller.selectTvAudioSourceDevice,
                   onPcMonitorDeviceChanged: _controller.selectPcMonitorDevice,
+                  onCopyDiagnostics: _copyDiagnostics,
                 );
 
                 return Padding(
@@ -290,6 +315,7 @@ class _SessionPanel extends StatelessWidget {
     required this.onVideoProfileChanged,
     required this.onTvAudioSourceChanged,
     required this.onPcMonitorDeviceChanged,
+    required this.onCopyDiagnostics,
   });
 
   final MirrorController controller;
@@ -304,6 +330,7 @@ class _SessionPanel extends StatelessWidget {
   final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
   final ValueChanged<String> onTvAudioSourceChanged;
   final ValueChanged<String> onPcMonitorDeviceChanged;
+  final VoidCallback onCopyDiagnostics;
 
   @override
   Widget build(BuildContext context) {
@@ -350,6 +377,11 @@ class _SessionPanel extends StatelessWidget {
                 tooltip: 'Refresh displays',
                 onPressed: controller.busy ? null : onRefresh,
                 icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
+                tooltip: 'Copy Diagnostics',
+                onPressed: onCopyDiagnostics,
+                icon: const Icon(Icons.copy),
               ),
             ],
           ),

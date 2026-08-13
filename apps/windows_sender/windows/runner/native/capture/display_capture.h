@@ -9,6 +9,8 @@
 #include <functional>
 #include <string>
 
+#include <cstdint>
+#include <optional>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -46,6 +48,9 @@ class DisplayCapture {
                                Nv12Frame* frame);
 
   HANDLE frame_event_ = nullptr;
+  std::optional<std::uint64_t> first_system_relative_time_ns_;
+  bool wgc_pts_valid_ = true;
+  std::uint64_t fallback_stream_start_us_ = 0;
   winrt::com_ptr<ID3D11Device> d3d_device_;
   winrt::com_ptr<ID3D11DeviceContext> d3d_context_;
   winrt::com_ptr<ID3D11Texture2D> staging_texture_;

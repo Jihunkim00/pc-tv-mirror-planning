@@ -75,6 +75,7 @@ class H264Encoder {
   std::vector<std::uint8_t> NormalizeAnnexB(
       const std::vector<std::uint8_t>& encoded) const;
 
+  bool first_pts_set_ = false;
   winrt::com_ptr<IMFTransform> transform_;
   VideoStreamConfig config_;
   std::vector<std::uint8_t> sequence_header_;

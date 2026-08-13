@@ -1,12 +1,15 @@
-﻿#include "native/session/mirror_session.h"
+#include "native/session/mirror_session.h"
 
 #include "native/audio/audio_device_enumerator.h"
 #include "native/display/display_enumerator.h"
 
 #include <algorithm>
+#include <optional>
+#include <tuple>
 #include <cctype>
 #include <chrono>
 #include <deque>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -119,6 +122,26 @@ int ExtractJsonInt(const std::string& json,
   return found ? (negative ? -value : value) : fallback;
 }
 
+double ExtractJsonDouble(const std::string& json,
+                         const std::string& key,
+                         double fallback = 0.0) {
+  const auto key_pos = json.find(std::string(1, '"' ) + key + std::string(1, '"'));
+  if (key_pos == std::string::npos) {
+    return fallback;
+  }
+  const auto colon = json.find(':', key_pos);
+  if (colon == std::string::npos) {
+    return fallback;
+  }
+  auto index = colon + 1;
+  while (index < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[index])) != 0) {
+    ++index;
+  }
+  char* end = nullptr;
+  const auto value = std::strtod(json.c_str() + index, &end);
+  return end == json.c_str() + index ? fallback : value;
+}
 bool ExtractJsonBool(const std::string& json,
                      const std::string& key,
                      bool fallback = false) {
@@ -205,6 +228,38 @@ VideoStreamConfig HighQuality1080p30Fallback(const VideoStreamConfig& from) {
   return fallback;
 }
 
+bool IsHighQuality1080p60(const VideoStreamConfig& config) {
+  return config.performance_profile == "highQuality1080p60";
+}
+
+std::optional<std::tuple<int, int, double>> SourceDisplayMetrics(
+    const std::string& source_id) {
+  const auto monitor = FindMonitorById(source_id);
+  if (!monitor.has_value()) {
+    return std::nullopt;
+  }
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfoW(*monitor, &info)) {
+    return std::nullopt;
+  }
+  DEVMODEW mode{};
+  mode.dmSize = sizeof(mode);
+  const double refresh_hz =
+      EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
+              mode.dmDisplayFrequency > 1
+          ? static_cast<double>(mode.dmDisplayFrequency)
+          : 0.0;
+  return std::make_tuple(info.rcMonitor.right - info.rcMonitor.left,
+                         info.rcMonitor.bottom - info.rcMonitor.top,
+                         refresh_hz);
+}
+
+VideoStreamConfig HighQuality1080p60Fallback(const VideoStreamConfig& from) {
+  VideoStreamConfig fallback = HighQuality1080p30Fallback(from);
+  fallback.performance_profile = "highQuality1080p30";
+  return fallback;
+}
 std::string RequestJsonForVideoConfig(std::string request_json,
                                       const VideoStreamConfig& config) {
   ReplaceJsonNumber(&request_json, "width", config.width);
@@ -284,6 +339,20 @@ double Average(const std::vector<double>& values) {
   return total / static_cast<double>(values.size());
 }
 
+double P50(std::vector<double> values) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  return values[(values.size() - 1) / 2];
+}
+
+double Maximum(std::vector<double> values) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  return *std::max_element(values.begin(), values.end());
+}
 double P95(std::vector<double> values) {
   if (values.empty()) {
     return 0.0;
@@ -420,6 +489,13 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   }
 
   requested_video_config_ = options.video;
+  if (const auto display = SourceDisplayMetrics(options.source_id);
+      display.has_value()) {
+    source_display_width_ = std::get<0>(*display);
+    source_display_height_ = std::get<1>(*display);
+    source_display_refresh_hz_ = std::get<2>(*display);
+    source_display_device_name_ = options.source_id;
+  }
   VideoStreamConfig applied_video = options.video;
   std::string request_json = options.request_json;
   std::string fallback_reason;
@@ -432,6 +508,17 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
     fallback_reason = "4K unavailable: capture source is below 3840x2160";
   }
 
+  const bool requested_fhd60 = IsHighQuality1080p60(options.video);
+  if (requested_fhd60 && source_display_refresh_hz_ > 0.0 &&
+      source_display_refresh_hz_ < 59.5) {
+    applied_video = HighQuality1080p60Fallback(options.video);
+    request_json = RequestJsonForVideoConfig(options.request_json,
+                                             applied_video);
+    std::ostringstream reason;
+    reason << "FHD60 unavailable: source display reports "
+           << source_display_refresh_hz_ << " Hz";
+    fallback_reason = reason.str();
+  }
   auto connect_receiver = [&](const std::string& json) {
     auto signal =
         transport_.Connect(options.receiver_host, options.receiver_port, json);
@@ -440,6 +527,7 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
           ExtractJsonInt(signal.detail, "receiverMaxVideoWidth");
       receiver_max_height_ =
           ExtractJsonInt(signal.detail, "receiverMaxVideoHeight");
+      receiver_max_fps_ = ExtractJsonInt(signal.detail, "receiverMaxVideoFps");
       receiver_supports_4k30_ =
           ExtractJsonBool(signal.detail, "receiverSupports4k30");
       receiver_presented_fps_recent_ = static_cast<double>(
@@ -458,6 +546,25 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
             false,
             "SIGNALING_FAILED",
             signal.detail};
+  }
+  if (requested_fhd60 && fallback_reason.empty() && receiver_max_fps_ < 60) {
+    transport_.Close();
+    applied_video = HighQuality1080p60Fallback(options.video);
+    request_json = RequestJsonForVideoConfig(options.request_json,
+                                             applied_video);
+    std::ostringstream reason;
+    if (receiver_max_fps_ > 0) {
+      reason << "FHD60 unavailable: receiver decoder reports max "
+             << receiver_max_fps_ << " fps";
+    } else {
+      reason << "FHD60 unavailable: receiver FPS capability not confirmed";
+    }
+    fallback_reason = reason.str();
+    signal = connect_receiver(request_json);
+    if (!signal.ok) {
+      return {"failed", "Could not reach the TV receiver.", false, false,
+              false, false, "SIGNALING_FAILED", signal.detail};
+    }
   }
 
   if (requested_4k && fallback_reason.empty() && !receiver_supports_4k30_) {
@@ -513,14 +620,17 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   }
 
   if (!encoder_.Start(applied_video, &error)) {
-    if (requested_4k && IsExperimental4k30(applied_video)) {
+    if ((requested_4k && IsExperimental4k30(applied_video)) ||
+        (requested_fhd60 && IsHighQuality1080p60(applied_video))) {
       capture->Stop();
       transport_.Close();
-      applied_video = HighQuality1080p30Fallback(options.video);
+      applied_video = requested_fhd60 ? HighQuality1080p60Fallback(options.video)
+                                      : HighQuality1080p30Fallback(options.video);
       request_json = RequestJsonForVideoConfig(options.request_json,
                                                applied_video);
-      fallback_reason =
-          "4K unavailable: hardware encoder capability check failed";
+      fallback_reason = requested_fhd60
+          ? "FHD60 unavailable: encoder could not accept 1080p60"
+          : "4K unavailable: hardware encoder capability check failed";
       signal = connect_receiver(request_json);
       if (!signal.ok) {
         return {"failed",
@@ -741,12 +851,27 @@ void MirrorSession::EncodeLoop() {
       RecordEvent(&capture_callback_events_us_, frame.capture_callback_us);
       RecordEvent(&captured_events_us_, frame.capture_callback_us);
     }
-    if (frame.dropped_frames > 0) {
-      const auto replaced = static_cast<std::uint64_t>(frame.dropped_frames);
-      capture_replaced_frames_.fetch_add(replaced);
-      capture_dropped_frames_.fetch_add(replaced);
+    {
+      std::scoped_lock status_lock(status_mutex_);
+      latest_capture_system_relative_time_ns_ =
+          frame.capture_system_relative_time_ns;
+      latest_sender_generated_pts_us_ = frame.pts_us;
+      latest_source_timestamp_delta_us_ = frame.source_timestamp_delta_us;
+      latest_video_pts_source_ = frame.video_pts_source;
+      if (frame.source_timestamp_delta_us > last_source_timestamp_us_) {
+        if (last_source_timestamp_us_ > 0) {
+          RecordSample(&source_frame_interval_samples_, NowUs(),
+                       UsToMs(frame.source_timestamp_delta_us -
+                              last_source_timestamp_us_));
+        }
+        last_source_timestamp_us_ = frame.source_timestamp_delta_us;
+      }
+      if (frame.dropped_frames > 0) {
+        const auto replaced = static_cast<std::uint64_t>(frame.dropped_frames);
+        capture_replaced_frames_.fetch_add(replaced);
+        capture_dropped_frames_.fetch_add(replaced);
+      }
     }
-
     if (!admitted || frame.data.empty()) {
       cadence_skipped_frames_.fetch_add(1);
       encoder_input_dropped_frames_.fetch_add(1);
@@ -806,7 +931,7 @@ void MirrorSession::EncodeLoop() {
                        : 0.0);
     }
     const auto capture_to_encode_ms =
-        frame.pts_us <= encode_done_us ? UsToMs(encode_done_us - frame.pts_us)
+        frame.capture_callback_us <= encode_done_us ? UsToMs(encode_done_us - frame.capture_callback_us)
                                        : 0.0;
     {
       std::scoped_lock status_lock(status_mutex_);
@@ -1216,6 +1341,31 @@ void MirrorSession::ControlLoop() {
 }
 
 void MirrorSession::HandlePlaybackCommandLine(const std::string& line) {
+  if (line.find("VIDEO_STATS") != std::string::npos) {
+    receiver_presented_fps_recent_ =
+        ExtractJsonDouble(line, "codecRenderedFpsRecent");
+    receiver_received_fps_recent_ =
+        ExtractJsonDouble(line, "receivedVideoFps");
+    receiver_decoder_input_fps_recent_ =
+        ExtractJsonDouble(line, "decoderInputFps");
+    receiver_decoder_output_fps_recent_ =
+        ExtractJsonDouble(line, "decoderOutputFps");
+    receiver_decoder_output_released_ =
+        ExtractJsonUint64(line, "decoderOutputReleased");
+    receiver_decoder_output_released_immediate_ =
+        ExtractJsonUint64(line, "decoderOutputReleasedImmediate");
+    receiver_decoder_output_released_scheduled_ =
+        ExtractJsonUint64(line, "decoderOutputReleasedScheduled");
+    receiver_on_frame_rendered_callbacks_ =
+        ExtractJsonUint64(line, "onFrameRenderedCallbackCount");
+    receiver_video_render_mode_ =
+        ExtractJsonString(line, "receiverVideoRenderMode");
+    receiver_pts_interval_p50_ms_ =
+        ExtractJsonDouble(line, "videoPtsIntervalP50Ms");
+    receiver_pts_regression_count_ =
+        ExtractJsonUint64(line, "videoPtsRegressionCount");
+    return;
+  }
   if (line.find("\"type\":\"PLAYBACK_COMMAND\"") == std::string::npos &&
       line.find("\"type\": \"PLAYBACK_COMMAND\"") == std::string::npos) {
     return;
@@ -1484,6 +1634,7 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.transport_backpressure_dropped_frames =
       transport_backpressure_dropped_frames_.load();
   snapshot.stale_video_dropped_frames = stale_video_dropped_frames_.load();
+  snapshot.receiver_max_fps = receiver_max_fps_;
   snapshot.shutdown_dropped_frames = shutdown_dropped_frames_.load();
   snapshot.total_dropped_frames =
       snapshot.capture_replaced_frames + snapshot.cadence_skipped_frames +
@@ -1551,6 +1702,19 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.output_height = video_config_.height;
   snapshot.target_bitrate_kbps = video_config_.bitrate_kbps;
   snapshot.target_frame_interval_ms = UsToMs(target_frame_interval_us_);
+  snapshot.source_display_width = source_display_width_;
+  snapshot.source_display_height = source_display_height_;
+  snapshot.source_display_refresh_hz = source_display_refresh_hz_;
+  snapshot.source_display_device_name = source_display_device_name_;
+  snapshot.capture_system_relative_time_ns = latest_capture_system_relative_time_ns_;
+  snapshot.sender_generated_pts_us = latest_sender_generated_pts_us_;
+  snapshot.source_timestamp_delta_us = latest_source_timestamp_delta_us_;
+  snapshot.video_pts_source = latest_video_pts_source_;
+  const auto source_intervals =
+      RecentSampleValues(&source_frame_interval_samples_, now_us);
+  snapshot.capture_interval_from_source_p50_ms = P50(source_intervals);
+  snapshot.capture_interval_from_source_p95_ms = P95(source_intervals);
+  snapshot.capture_interval_from_source_max_ms = Maximum(source_intervals);
   snapshot.stale_video_dropped_fps =
       RollingFps(&stale_video_dropped_events_us_, now_us);
   const auto encoder_diagnostics = encoder_.diagnostics();
@@ -1574,6 +1738,16 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.encoder_output_fps_recent = snapshot.encoded_fps;
   snapshot.transport_video_fps_recent = snapshot.sent_video_fps;
   snapshot.receiver_presented_fps_recent = receiver_presented_fps_recent_;
+  snapshot.receiver_received_fps_recent = receiver_received_fps_recent_;
+  snapshot.receiver_decoder_input_fps_recent = receiver_decoder_input_fps_recent_;
+  snapshot.receiver_decoder_output_fps_recent = receiver_decoder_output_fps_recent_;
+  snapshot.receiver_decoder_output_released = receiver_decoder_output_released_;
+  snapshot.receiver_decoder_output_released_immediate = receiver_decoder_output_released_immediate_;
+  snapshot.receiver_decoder_output_released_scheduled = receiver_decoder_output_released_scheduled_;
+  snapshot.receiver_on_frame_rendered_callbacks = receiver_on_frame_rendered_callbacks_;
+  snapshot.receiver_video_render_mode = receiver_video_render_mode_;
+  snapshot.receiver_pts_interval_p50_ms = receiver_pts_interval_p50_ms_;
+  snapshot.receiver_pts_regression_count = receiver_pts_regression_count_;
   snapshot.conversion_duration_p95_ms =
       P95SampleMs(&capture_to_convert_samples_, now_us);
   snapshot.encoder_queue_wait_p95_ms = snapshot.video_queue_wait_p95_ms;
@@ -1785,6 +1959,8 @@ void MirrorSession::ResetCounters() {
   convert_to_encode_samples_.clear();
   encode_duration_samples_.clear();
   encode_to_send_samples_.clear();
+  source_frame_interval_samples_.clear();
+  last_source_timestamp_us_ = 0;
   packet_send_duration_samples_.clear();
   access_unit_send_duration_samples_.clear();
   audio_encode_duration_samples_.clear();
@@ -1811,9 +1987,28 @@ void MirrorSession::ResetCounters() {
   applied_profile_ = "lowLatency720p30";
   profile_fallback_reason_.clear();
   receiver_max_width_ = 0;
+  receiver_max_fps_ = 0;
+  source_display_width_ = 0;
+  source_display_height_ = 0;
+  source_display_refresh_hz_ = 0.0;
+  source_display_device_name_.clear();
+  latest_capture_system_relative_time_ns_ = 0;
+  latest_sender_generated_pts_us_ = 0;
+  latest_source_timestamp_delta_us_ = 0;
+  latest_video_pts_source_ = "unavailable";
   receiver_max_height_ = 0;
   receiver_supports_4k30_ = false;
   receiver_presented_fps_recent_ = 0.0;
+  receiver_received_fps_recent_ = 0.0;
+  receiver_decoder_input_fps_recent_ = 0.0;
+  receiver_decoder_output_fps_recent_ = 0.0;
+  receiver_decoder_output_released_ = 0;
+  receiver_decoder_output_released_immediate_ = 0;
+  receiver_decoder_output_released_scheduled_ = 0;
+  receiver_on_frame_rendered_callbacks_ = 0;
+  receiver_video_render_mode_ = "unavailable";
+  receiver_pts_interval_p50_ms_ = 0.0;
+  receiver_pts_regression_count_ = 0;
   audio_input_sample_rate_ = 0;
   audio_input_channels_ = 0;
   audio_last_error_.clear();

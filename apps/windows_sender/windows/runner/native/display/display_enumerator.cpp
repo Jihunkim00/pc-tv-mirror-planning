@@ -20,12 +20,22 @@ std::string WideToUtf8(const std::wstring& value) {
     return {};
   }
 
-  std::string result(size, '\0');
+  std::string result(size, static_cast<char>(0));
   WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
                       result.data(), size, nullptr, nullptr);
   return result;
 }
 
+double CurrentDisplayRefreshRate(const std::wstring& device_name) {
+  DEVMODEW mode{};
+  mode.dmSize = sizeof(mode);
+  if (!device_name.empty() &&
+      EnumDisplaySettingsW(device_name.c_str(), ENUM_CURRENT_SETTINGS, &mode) &&
+      mode.dmDisplayFrequency > 1) {
+    return static_cast<double>(mode.dmDisplayFrequency);
+  }
+  return 0.0;
+}
 namespace {
 
 struct MonitorEnumeration {
@@ -50,6 +60,7 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR monitor,
   if (!GetMonitorInfoW(monitor, &info)) {
     return TRUE;
   }
+  const double refresh_rate_hz = CurrentDisplayRefreshRate(info.szDevice);
 
   const RECT monitor_rect = info.rcMonitor;
   const int width = monitor_rect.right - monitor_rect.left;
@@ -67,6 +78,7 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR monitor,
       EncodableValue(primary ? id + " (Primary)" : id);
   display[EncodableValue("width")] = EncodableValue(width);
   display[EncodableValue("height")] = EncodableValue(height);
+  display[EncodableValue("refreshRateHz")] = EncodableValue(refresh_rate_hz);
   display[EncodableValue("x")] = EncodableValue(monitor_rect.left);
   display[EncodableValue("y")] = EncodableValue(monitor_rect.top);
   display[EncodableValue("scaleFactor")] = EncodableValue(1.0);
@@ -118,6 +130,7 @@ flutter::EncodableValue ListDisplays() {
     display[EncodableValue("x")] = EncodableValue(0);
     display[EncodableValue("y")] = EncodableValue(0);
     display[EncodableValue("scaleFactor")] = EncodableValue(1.0);
+    display[EncodableValue("refreshRateHz")] = EncodableValue(0.0);
     display[EncodableValue("isPrimary")] = EncodableValue(true);
     fallback.emplace_back(display);
     return EncodableValue(fallback);
