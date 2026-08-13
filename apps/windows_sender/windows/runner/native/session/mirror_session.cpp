@@ -858,6 +858,19 @@ void MirrorSession::EncodeLoop() {
       latest_sender_generated_pts_us_ = frame.pts_us;
       latest_source_timestamp_delta_us_ = frame.source_timestamp_delta_us;
       latest_video_pts_source_ = frame.video_pts_source;
+      latest_source_texture_width_ = frame.source_texture_width;
+      latest_source_texture_height_ = frame.source_texture_height;
+      latest_source_texture_format_ = frame.source_texture_format;
+      latest_source_row_pitch_ = frame.source_row_pitch;
+      latest_source_bgra_stride_ = frame.source_bgra_stride;
+      latest_nv12_y_offset_ = frame.nv12_y_offset;
+      latest_nv12_uv_offset_ = frame.nv12_uv_offset;
+      latest_nv12_y_stride_ = frame.nv12_y_stride;
+      latest_nv12_uv_stride_ = frame.nv12_uv_stride;
+      latest_nv12_expected_bytes_ = frame.nv12_expected_bytes;
+      latest_nv12_allocated_bytes_ = frame.nv12_allocated_bytes;
+      latest_nv12_used_bytes_ = frame.nv12_used_bytes;
+      latest_encoder_input_stride_ = frame.encoder_input_stride;
       if (frame.source_timestamp_delta_us > last_source_timestamp_us_) {
         if (last_source_timestamp_us_ > 0) {
           RecordSample(&source_frame_interval_samples_, NowUs(),
@@ -975,10 +988,19 @@ void MirrorSession::EncodeLoop() {
         std::scoped_lock status_lock(status_mutex_);
         RecordEvent(&encoded_events_us_, encode_done_us);
       }
+      encoded_access_unit_bytes_ += access_unit.annex_b.size();
       auto packet = BuildAccessUnitPacket(
           sequence, access_unit.pts_us, access_unit.key_frame,
           access_unit.annex_b.data(),
-          static_cast<std::uint32_t>(access_unit.annex_b.size()));
+          static_cast<std::uint32_t>(access_unit.annex_b.size()));      {
+        std::scoped_lock status_lock(status_mutex_);
+        if (packet.size() < 4 + 28 ||
+            packet.size() - 4 - 28 != access_unit.annex_b.size()) {
+          ++video_au_size_mismatch_count_;
+        } else {
+          transported_access_unit_bytes_ += packet.size() - 4 - 28;
+        }
+      }
       bool first_access_unit_sent = false;
       {
         std::scoped_lock status_lock(status_mutex_);
@@ -1364,6 +1386,26 @@ void MirrorSession::HandlePlaybackCommandLine(const std::string& line) {
         ExtractJsonDouble(line, "videoPtsIntervalP50Ms");
     receiver_pts_regression_count_ =
         ExtractJsonUint64(line, "videoPtsRegressionCount");
+    receiver_access_unit_bytes_ = ExtractJsonUint64(line, "receiverAccessUnitBytes");
+    receiver_codec_configs_received_ =
+        ExtractJsonUint64(line, "receiverCodecConfigsReceived");
+    receiver_key_frames_received_ = ExtractJsonUint64(line, "keyFramesReceived");
+    receiver_decoder_configured_width_ =
+        ExtractJsonUint64(line, "decoderConfiguredWidth");
+    receiver_decoder_configured_height_ =
+        ExtractJsonUint64(line, "decoderConfiguredHeight");
+    receiver_decoder_output_width_ =
+        ExtractJsonUint64(line, "decoderOutputWidth");
+    receiver_decoder_output_height_ =
+        ExtractJsonUint64(line, "decoderOutputHeight");
+    receiver_decoder_crop_left_ = ExtractJsonInt(line, "decoderCropLeft");
+    receiver_decoder_crop_top_ = ExtractJsonInt(line, "decoderCropTop");
+    receiver_decoder_crop_right_ = ExtractJsonInt(line, "decoderCropRight");
+    receiver_decoder_crop_bottom_ = ExtractJsonInt(line, "decoderCropBottom");
+    receiver_decoder_format_change_count_ =
+        ExtractJsonUint64(line, "decoderOutputFormatChangeCount");
+    receiver_surface_width_ = ExtractJsonUint64(line, "decoderSurfaceWidth");
+    receiver_surface_height_ = ExtractJsonUint64(line, "decoderSurfaceHeight");
     return;
   }
   if (line.find("\"type\":\"PLAYBACK_COMMAND\"") == std::string::npos &&
@@ -1710,6 +1752,19 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.sender_generated_pts_us = latest_sender_generated_pts_us_;
   snapshot.source_timestamp_delta_us = latest_source_timestamp_delta_us_;
   snapshot.video_pts_source = latest_video_pts_source_;
+  snapshot.source_texture_width = latest_source_texture_width_;
+snapshot.source_texture_height = latest_source_texture_height_;
+snapshot.source_texture_format = latest_source_texture_format_;
+snapshot.source_row_pitch = latest_source_row_pitch_;
+snapshot.source_bgra_stride = latest_source_bgra_stride_;
+snapshot.nv12_y_offset = latest_nv12_y_offset_;
+snapshot.nv12_uv_offset = latest_nv12_uv_offset_;
+snapshot.nv12_y_stride = latest_nv12_y_stride_;
+snapshot.nv12_uv_stride = latest_nv12_uv_stride_;
+snapshot.nv12_expected_bytes = latest_nv12_expected_bytes_;
+snapshot.nv12_allocated_bytes = latest_nv12_allocated_bytes_;
+snapshot.nv12_used_bytes = latest_nv12_used_bytes_;
+snapshot.encoder_input_stride = latest_encoder_input_stride_;
   const auto source_intervals =
       RecentSampleValues(&source_frame_interval_samples_, now_us);
   snapshot.capture_interval_from_source_p50_ms = P50(source_intervals);
@@ -1748,10 +1803,59 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.receiver_video_render_mode = receiver_video_render_mode_;
   snapshot.receiver_pts_interval_p50_ms = receiver_pts_interval_p50_ms_;
   snapshot.receiver_pts_regression_count = receiver_pts_regression_count_;
+  snapshot.receiver_access_unit_bytes = receiver_access_unit_bytes_;
+  snapshot.receiver_codec_configs_received = receiver_codec_configs_received_;
+  snapshot.receiver_key_frames_received = receiver_key_frames_received_;
+  snapshot.receiver_decoder_configured_width = receiver_decoder_configured_width_;
+  snapshot.receiver_decoder_configured_height = receiver_decoder_configured_height_;
+  snapshot.receiver_decoder_output_width = receiver_decoder_output_width_;
+  snapshot.receiver_decoder_output_height = receiver_decoder_output_height_;
+  snapshot.receiver_decoder_crop_left = receiver_decoder_crop_left_;
+  snapshot.receiver_decoder_crop_top = receiver_decoder_crop_top_;
+  snapshot.receiver_decoder_crop_right = receiver_decoder_crop_right_;
+  snapshot.receiver_decoder_crop_bottom = receiver_decoder_crop_bottom_;
+  snapshot.receiver_decoder_format_change_count = receiver_decoder_format_change_count_;
+  snapshot.receiver_surface_width = receiver_surface_width_;
+  snapshot.receiver_surface_height = receiver_surface_height_;
   snapshot.conversion_duration_p95_ms =
       P95SampleMs(&capture_to_convert_samples_, now_us);
   snapshot.encoder_queue_wait_p95_ms = snapshot.video_queue_wait_p95_ms;
   snapshot.transport_send_p95_ms = snapshot.access_unit_send_duration_p95_ms;
+  snapshot.mft_input_stream_flags = encoder_diagnostics.mft_input_stream_flags;
+snapshot.mft_does_not_addref = encoder_diagnostics.mft_does_not_addref;
+snapshot.mft_holds_buffers = encoder_diagnostics.mft_holds_buffers;
+snapshot.mft_input_buffer_size = encoder_diagnostics.mft_input_buffer_size;
+snapshot.mft_input_buffer_alignment = encoder_diagnostics.mft_input_buffer_alignment;
+snapshot.encoder_input_sample_id = encoder_diagnostics.encoder_input_sample_id;
+snapshot.encoder_input_buffer_id = encoder_diagnostics.encoder_input_buffer_id;
+snapshot.input_sample_create_count = encoder_diagnostics.input_sample_create_count;
+snapshot.input_buffer_create_count = encoder_diagnostics.input_buffer_create_count;
+snapshot.input_buffer_pool_size = encoder_diagnostics.input_buffer_pool_size;
+snapshot.input_buffers_in_flight = encoder_diagnostics.input_buffers_in_flight;
+snapshot.input_buffer_reuse_count = encoder_diagnostics.input_buffer_reuse_count;
+snapshot.unsafe_input_buffer_reuse_detected =
+    encoder_diagnostics.unsafe_input_buffer_reuse_detected;
+snapshot.nv12_guard_corruption_count =
+    encoder_diagnostics.nv12_guard_corruption_count;
+snapshot.key_frame_count = encoder_diagnostics.key_frame_count;
+snapshot.frames_since_last_key_frame =
+    encoder_diagnostics.frames_since_last_key_frame;
+snapshot.last_key_frame_pts_us = encoder_diagnostics.last_key_frame_pts_us;
+snapshot.last_key_frame_size_bytes =
+    encoder_diagnostics.last_key_frame_size_bytes;
+snapshot.last_key_frame_interval_frames =
+    encoder_diagnostics.last_key_frame_interval_frames;
+snapshot.last_key_frame_interval_ms =
+    encoder_diagnostics.last_key_frame_interval_ms;
+snapshot.keyframe_interval_frames = encoder_diagnostics.keyframe_interval_frames;
+snapshot.encoded_access_unit_bytes = encoded_access_unit_bytes_;
+snapshot.transported_access_unit_bytes = transported_access_unit_bytes_;
+snapshot.video_au_size_mismatch_count = video_au_size_mismatch_count_;
+snapshot.video_fragment_missing_count = 0;
+snapshot.video_au_reassembly_error_count = 0;
+snapshot.receiver_access_unit_bytes = receiver_access_unit_bytes_;
+snapshot.receiver_key_frames_received = receiver_key_frames_received_;
+snapshot.receiver_codec_configs_received = receiver_codec_configs_received_;
   snapshot.selected_encoder_async =
       encoder_diagnostics.selected_encoder_async;
   snapshot.encoder_d3d11_aware = encoder_diagnostics.encoder_d3d11_aware;
@@ -1996,6 +2100,19 @@ void MirrorSession::ResetCounters() {
   latest_sender_generated_pts_us_ = 0;
   latest_source_timestamp_delta_us_ = 0;
   latest_video_pts_source_ = "unavailable";
+  latest_source_texture_width_ = 0;
+  latest_source_texture_height_ = 0;
+  latest_source_texture_format_ = "unavailable";
+  latest_source_row_pitch_ = 0;
+  latest_source_bgra_stride_ = 0;
+  latest_nv12_y_offset_ = 0;
+  latest_nv12_uv_offset_ = 0;
+  latest_nv12_y_stride_ = 0;
+  latest_nv12_uv_stride_ = 0;
+  latest_nv12_expected_bytes_ = 0;
+  latest_nv12_allocated_bytes_ = 0;
+  latest_nv12_used_bytes_ = 0;
+  latest_encoder_input_stride_ = 0;
   receiver_max_height_ = 0;
   receiver_supports_4k30_ = false;
   receiver_presented_fps_recent_ = 0.0;
@@ -2009,6 +2126,26 @@ void MirrorSession::ResetCounters() {
   receiver_video_render_mode_ = "unavailable";
   receiver_pts_interval_p50_ms_ = 0.0;
   receiver_pts_regression_count_ = 0;
+  receiver_access_unit_bytes_ = 0;
+  receiver_key_frames_received_ = 0;
+  receiver_codec_configs_received_ = 0;
+  receiver_decoder_configured_width_ = 0;
+  receiver_decoder_configured_height_ = 0;
+  receiver_decoder_output_width_ = 0;
+  receiver_decoder_output_height_ = 0;
+  receiver_decoder_crop_left_ = 0;
+  receiver_decoder_crop_top_ = 0;
+  receiver_decoder_crop_right_ = 0;
+  receiver_decoder_crop_bottom_ = 0;
+  receiver_decoder_format_change_count_ = 0;
+  receiver_surface_width_ = 0;
+  receiver_surface_height_ = 0;
+  receiver_access_unit_bytes_ = 0;
+  receiver_key_frames_received_ = 0;
+  receiver_codec_configs_received_ = 0;
+  encoded_access_unit_bytes_ = 0;
+  transported_access_unit_bytes_ = 0;
+  video_au_size_mismatch_count_ = 0;
   audio_input_sample_rate_ = 0;
   audio_input_channels_ = 0;
   audio_last_error_.clear();

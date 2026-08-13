@@ -249,6 +249,48 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(static_cast<int64_t>(snapshot.process_output_calls));
   map[EncodableValue("processOutputFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.process_output_frames));
+  map[EncodableValue("mftInputStreamFlags")] =
+      EncodableValue(static_cast<int64_t>(snapshot.mft_input_stream_flags));
+  map[EncodableValue("mftDoesNotAddref")] =
+      EncodableValue(snapshot.mft_does_not_addref);
+  map[EncodableValue("mftHoldsBuffers")] =
+      EncodableValue(snapshot.mft_holds_buffers);
+  map[EncodableValue("mftInputBufferSize")] =
+      EncodableValue(static_cast<int64_t>(snapshot.mft_input_buffer_size));
+  map[EncodableValue("mftInputBufferAlignment")] =
+      EncodableValue(static_cast<int64_t>(snapshot.mft_input_buffer_alignment));
+  map[EncodableValue("encoderInputSampleId")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoder_input_sample_id));
+  map[EncodableValue("encoderInputBufferId")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoder_input_buffer_id));
+  map[EncodableValue("inputSampleCreateCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.input_sample_create_count));
+  map[EncodableValue("inputBufferCreateCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.input_buffer_create_count));
+  map[EncodableValue("inputBufferPoolSize")] =
+      EncodableValue(snapshot.input_buffer_pool_size);
+  map[EncodableValue("inputBuffersInFlight")] =
+      EncodableValue(snapshot.input_buffers_in_flight);
+  map[EncodableValue("inputBufferReuseCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.input_buffer_reuse_count));
+  map[EncodableValue("unsafeInputBufferReuseDetected")] =
+      EncodableValue(static_cast<int64_t>(snapshot.unsafe_input_buffer_reuse_detected));
+  map[EncodableValue("nv12GuardCorruptionCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.nv12_guard_corruption_count));
+  map[EncodableValue("keyFrameCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.key_frame_count));
+  map[EncodableValue("framesSinceLastKeyFrame")] =
+      EncodableValue(static_cast<int64_t>(snapshot.frames_since_last_key_frame));
+  map[EncodableValue("lastKeyFramePtsUs")] =
+      EncodableValue(static_cast<int64_t>(snapshot.last_key_frame_pts_us));
+  map[EncodableValue("lastKeyFrameSizeBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.last_key_frame_size_bytes));
+  map[EncodableValue("lastKeyFrameIntervalFrames")] =
+      EncodableValue(static_cast<int64_t>(snapshot.last_key_frame_interval_frames));
+  map[EncodableValue("lastKeyFrameIntervalMs")] =
+      EncodableValue(static_cast<int64_t>(snapshot.last_key_frame_interval_ms));
+  map[EncodableValue("keyframeIntervalFrames")] =
+      EncodableValue(snapshot.keyframe_interval_frames);
   map[EncodableValue("processInputDurationAverageMs")] =
       EncodableValue(snapshot.process_input_duration_average_ms);
   map[EncodableValue("processInputDurationP95Ms")] =
@@ -257,6 +299,27 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.process_output_duration_average_ms);
   map[EncodableValue("processOutputDurationP95Ms")] =
       EncodableValue(snapshot.process_output_duration_p95_ms);
+  map[EncodableValue("sourceTextureWidth")] =
+      EncodableValue(static_cast<int64_t>(snapshot.source_texture_width));
+  map[EncodableValue("sourceTextureHeight")] =
+      EncodableValue(static_cast<int64_t>(snapshot.source_texture_height));
+  map[EncodableValue("sourceTextureFormat")] =
+      EncodableValue(snapshot.source_texture_format);
+  map[EncodableValue("sourceRowPitch")] =
+      EncodableValue(static_cast<int64_t>(snapshot.source_row_pitch));
+  map[EncodableValue("sourceBgraStride")] =
+      EncodableValue(static_cast<int64_t>(snapshot.source_bgra_stride));
+  map[EncodableValue("nv12YOffset")] = EncodableValue(static_cast<int64_t>(snapshot.nv12_y_offset));
+  map[EncodableValue("nv12UvOffset")] = EncodableValue(static_cast<int64_t>(snapshot.nv12_uv_offset));
+  map[EncodableValue("nv12YStride")] = EncodableValue(static_cast<int64_t>(snapshot.nv12_y_stride));
+  map[EncodableValue("nv12UvStride")] = EncodableValue(static_cast<int64_t>(snapshot.nv12_uv_stride));
+  map[EncodableValue("nv12ExpectedBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.nv12_expected_bytes));
+  map[EncodableValue("nv12AllocatedBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.nv12_allocated_bytes));
+  map[EncodableValue("nv12UsedBytes")] = EncodableValue(static_cast<int64_t>(snapshot.nv12_used_bytes));
+  map[EncodableValue("encoderInputStride")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoder_input_stride));
   map[EncodableValue("bgraToNv12Mode")] =
       EncodableValue(snapshot.bgra_to_nv12_mode);
   map[EncodableValue("gpuReadbackPerFrame")] =
@@ -432,6 +495,50 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.receiver_pts_interval_p50_ms);
   map[EncodableValue("receiverPtsRegressionCount")] =
       EncodableValue(static_cast<int64_t>(snapshot.receiver_pts_regression_count));
+  map[EncodableValue("receiverAccessUnitBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_access_unit_bytes));
+  map[EncodableValue("receiverKeyFramesReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_key_frames_received));
+  map[EncodableValue("receiverCodecConfigsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_codec_configs_received));
+  map[EncodableValue("receiverDecoderConfiguredWidth")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_configured_width));
+  map[EncodableValue("receiverDecoderConfiguredHeight")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_configured_height));
+  map[EncodableValue("receiverDecoderOutputWidth")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_output_width));
+  map[EncodableValue("receiverDecoderOutputHeight")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_output_height));
+  map[EncodableValue("receiverDecoderCropLeft")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_crop_left));
+  map[EncodableValue("receiverDecoderCropTop")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_crop_top));
+  map[EncodableValue("receiverDecoderCropRight")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_crop_right));
+  map[EncodableValue("receiverDecoderCropBottom")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_crop_bottom));
+  map[EncodableValue("receiverDecoderFormatChangeCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_decoder_format_change_count));
+  map[EncodableValue("receiverSurfaceWidth")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_surface_width));
+  map[EncodableValue("receiverSurfaceHeight")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_surface_height));
+  map[EncodableValue("encodedAccessUnitBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.encoded_access_unit_bytes));
+  map[EncodableValue("transportedAccessUnitBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.transported_access_unit_bytes));
+  map[EncodableValue("videoAuSizeMismatchCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.video_au_size_mismatch_count));
+  map[EncodableValue("videoFragmentMissingCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.video_fragment_missing_count));
+  map[EncodableValue("videoAuReassemblyErrorCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.video_au_reassembly_error_count));
+  map[EncodableValue("receiverAccessUnitBytes")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_access_unit_bytes));
+  map[EncodableValue("receiverKeyFramesReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_key_frames_received));
+  map[EncodableValue("receiverCodecConfigsReceived")] =
+      EncodableValue(static_cast<int64_t>(snapshot.receiver_codec_configs_received));
   map[EncodableValue("conversionDurationP95Ms")] =
       EncodableValue(snapshot.conversion_duration_p95_ms);
   map[EncodableValue("encoderQueueWaitP95Ms")] =

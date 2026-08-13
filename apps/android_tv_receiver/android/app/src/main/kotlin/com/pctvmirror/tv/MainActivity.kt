@@ -282,6 +282,7 @@ private class StageOneReceiverServer(
     private val configPacketsReceived = AtomicLong(0)
     private val accessUnitsReceived = AtomicLong(0)
     private val keyFramesReceived = AtomicLong(0)
+    private val accessUnitBytesReceived = AtomicLong(0)
     private val playbackCommandAcksReceived = AtomicLong(0)
     private val playbackCommandErrorsReceived = AtomicLong(0)
 
@@ -575,6 +576,8 @@ private class StageOneReceiverServer(
             .put("sessionId", currentSessionId)
             .put("receiverTimestampUs", elapsedRealtimeUs())
             .put("receivedAccessUnitFps", snapshot.receivedAccessUnitFps)
+            .put("receiverAccessUnitBytes", accessUnitBytesReceived.get())
+            .put("receiverCodecConfigsReceived", configPacketsReceived.get())
             .put("receivedVideoFps", snapshot.receivedAccessUnitFps)
             .put("decoderInputQueued", snapshot.decoderInputFrames)
             .put("decoderOutputAvailable", snapshot.decoderOutputFrames)
@@ -605,7 +608,17 @@ private class StageOneReceiverServer(
             .put("displayHeight", snapshot.displayHeight)
             .put("displayRefreshRateHz", snapshot.displayRefreshRateHz)
             .put("surfaceRequestedRateFps", snapshot.surfaceRequestedRateFps)
-            .put("frameRateModeMatch", snapshot.frameRateModeMatch)
+            .put("frameRateModeMatch", snapshot.frameRateModeMatch)            .put("decoderConfiguredWidth", snapshot.configuredWidth)
+            .put("decoderConfiguredHeight", snapshot.configuredHeight)
+            .put("decoderOutputWidth", snapshot.outputWidth)
+            .put("decoderOutputHeight", snapshot.outputHeight)
+            .put("decoderCropLeft", snapshot.outputCropLeft ?: 0)
+            .put("decoderCropTop", snapshot.outputCropTop ?: 0)
+            .put("decoderCropRight", snapshot.outputCropRight ?: 0)
+            .put("decoderCropBottom", snapshot.outputCropBottom ?: 0)
+            .put("decoderOutputFormatChangeCount", snapshot.outputFormatChangedCount)
+            .put("decoderSurfaceWidth", snapshot.surfaceWidth)
+            .put("decoderSurfaceHeight", snapshot.surfaceHeight)
     }
     private fun readVideoPackets(input: InputStream) {
         while (running) {
@@ -651,6 +664,7 @@ private class StageOneReceiverServer(
                 }
                 VideoPacketType.ACCESS_UNIT -> {
                     accessUnitsReceived.incrementAndGet()
+                    accessUnitBytesReceived.addAndGet(packet.payload.size.toLong())
                     if (packet.isKeyFrame) {
                         keyFramesReceived.incrementAndGet()
                         Log.i(
@@ -806,6 +820,8 @@ private class StageOneReceiverServer(
             "configPacketsReceived" to configPacketsReceived.get(),
             "accessUnitsReceived" to accessUnitsReceived.get(),
             "keyFramesReceived" to keyFramesReceived.get(),
+            "receiverAccessUnitBytes" to accessUnitBytesReceived.get(),
+            "receiverCodecConfigsReceived" to configPacketsReceived.get(),
             "receivedAccessUnitFps" to decoderSnapshot.receivedAccessUnitFps,
             "decoderInputFrames" to decoderSnapshot.decoderInputFrames,
             "decoderOutputFrames" to decoderSnapshot.decoderOutputFrames,
@@ -871,6 +887,14 @@ private class StageOneReceiverServer(
             "outputWidth" to decoderSnapshot.outputWidth,
             "outputHeight" to decoderSnapshot.outputHeight,
             "outputFormatChangedCount" to decoderSnapshot.outputFormatChangedCount,
+            "decoderOutputWidth" to decoderSnapshot.outputWidth,
+            "decoderOutputHeight" to decoderSnapshot.outputHeight,
+            "decoderCropLeft" to (decoderSnapshot.outputCropLeft ?: 0),
+            "decoderCropTop" to (decoderSnapshot.outputCropTop ?: 0),
+            "decoderCropRight" to (decoderSnapshot.outputCropRight ?: 0),
+            "decoderCropBottom" to (decoderSnapshot.outputCropBottom ?: 0),
+            "decoderSurfaceWidth" to decoderSnapshot.surfaceWidth,
+            "decoderSurfaceHeight" to decoderSnapshot.surfaceHeight,
             "networkToDecoderInputMs" to decoderSnapshot.networkToDecoderInputMs,
             "decoderInputToOutputMs" to decoderSnapshot.decoderInputToOutputMs,
             "estimatedEndToEndLatencyMs" to
@@ -960,6 +984,7 @@ private class StageOneReceiverServer(
         bytesReceived.set(0)
         configPacketsReceived.set(0)
         accessUnitsReceived.set(0)
+        accessUnitBytesReceived.set(0)
         keyFramesReceived.set(0)
         playbackCommandAcksReceived.set(0)
         playbackCommandErrorsReceived.set(0)
@@ -977,6 +1002,7 @@ private class StageOneReceiverServer(
         bytesReceived.set(0)
         configPacketsReceived.set(0)
         accessUnitsReceived.set(0)
+        accessUnitBytesReceived.set(0)
         keyFramesReceived.set(0)
         playbackCommandAcksReceived.set(0)
         playbackCommandErrorsReceived.set(0)

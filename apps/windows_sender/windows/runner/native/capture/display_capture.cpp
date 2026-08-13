@@ -29,6 +29,11 @@ std::uint8_t ClampByte(int value) {
   return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
 
+#if defined(_DEBUG)
+constexpr std::size_t kNv12GuardBytes = 32;
+constexpr std::uint8_t kNv12GuardValue = 0xA5;
+#endif
+
 std::uint8_t BgraToY(const std::uint8_t* bgra) {
   const int b = bgra[0];
   const int g = bgra[1];
@@ -90,8 +95,9 @@ bool DisplayCapture::Start(const std::string& source_id,
   first_system_relative_time_ns_.reset();
   wgc_pts_valid_ = true;
   fallback_stream_start_us_ = NowUs();
-  if (target_width < 16 || target_height < 16) {
-    *error = "Invalid capture output size";
+  if (target_width < 16 || target_height < 16 ||
+      (target_width % 2) != 0 || (target_height % 2) != 0) {
+    *error = "Invalid capture output size; NV12 requires even dimensions";
     return false;
   }
   target_width_ = target_width;
@@ -262,6 +268,16 @@ bool DisplayCapture::CaptureNext(
 
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
+    frame->source_texture_width = desc.Width;
+    frame->source_texture_height = desc.Height;
+    frame->source_texture_format =
+        desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ? "BGRA8" : "unsupported";
+    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+      std::ostringstream stream;
+      stream << "Unsupported WGC texture format 0x" << std::hex << desc.Format;
+      *error = stream.str();
+      return false;
+    }
     if (!EnsureStagingTexture(desc.Width, desc.Height, error)) {
       return false;
     }
@@ -350,7 +366,24 @@ void DisplayCapture::ConvertMappedBgraToNv12(
     Nv12Frame* frame) {
   frame->width = target_width_;
   frame->height = target_height_;
-  frame->data.resize(target_width_ * target_height_ * 3 / 2);
+  frame->source_row_pitch = mapped.RowPitch;
+  frame->source_bgra_stride = source_width * 4;
+  frame->nv12_y_offset = 0;
+  frame->nv12_uv_offset = target_width_ * target_height_;
+  frame->nv12_y_stride = target_width_;
+  frame->nv12_uv_stride = target_width_;
+  frame->nv12_expected_bytes =
+      static_cast<std::uint32_t>(target_width_ * target_height_ * 3 / 2);
+  frame->nv12_used_bytes = frame->nv12_expected_bytes;
+#if defined(_DEBUG)
+  frame->data.resize(frame->nv12_expected_bytes + kNv12GuardBytes,
+                     kNv12GuardValue);
+#else
+  frame->data.resize(frame->nv12_expected_bytes);
+#endif
+  frame->nv12_allocated_bytes = static_cast<std::uint32_t>(frame->data.size());
+  frame->encoder_input_stride = frame->nv12_y_stride;
+  frame->nv12_guard_corrupted = false;
 
   auto* y_plane = frame->data.data();
   auto* uv_plane = y_plane + target_width_ * target_height_;
@@ -392,6 +425,11 @@ void DisplayCapture::ConvertMappedBgraToNv12(
       uv_plane[uv_index + 1] = static_cast<std::uint8_t>(v_sum / 4);
     }
   }
+#if defined(_DEBUG)
+  frame->nv12_guard_corrupted = !std::all_of(
+      frame->data.begin() + frame->nv12_expected_bytes, frame->data.end(),
+      [](std::uint8_t value) { return value == kNv12GuardValue; });
+#endif
 }
 
 }  // namespace pctv

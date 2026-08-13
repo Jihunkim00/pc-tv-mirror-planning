@@ -29,7 +29,25 @@ struct Nv12Frame {
   std::uint64_t converted_us = 0;
   std::uint64_t convert_duration_us = 0;
   int dropped_frames = 0;
+  std::uint32_t source_texture_width = 0;
+  std::uint32_t source_texture_height = 0;
+  std::string source_texture_format = "unavailable";
+  std::uint32_t source_row_pitch = 0;
+  std::uint32_t source_bgra_stride = 0;
+  std::uint32_t nv12_y_offset = 0;
+  std::uint32_t nv12_uv_offset = 0;
+  std::uint32_t nv12_y_stride = 0;
+  std::uint32_t nv12_uv_stride = 0;
+  std::uint32_t nv12_expected_bytes = 0;
+  std::uint32_t nv12_allocated_bytes = 0;
+  std::uint32_t nv12_used_bytes = 0;
+  std::uint32_t encoder_input_stride = 0;
+  bool nv12_guard_corrupted = false;
   std::vector<std::uint8_t> data;
+
+  std::size_t payload_size() const {
+    return nv12_used_bytes == 0 ? data.size() : nv12_used_bytes;
+  }
 };
 
 struct EncodedAccessUnit {

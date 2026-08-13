@@ -426,6 +426,7 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
     diagnostics_ = H264EncoderDiagnostics{};
     diagnostics_.encoder_input_format = VideoFormatText("NV12", config_);
     diagnostics_.encoder_output_format = VideoFormatText("H.264", config_);
+    diagnostics_.keyframe_interval_frames = config_.keyframe_interval_frames;
     process_input_samples_.clear();
     process_output_samples_.clear();
   }
@@ -487,6 +488,12 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
   parameter_sets_ = {};
   first_pts_us_ = 0;
   first_pts_set_ = false;
+  next_input_sample_id_ = 1;
+  next_input_buffer_id_ = 1;
+  output_frame_index_ = 0;
+  previous_key_frame_output_index_ = 0;
+  previous_key_frame_pts_us_ = 0;
+  previous_key_frame_seen_ = false;
   force_next_key_frame_.store(true);
   return true;
 }
@@ -507,14 +514,28 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
     return false;
   }
 
+  const std::size_t expected_input_bytes =
+      static_cast<std::size_t>(config_.width) * config_.height * 3 / 2;
+  const std::size_t input_bytes = frame.payload_size();
+  if (frame.width != config_.width || frame.height != config_.height ||
+      input_bytes != expected_input_bytes || frame.data.size() < input_bytes) {
+    *error = "NV12 frame dimensions or payload size do not match encoder input";
+    return false;
+  }
+  if (frame.nv12_guard_corrupted) {
+    std::scoped_lock lock(diagnostics_mutex_);
+    ++diagnostics_.nv12_guard_corruption_count;
+    *error = "NV12 debug guard was corrupted before H.264 input";
+    return false;
+  }
+
   winrt::com_ptr<IMFSample> sample;
   winrt::com_ptr<IMFMediaBuffer> buffer;
   HRESULT hr = MFCreateSample(sample.put());
   if (Failed(hr, "MFCreateSample", error)) {
     return false;
   }
-  hr = MFCreateMemoryBuffer(static_cast<DWORD>(frame.data.size()),
-                            buffer.put());
+  hr = MFCreateMemoryBuffer(static_cast<DWORD>(input_bytes), buffer.put());
   if (Failed(hr, "MFCreateMemoryBuffer", error)) {
     return false;
   }
@@ -526,13 +547,27 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   if (Failed(hr, "IMFMediaBuffer::Lock", error)) {
     return false;
   }
-  std::copy(frame.data.begin(), frame.data.end(), destination);
+  std::copy(frame.data.begin(), frame.data.begin() + input_bytes, destination);
   buffer->Unlock();
-  buffer->SetCurrentLength(static_cast<DWORD>(frame.data.size()));
+  buffer->SetCurrentLength(static_cast<DWORD>(input_bytes));
   sample->AddBuffer(buffer.get());
+  const auto sample_id = next_input_sample_id_++;
+  const auto buffer_id = next_input_buffer_id_++;
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    diagnostics_.encoder_input_sample_id = sample_id;
+    diagnostics_.encoder_input_buffer_id = buffer_id;
+    ++diagnostics_.input_sample_create_count;
+    ++diagnostics_.input_buffer_create_count;
+    diagnostics_.input_buffer_pool_size = 0;
+    diagnostics_.input_buffers_in_flight = 0;
+    diagnostics_.input_buffer_reuse_count = 0;
+    diagnostics_.unsafe_input_buffer_reuse_detected = 0;
+  }
 
   if (!first_pts_set_) {
     first_pts_us_ = frame.pts_us;
+    first_pts_set_ = true;
   }
   const LONGLONG sample_time =
       static_cast<LONGLONG>((frame.pts_us - first_pts_us_) * 10);
@@ -616,6 +651,12 @@ void H264Encoder::Stop() {
   parameter_sets_ = {};
   first_pts_us_ = 0;
   first_pts_set_ = false;
+  next_input_sample_id_ = 1;
+  next_input_buffer_id_ = 1;
+  output_frame_index_ = 0;
+  previous_key_frame_output_index_ = 0;
+  previous_key_frame_pts_us_ = 0;
+  previous_key_frame_seen_ = false;
   force_next_key_frame_.store(false);
   encoder_backpressure_count_ = 0;
   encoder_backpressure_dropped_frames_ = 0;
@@ -739,6 +780,22 @@ bool H264Encoder::ConfigureTypes(std::string* error) {
   hr = transform_->SetInputType(0, input_type.get(), 0);
   if (Failed(hr, "SetInputType(NV12)", error)) {
     return false;
+  }
+
+  MFT_INPUT_STREAM_INFO input_info{};
+  hr = transform_->GetInputStreamInfo(0, &input_info);
+  if (SUCCEEDED(hr)) {
+    std::scoped_lock lock(diagnostics_mutex_);
+    diagnostics_.mft_input_stream_flags = input_info.dwFlags;
+    diagnostics_.mft_does_not_addref =
+        (input_info.dwFlags & MFT_INPUT_STREAM_DOES_NOT_ADDREF) != 0;
+    diagnostics_.mft_holds_buffers =
+        (input_info.dwFlags & MFT_INPUT_STREAM_HOLDS_BUFFERS) != 0;
+    diagnostics_.mft_input_buffer_size = input_info.cbSize;
+    diagnostics_.mft_input_buffer_alignment = input_info.cbAlignment;
+  } else {
+    Log("GetInputStreamInfo(NV12) failed; ownership diagnostics unavailable: " +
+        HResultText("GetInputStreamInfo", hr));
   }
 
   return true;
@@ -941,10 +998,31 @@ bool H264Encoder::ReadAvailableOutput(
 
     const auto output_pts_us =
         first_pts_us_ + static_cast<std::uint64_t>(sample_time / 10);
+    const auto output_size_bytes = annex_b.size();
     output->push_back({output_pts_us, key_frame, std::move(annex_b)});
     {
       std::scoped_lock lock(diagnostics_mutex_);
       ++diagnostics_.process_output_frames;
+      if (key_frame) {
+        ++diagnostics_.key_frame_count;
+        diagnostics_.frames_since_last_key_frame = 0;
+        diagnostics_.last_key_frame_pts_us = output_pts_us;
+        diagnostics_.last_key_frame_size_bytes = output_size_bytes;
+        if (previous_key_frame_seen_) {
+          diagnostics_.last_key_frame_interval_frames =
+              output_frame_index_ - previous_key_frame_output_index_;
+          diagnostics_.last_key_frame_interval_ms =
+              output_pts_us >= previous_key_frame_pts_us_
+                  ? (output_pts_us - previous_key_frame_pts_us_) / 1000
+                  : 0;
+        }
+        previous_key_frame_seen_ = true;
+        previous_key_frame_output_index_ = output_frame_index_;
+        previous_key_frame_pts_us_ = output_pts_us;
+      } else {
+        ++diagnostics_.frames_since_last_key_frame;
+      }
+      ++output_frame_index_;
     }
 
     if (output_buffer.pSample != sample.get()) {

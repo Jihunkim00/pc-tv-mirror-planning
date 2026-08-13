@@ -240,12 +240,44 @@ final class NativeSessionSnapshot {
     this.processInputNotAccepting = 0,
     this.processInputRetries = 0,
     this.processOutputCalls = 0,
-    this.processOutputFrames = 0,
+    this.processOutputFrames = 0,    this.mftInputStreamFlags = 0,
+    this.mftDoesNotAddref = false,
+    this.mftHoldsBuffers = false,
+    this.mftInputBufferSize = 0,
+    this.mftInputBufferAlignment = 0,
+    this.encoderInputSampleId = 0,
+    this.encoderInputBufferId = 0,
+    this.inputSampleCreateCount = 0,
+    this.inputBufferCreateCount = 0,
+    this.inputBufferPoolSize = 0,
+    this.inputBuffersInFlight = 0,
+    this.inputBufferReuseCount = 0,
+    this.unsafeInputBufferReuseDetected = 0,
+    this.nv12GuardCorruptionCount = 0,
+    this.keyFrameCount = 0,
+    this.framesSinceLastKeyFrame = 0,
+    this.lastKeyFramePtsUs = 0,
+    this.lastKeyFrameSizeBytes = 0,
+    this.lastKeyFrameIntervalFrames = 0,
+    this.lastKeyFrameIntervalMs = 0,
+    this.keyframeIntervalFrames = 0,
     this.processInputDurationAverageMs = 0,
     this.processInputDurationP95Ms = 0,
     this.processOutputDurationAverageMs = 0,
     this.processOutputDurationP95Ms = 0,
-    this.bgraToNv12Mode = 'cpuBgraToNv12',
+    this.sourceTextureWidth = 0,
+    this.sourceTextureHeight = 0,
+    this.sourceTextureFormat = 'unavailable',
+    this.sourceRowPitch = 0,
+    this.sourceBgraStride = 0,
+    this.nv12YOffset = 0,
+    this.nv12UvOffset = 0,
+    this.nv12YStride = 0,
+    this.nv12UvStride = 0,
+    this.nv12ExpectedBytes = 0,
+    this.nv12AllocatedBytes = 0,
+    this.nv12UsedBytes = 0,
+    this.encoderInputStride = 0,    this.bgraToNv12Mode = 'cpuBgraToNv12',
     this.gpuReadbackPerFrame = true,
     this.textureReuseEnabled = true,
     this.lowLatencyOptionsApplied = '',
@@ -332,6 +364,25 @@ final class NativeSessionSnapshot {
     this.receiverVideoRenderMode = 'unavailable',
     this.receiverPtsIntervalP50Ms = 0,
     this.receiverPtsRegressionCount = 0,
+    this.encodedAccessUnitBytes = 0,
+    this.transportedAccessUnitBytes = 0,
+    this.videoAuSizeMismatchCount = 0,
+    this.videoFragmentMissingCount = 0,
+    this.videoAuReassemblyErrorCount = 0,
+    this.receiverAccessUnitBytes = 0,
+    this.receiverKeyFramesReceived = 0,
+    this.receiverCodecConfigsReceived = 0,
+    this.receiverDecoderConfiguredWidth = 0,
+    this.receiverDecoderConfiguredHeight = 0,
+    this.receiverDecoderOutputWidth = 0,
+    this.receiverDecoderOutputHeight = 0,
+    this.receiverDecoderCropLeft = 0,
+    this.receiverDecoderCropTop = 0,
+    this.receiverDecoderCropRight = 0,
+    this.receiverDecoderCropBottom = 0,
+    this.receiverDecoderFormatChangeCount = 0,
+    this.receiverSurfaceWidth = 0,
+    this.receiverSurfaceHeight = 0,
     this.conversionDurationP95Ms = 0,
     this.encoderQueueWaitP95Ms = 0,
     this.transportSendP95Ms = 0,
@@ -436,11 +487,44 @@ final class NativeSessionSnapshot {
   final int processInputRetries;
   final int processOutputCalls;
   final int processOutputFrames;
+  final int mftInputStreamFlags;
+  final bool mftDoesNotAddref;
+  final bool mftHoldsBuffers;
+  final int mftInputBufferSize;
+  final int mftInputBufferAlignment;
+  final int encoderInputSampleId;
+  final int encoderInputBufferId;
+  final int inputSampleCreateCount;
+  final int inputBufferCreateCount;
+  final int inputBufferPoolSize;
+  final int inputBuffersInFlight;
+  final int inputBufferReuseCount;
+  final int unsafeInputBufferReuseDetected;
+  final int nv12GuardCorruptionCount;
+  final int keyFrameCount;
+  final int framesSinceLastKeyFrame;
+  final int lastKeyFramePtsUs;
+  final int lastKeyFrameSizeBytes;
+  final int lastKeyFrameIntervalFrames;
+  final int lastKeyFrameIntervalMs;
+  final int keyframeIntervalFrames;
   final double processInputDurationAverageMs;
   final double processInputDurationP95Ms;
   final double processOutputDurationAverageMs;
   final double processOutputDurationP95Ms;
-  final String bgraToNv12Mode;
+  final int sourceTextureWidth;
+  final int sourceTextureHeight;
+  final String sourceTextureFormat;
+  final int sourceRowPitch;
+  final int sourceBgraStride;
+  final int nv12YOffset;
+  final int nv12UvOffset;
+  final int nv12YStride;
+  final int nv12UvStride;
+  final int nv12ExpectedBytes;
+  final int nv12AllocatedBytes;
+  final int nv12UsedBytes;
+  final int encoderInputStride;  final String bgraToNv12Mode;
   final bool gpuReadbackPerFrame;
   final bool textureReuseEnabled;
   final String lowLatencyOptionsApplied;
@@ -527,6 +611,25 @@ final class NativeSessionSnapshot {
   final String receiverVideoRenderMode;
   final double receiverPtsIntervalP50Ms;
   final int receiverPtsRegressionCount;
+  final int encodedAccessUnitBytes;
+  final int transportedAccessUnitBytes;
+  final int videoAuSizeMismatchCount;
+  final int videoFragmentMissingCount;
+  final int videoAuReassemblyErrorCount;
+  final int receiverAccessUnitBytes;
+  final int receiverKeyFramesReceived;
+  final int receiverCodecConfigsReceived;
+  final int receiverDecoderConfiguredWidth;
+  final int receiverDecoderConfiguredHeight;
+  final int receiverDecoderOutputWidth;
+  final int receiverDecoderOutputHeight;
+  final int receiverDecoderCropLeft;
+  final int receiverDecoderCropTop;
+  final int receiverDecoderCropRight;
+  final int receiverDecoderCropBottom;
+  final int receiverDecoderFormatChangeCount;
+  final int receiverSurfaceWidth;
+  final int receiverSurfaceHeight;
   final double conversionDurationP95Ms;
   final double encoderQueueWaitP95Ms;
   final double transportSendP95Ms;
@@ -754,7 +857,45 @@ final class NativeSessionSnapshot {
       ),
       processInputRetries: _readOptionalInt(json, 'processInputRetries'),
       processOutputCalls: _readOptionalInt(json, 'processOutputCalls'),
-      processOutputFrames: _readOptionalInt(json, 'processOutputFrames'),
+      processOutputFrames: _readOptionalInt(json, 'processOutputFrames'),      mftInputStreamFlags: _readOptionalInt(json, 'mftInputStreamFlags'),
+      mftDoesNotAddref: _readOptionalBool(json, 'mftDoesNotAddref'),
+      mftHoldsBuffers: _readOptionalBool(json, 'mftHoldsBuffers'),
+      mftInputBufferSize: _readOptionalInt(json, 'mftInputBufferSize'),
+      mftInputBufferAlignment: _readOptionalInt(json, 'mftInputBufferAlignment'),
+      encoderInputSampleId: _readOptionalInt(json, 'encoderInputSampleId'),
+      encoderInputBufferId: _readOptionalInt(json, 'encoderInputBufferId'),
+      inputSampleCreateCount: _readOptionalInt(json, 'inputSampleCreateCount'),
+      inputBufferCreateCount: _readOptionalInt(json, 'inputBufferCreateCount'),
+      inputBufferPoolSize: _readOptionalInt(json, 'inputBufferPoolSize'),
+      inputBuffersInFlight: _readOptionalInt(json, 'inputBuffersInFlight'),
+      inputBufferReuseCount: _readOptionalInt(json, 'inputBufferReuseCount'),
+      unsafeInputBufferReuseDetected: _readOptionalInt(
+        json,
+        'unsafeInputBufferReuseDetected',
+      ),
+      nv12GuardCorruptionCount: _readOptionalInt(
+        json,
+        'nv12GuardCorruptionCount',
+      ),
+      keyFrameCount: _readOptionalInt(json, 'keyFrameCount'),
+      framesSinceLastKeyFrame: _readOptionalInt(
+        json,
+        'framesSinceLastKeyFrame',
+      ),
+      lastKeyFramePtsUs: _readOptionalInt(json, 'lastKeyFramePtsUs'),
+      lastKeyFrameSizeBytes: _readOptionalInt(json, 'lastKeyFrameSizeBytes'),
+      lastKeyFrameIntervalFrames: _readOptionalInt(
+        json,
+        'lastKeyFrameIntervalFrames',
+      ),
+      lastKeyFrameIntervalMs: _readOptionalInt(
+        json,
+        'lastKeyFrameIntervalMs',
+      ),
+      keyframeIntervalFrames: _readOptionalInt(
+        json,
+        'keyframeIntervalFrames',
+      ),
       processInputDurationAverageMs: _readOptionalDouble(
         json,
         'processInputDurationAverageMs',
@@ -771,7 +912,23 @@ final class NativeSessionSnapshot {
         json,
         'processOutputDurationP95Ms',
       ),
-      bgraToNv12Mode: _readOptionalString(
+      sourceTextureWidth: _readOptionalInt(json, 'sourceTextureWidth'),
+      sourceTextureHeight: _readOptionalInt(json, 'sourceTextureHeight'),
+      sourceTextureFormat: _readOptionalString(
+        json,
+        'sourceTextureFormat',
+        defaultValue: 'unavailable',
+      ),
+      sourceRowPitch: _readOptionalInt(json, 'sourceRowPitch'),
+      sourceBgraStride: _readOptionalInt(json, 'sourceBgraStride'),
+      nv12YOffset: _readOptionalInt(json, 'nv12YOffset'),
+      nv12UvOffset: _readOptionalInt(json, 'nv12UvOffset'),
+      nv12YStride: _readOptionalInt(json, 'nv12YStride'),
+      nv12UvStride: _readOptionalInt(json, 'nv12UvStride'),
+      nv12ExpectedBytes: _readOptionalInt(json, 'nv12ExpectedBytes'),
+      nv12AllocatedBytes: _readOptionalInt(json, 'nv12AllocatedBytes'),
+      nv12UsedBytes: _readOptionalInt(json, 'nv12UsedBytes'),
+      encoderInputStride: _readOptionalInt(json, 'encoderInputStride'),      bgraToNv12Mode: _readOptionalString(
         json,
         'bgraToNv12Mode',
         defaultValue: 'cpuBgraToNv12',
@@ -1031,6 +1188,76 @@ final class NativeSessionSnapshot {
         json,
         'receiverPtsIntervalP50Ms',
       ),
+      encodedAccessUnitBytes: _readOptionalInt(
+        json,
+        'encodedAccessUnitBytes',
+      ),
+      transportedAccessUnitBytes: _readOptionalInt(
+        json,
+        'transportedAccessUnitBytes',
+      ),
+      videoAuSizeMismatchCount: _readOptionalInt(
+        json,
+        'videoAuSizeMismatchCount',
+      ),
+      videoFragmentMissingCount: _readOptionalInt(
+        json,
+        'videoFragmentMissingCount',
+      ),
+      videoAuReassemblyErrorCount: _readOptionalInt(
+        json,
+        'videoAuReassemblyErrorCount',
+      ),
+      receiverAccessUnitBytes: _readOptionalInt(
+        json,
+        'receiverAccessUnitBytes',
+      ),
+      receiverKeyFramesReceived: _readOptionalInt(
+        json,
+        'receiverKeyFramesReceived',
+      ),
+      receiverCodecConfigsReceived: _readOptionalInt(
+        json,
+        'receiverCodecConfigsReceived',
+      ),
+      receiverDecoderConfiguredWidth: _readOptionalInt(
+        json,
+        'receiverDecoderConfiguredWidth',
+      ),
+      receiverDecoderConfiguredHeight: _readOptionalInt(
+        json,
+        'receiverDecoderConfiguredHeight',
+      ),
+      receiverDecoderOutputWidth: _readOptionalInt(
+        json,
+        'receiverDecoderOutputWidth',
+      ),
+      receiverDecoderOutputHeight: _readOptionalInt(
+        json,
+        'receiverDecoderOutputHeight',
+      ),
+      receiverDecoderCropLeft: _readOptionalInt(
+        json,
+        'receiverDecoderCropLeft',
+      ),
+      receiverDecoderCropTop: _readOptionalInt(
+        json,
+        'receiverDecoderCropTop',
+      ),
+      receiverDecoderCropRight: _readOptionalInt(
+        json,
+        'receiverDecoderCropRight',
+      ),
+      receiverDecoderCropBottom: _readOptionalInt(
+        json,
+        'receiverDecoderCropBottom',
+      ),
+      receiverDecoderFormatChangeCount: _readOptionalInt(
+        json,
+        'receiverDecoderFormatChangeCount',
+      ),
+      receiverSurfaceWidth: _readOptionalInt(json, 'receiverSurfaceWidth'),
+      receiverSurfaceHeight: _readOptionalInt(json, 'receiverSurfaceHeight'),
       receiverPtsRegressionCount: _readOptionalInt(
         json,
         'receiverPtsRegressionCount',
