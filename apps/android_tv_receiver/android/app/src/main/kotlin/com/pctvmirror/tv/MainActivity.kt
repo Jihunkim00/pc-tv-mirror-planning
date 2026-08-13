@@ -152,6 +152,12 @@ class MainActivity : FlutterActivity() {
         if (h264DecoderCapability.supports4k30) {
             profiles.add(PERFORMANCE_PROFILE_EXPERIMENTAL_4K30)
         }
+        if (h264DecoderCapability.maxWidth >= 1920 &&
+            h264DecoderCapability.maxHeight >= 1080 &&
+            h264DecoderCapability.maxFps >= 24
+        ) {
+            profiles.add(PERFORMANCE_PROFILE_CINEMA_1080P24)
+        }
         return mapOf(
             "type" to "capabilities",
             "protocolVersion" to 1,
@@ -182,6 +188,7 @@ private const val SCALE_MODE_FIT_CENTER = "fitCenter"
 private const val PERFORMANCE_PROFILE_LOW_LATENCY_720P30 = "lowLatency720p30"
 private const val PERFORMANCE_PROFILE_COMPATIBILITY_720P30 = "compatibility720p30"
 private const val PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 = "highQuality1080p30"
+private const val PERFORMANCE_PROFILE_CINEMA_1080P24 = "cinema1080p24"
 private const val PERFORMANCE_PROFILE_EXPERIMENTAL_4K30 = "experimental4k30"
 private const val MAX_PACKET_PAYLOAD = 8 * 1024 * 1024
 private const val MAX_ACCESS_UNIT_PAYLOAD = 8 * 1024 * 1024
@@ -2445,6 +2452,7 @@ private class StageOneVideoDecoder(
             format.setByteBuffer("csd-0", ByteBuffer.wrap(activeConfig.sps))
             format.setByteBuffer("csd-1", ByteBuffer.wrap(activeConfig.pps))
             applyOptionalDecoderLowLatencyFormatOptions(format)
+            applyCinemaFrameRateHintLocked(activeSurface, activeConfig)
             newCodec.configure(format, activeSurface, null, 0)
             newCodec.start()
             codec = newCodec
@@ -2470,6 +2478,29 @@ private class StageOneVideoDecoder(
         }
     }
 
+    private fun applyCinemaFrameRateHintLocked(
+        activeSurface: Surface,
+        activeConfig: H264StreamConfig,
+    ) {
+        if (activeConfig.width != 1920 ||
+            activeConfig.height != 1080 ||
+            activeConfig.fps != 24
+        ) {
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return
+        }
+        try {
+            activeSurface.setFrameRate(
+                24.0f,
+                Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS,
+            )
+        } catch (_: Exception) {
+        }
+
+    }
     private fun drainOutputLocked(activeCodec: MediaCodec) {
         val bufferInfo = MediaCodec.BufferInfo()
         while (true) {
@@ -3717,6 +3748,7 @@ private fun validatePerformanceProfile(json: JSONObject) {
         profile == PERFORMANCE_PROFILE_LOW_LATENCY_720P30 ||
             profile == PERFORMANCE_PROFILE_COMPATIBILITY_720P30 ||
             profile == PERFORMANCE_PROFILE_HIGH_QUALITY_1080P30 ||
+            profile == PERFORMANCE_PROFILE_CINEMA_1080P24 ||
             profile == PERFORMANCE_PROFILE_EXPERIMENTAL_4K30,
     ) {
         "unsupported performance profile: $profile"

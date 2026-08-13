@@ -8,6 +8,7 @@ import '../../core/native_bridge/mirror_native_api.dart';
 enum SenderVideoProfile {
   lowLatency720p30,
   highQuality1080p30,
+  cinema1080p24,
   compatibility720p30,
   experimental4k30;
 
@@ -15,6 +16,7 @@ enum SenderVideoProfile {
     return switch (this) {
       SenderVideoProfile.lowLatency720p30 => '720p30 HQ',
       SenderVideoProfile.highQuality1080p30 => '1080p30 HQ',
+      SenderVideoProfile.cinema1080p24 => '1080p24 Cinema',
       SenderVideoProfile.compatibility720p30 => '720p30 Compat',
       SenderVideoProfile.experimental4k30 => '4K 30fps (Experimental)',
     };
@@ -24,6 +26,8 @@ enum SenderVideoProfile {
     return switch (this) {
       SenderVideoProfile.lowLatency720p30 => 'Low-latency 720p30 H.264',
       SenderVideoProfile.highQuality1080p30 => 'Balanced 1080p30 H.264',
+      SenderVideoProfile.cinema1080p24 =>
+        'FHD 24fps Cinema H.264 with display pacing',
       SenderVideoProfile.compatibility720p30 => 'Lower bitrate 720p30 H.264',
       SenderVideoProfile.experimental4k30 =>
         'Requires compatible hardware encoder, Android TV decoder, and wired LAN',
@@ -36,6 +40,7 @@ enum SenderVideoProfile {
         const VideoProfile.lowLatency720p30(),
       SenderVideoProfile.highQuality1080p30 =>
         const VideoProfile.highQuality1080p30(),
+      SenderVideoProfile.cinema1080p24 => const VideoProfile.cinema1080p24(),
       SenderVideoProfile.compatibility720p30 =>
         const VideoProfile.compatibility720p30(),
       SenderVideoProfile.experimental4k30 =>

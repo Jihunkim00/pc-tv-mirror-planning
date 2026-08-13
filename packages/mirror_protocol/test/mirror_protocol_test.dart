@@ -42,6 +42,7 @@ void main() {
           PerformanceProfile.compatibility720p30,
           PerformanceProfile.highQuality1080p30,
           PerformanceProfile.experimental4k30,
+          PerformanceProfile.cinema1080p24,
         ],
       );
 
@@ -59,6 +60,7 @@ void main() {
         PerformanceProfile.compatibility720p30,
         PerformanceProfile.highQuality1080p30,
         PerformanceProfile.experimental4k30,
+        PerformanceProfile.cinema1080p24,
       ]);
     });
   });
@@ -107,6 +109,26 @@ void main() {
       expect(
         StreamStartRequest.fromJson(json).video.performanceProfile,
         PerformanceProfile.highQuality1080p30,
+      );
+    });
+    test('encodes the FHD 1080p24 Cinema profile', () {
+      const request = StreamStartRequest(
+        sessionId: 'session-cinema',
+        sourceType: SourceType.display,
+        sourceId: r'\\.\DISPLAY1',
+        video: VideoProfile.cinema1080p24(),
+      );
+
+      final video = request.toJson()['video'] as Map<String, Object?>;
+
+      expect(video['width'], 1920);
+      expect(video['height'], 1080);
+      expect(video['fps'], 24);
+      expect(video['bitrateKbps'], 8000);
+      expect(video['performanceProfile'], 'cinema1080p24');
+      expect(
+        StreamStartRequest.fromJson(request.toJson()).video.performanceProfile,
+        PerformanceProfile.cinema1080p24,
       );
     });
 

@@ -83,6 +83,7 @@ enum PerformanceProfile {
   lowLatency720p30('lowLatency720p30'),
   compatibility720p30('compatibility720p30'),
   highQuality1080p30('highQuality1080p30'),
+  cinema1080p24('cinema1080p24'),
   experimental4k30('experimental4k30');
 
   const PerformanceProfile(this.wireName);
@@ -94,6 +95,7 @@ enum PerformanceProfile {
       'lowLatency720p30' => PerformanceProfile.lowLatency720p30,
       'compatibility720p30' => PerformanceProfile.compatibility720p30,
       'highQuality1080p30' => PerformanceProfile.highQuality1080p30,
+      'cinema1080p24' => PerformanceProfile.cinema1080p24,
       'experimental4k30' => PerformanceProfile.experimental4k30,
       _ => throw FormatException('Unsupported performance profile: $value'),
     };
@@ -231,6 +233,7 @@ final class ReceiverCapabilities {
       PerformanceProfile.lowLatency720p30,
       PerformanceProfile.compatibility720p30,
       PerformanceProfile.highQuality1080p30,
+      PerformanceProfile.cinema1080p24,
     ],
     this.supports4k30 = false,
     this.videoCodec = 'h264',
@@ -364,6 +367,14 @@ final class VideoProfile {
       fps = 30,
       bitrateKbps = 7500,
       performanceProfile = PerformanceProfile.highQuality1080p30;
+
+  const VideoProfile.cinema1080p24()
+    : codec = VideoCodec.h264,
+      width = 1920,
+      height = 1080,
+      fps = 24,
+      bitrateKbps = 8000,
+      performanceProfile = PerformanceProfile.cinema1080p24;
 
   const VideoProfile.experimental4k30()
     : codec = VideoCodec.h264,
