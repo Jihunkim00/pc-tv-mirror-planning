@@ -5,6 +5,7 @@
 #include "native/audio/system_audio_loopback.h"
 #include "native/audio/wasapi_local_monitor_renderer.h"
 #include "native/capture/display_capture.h"
+#include "native/session/cadence_limiter.h"
 #include "native/session/session_types.h"
 #include "native/transport/bounded_queue.h"
 #include "native/transport/video_transport.h"
@@ -133,11 +134,12 @@ class MirrorSession {
   std::atomic_uint64_t playback_command_errors_sent_{0};
   std::atomic_uint64_t resume_codec_config_resends_{0};
   std::atomic_uint64_t last_playback_command_id_{0};
-  std::uint64_t next_admission_deadline_us_ = 0;
   std::deque<std::uint64_t> capture_callback_events_us_;
   std::deque<std::uint64_t> captured_events_us_;
   std::deque<std::uint64_t> target_admission_events_us_;
   std::deque<std::pair<std::uint64_t, double>> source_frame_interval_samples_;
+  std::string cadence_skip_reason_ = "unavailable";
+  CadenceLimiter cadence_limiter_;
   std::uint64_t latest_capture_system_relative_time_ns_ = 0;
   std::uint64_t latest_sender_generated_pts_us_ = 0;
   std::uint64_t latest_source_timestamp_delta_us_ = 0;

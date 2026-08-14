@@ -59,4 +59,8 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
+add_executable(cadence_limiter_test EXCLUDE_FROM_ALL
+  "native/session/cadence_limiter_test.cpp"
+)
+target_include_directories(cadence_limiter_test PRIVATE ".")
 add_dependencies(${BINARY_NAME} flutter_assemble)

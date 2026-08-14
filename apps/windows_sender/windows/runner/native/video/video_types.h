@@ -22,12 +22,15 @@ struct Nv12Frame {
   int height = 720;
   std::uint64_t capture_system_relative_time_ns = 0;
   std::uint64_t source_timestamp_delta_us = 0;
+  bool source_pts_valid = false;
   std::string video_pts_source = "fallback_frame_clock";
   std::uint64_t pts_us = 0;
   std::uint64_t capture_callback_us = 0;
   std::uint64_t convert_started_us = 0;
   std::uint64_t converted_us = 0;
   std::uint64_t convert_duration_us = 0;
+  std::uint64_t scale_duration_us = 0;
+  std::uint64_t bgra_to_nv12_duration_us = 0;
   int dropped_frames = 0;
   std::uint32_t source_texture_width = 0;
   std::uint32_t source_texture_height = 0;

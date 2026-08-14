@@ -4,7 +4,7 @@ description: "Android TV receiver app for the PC TV Mirror STAGE 1 video path."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none'
 
-version: 0.2.0+13
+version: 0.2.4+17
 
 environment:
   sdk: ^3.12.2

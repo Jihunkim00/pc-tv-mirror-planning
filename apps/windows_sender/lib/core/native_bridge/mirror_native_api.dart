@@ -173,12 +173,37 @@ final class NativeSessionSnapshot {
     this.convertToEncodeAverageMs = 0,
     this.encodeDurationAverageMs = 0,
     this.encodeDurationP95Ms = 0,
+    this.frameArrivedCallbackFps = 0,
+    this.tryGetNextFrameSuccessFps = 0,
+    this.tryGetNextFrameNullCount = 0,
+    this.rawWgcIntervalP50Ms = 0,
+    this.rawWgcIntervalP95Ms = 0,
+    this.frameAcquireAverageMs = 0,
+    this.frameAcquireP95Ms = 0,
+    this.copyResourceAverageMs = 0,
+    this.copyResourceP95Ms = 0,
+    this.mapReadbackAverageMs = 0,
+    this.mapReadbackP95Ms = 0,
+    this.scaleAverageMs = 0,
+    this.scaleP95Ms = 0,
+    this.bgraToNv12AverageMs = 0,
+    this.bgraToNv12P95Ms = 0,
+    this.nv12CopyAverageMs = 0,
+    this.nv12CopyP95Ms = 0,
+    this.samplePrepareAverageMs = 0,
+    this.samplePrepareP95Ms = 0,
+    this.captureToEncoderReadyAverageMs = 0,
+    this.captureToEncoderReadyP95Ms = 0,
+    this.processInputAverageMs = 0,
+    this.processInputP95Ms = 0,
     this.encodeToSendAverageMs = 0,
     this.videoQueueWaitAverageMs = 0,
     this.videoQueueWaitP95Ms = 0,
     this.capturedFrames = 0,
     this.captureReplacedFrames = 0,
     this.cadenceSkippedFrames = 0,
+    this.cadenceSkippedRecent = 0,
+    this.cadenceSkipReason = 'unavailable',
     this.conversionBackpressureDroppedFrames = 0,
     this.encoderBackpressureDroppedFrames = 0,
     this.transportBackpressureDroppedFrames = 0,
@@ -240,7 +265,8 @@ final class NativeSessionSnapshot {
     this.processInputNotAccepting = 0,
     this.processInputRetries = 0,
     this.processOutputCalls = 0,
-    this.processOutputFrames = 0,    this.mftInputStreamFlags = 0,
+    this.processOutputFrames = 0,
+    this.mftInputStreamFlags = 0,
     this.mftDoesNotAddref = false,
     this.mftHoldsBuffers = false,
     this.mftInputBufferSize = 0,
@@ -277,12 +303,14 @@ final class NativeSessionSnapshot {
     this.nv12ExpectedBytes = 0,
     this.nv12AllocatedBytes = 0,
     this.nv12UsedBytes = 0,
-    this.encoderInputStride = 0,    this.bgraToNv12Mode = 'cpuBgraToNv12',
+    this.encoderInputStride = 0,
+    this.bgraToNv12Mode = 'cpuBgraToNv12',
     this.gpuReadbackPerFrame = true,
     this.textureReuseEnabled = true,
     this.lowLatencyOptionsApplied = '',
     this.unsupportedEncoderOptions = '',
     this.bottleneckSummary = 'unknown',
+    this.captureBottleneckStage = 'unknown',
     this.lastEncodeError,
     this.lastSendError,
     this.audioEnabled = false,
@@ -419,12 +447,37 @@ final class NativeSessionSnapshot {
   final double convertToEncodeAverageMs;
   final double encodeDurationAverageMs;
   final double encodeDurationP95Ms;
+  final double frameArrivedCallbackFps;
+  final double tryGetNextFrameSuccessFps;
+  final int tryGetNextFrameNullCount;
+  final double rawWgcIntervalP50Ms;
+  final double rawWgcIntervalP95Ms;
+  final double frameAcquireAverageMs;
+  final double frameAcquireP95Ms;
+  final double copyResourceAverageMs;
+  final double copyResourceP95Ms;
+  final double mapReadbackAverageMs;
+  final double mapReadbackP95Ms;
+  final double scaleAverageMs;
+  final double scaleP95Ms;
+  final double bgraToNv12AverageMs;
+  final double bgraToNv12P95Ms;
+  final double nv12CopyAverageMs;
+  final double nv12CopyP95Ms;
+  final double samplePrepareAverageMs;
+  final double samplePrepareP95Ms;
+  final double captureToEncoderReadyAverageMs;
+  final double captureToEncoderReadyP95Ms;
+  final double processInputAverageMs;
+  final double processInputP95Ms;
   final double encodeToSendAverageMs;
   final double videoQueueWaitAverageMs;
   final double videoQueueWaitP95Ms;
   final int capturedFrames;
   final int captureReplacedFrames;
   final int cadenceSkippedFrames;
+  final int cadenceSkippedRecent;
+  final String cadenceSkipReason;
   final int conversionBackpressureDroppedFrames;
   final int encoderBackpressureDroppedFrames;
   final int transportBackpressureDroppedFrames;
@@ -524,12 +577,14 @@ final class NativeSessionSnapshot {
   final int nv12ExpectedBytes;
   final int nv12AllocatedBytes;
   final int nv12UsedBytes;
-  final int encoderInputStride;  final String bgraToNv12Mode;
+  final int encoderInputStride;
+  final String bgraToNv12Mode;
   final bool gpuReadbackPerFrame;
   final bool textureReuseEnabled;
   final String lowLatencyOptionsApplied;
   final String unsupportedEncoderOptions;
   final String bottleneckSummary;
+  final String captureBottleneckStage;
   final String? lastEncodeError;
   final String? lastSendError;
   final bool audioEnabled;
@@ -695,6 +750,47 @@ final class NativeSessionSnapshot {
         'encodeDurationAverageMs',
       ),
       encodeDurationP95Ms: _readOptionalDouble(json, 'encodeDurationP95Ms'),
+      frameArrivedCallbackFps: _readOptionalDouble(
+        json,
+        'frameArrivedCallbackFps',
+      ),
+      tryGetNextFrameSuccessFps: _readOptionalDouble(
+        json,
+        'tryGetNextFrameSuccessFps',
+      ),
+      tryGetNextFrameNullCount: _readOptionalInt(
+        json,
+        'tryGetNextFrameNullCount',
+      ),
+      rawWgcIntervalP50Ms: _readOptionalDouble(json, 'rawWgcIntervalP50Ms'),
+      rawWgcIntervalP95Ms: _readOptionalDouble(json, 'rawWgcIntervalP95Ms'),
+      frameAcquireAverageMs: _readOptionalDouble(json, 'frameAcquireAverageMs'),
+      frameAcquireP95Ms: _readOptionalDouble(json, 'frameAcquireP95Ms'),
+      copyResourceAverageMs: _readOptionalDouble(json, 'copyResourceAverageMs'),
+      copyResourceP95Ms: _readOptionalDouble(json, 'copyResourceP95Ms'),
+      mapReadbackAverageMs: _readOptionalDouble(json, 'mapReadbackAverageMs'),
+      mapReadbackP95Ms: _readOptionalDouble(json, 'mapReadbackP95Ms'),
+      scaleAverageMs: _readOptionalDouble(json, 'scaleAverageMs'),
+      scaleP95Ms: _readOptionalDouble(json, 'scaleP95Ms'),
+      bgraToNv12AverageMs: _readOptionalDouble(json, 'bgraToNv12AverageMs'),
+      bgraToNv12P95Ms: _readOptionalDouble(json, 'bgraToNv12P95Ms'),
+      nv12CopyAverageMs: _readOptionalDouble(json, 'nv12CopyAverageMs'),
+      nv12CopyP95Ms: _readOptionalDouble(json, 'nv12CopyP95Ms'),
+      samplePrepareAverageMs: _readOptionalDouble(
+        json,
+        'samplePrepareAverageMs',
+      ),
+      samplePrepareP95Ms: _readOptionalDouble(json, 'samplePrepareP95Ms'),
+      captureToEncoderReadyAverageMs: _readOptionalDouble(
+        json,
+        'captureToEncoderReadyAverageMs',
+      ),
+      captureToEncoderReadyP95Ms: _readOptionalDouble(
+        json,
+        'captureToEncoderReadyP95Ms',
+      ),
+      processInputAverageMs: _readOptionalDouble(json, 'processInputAverageMs'),
+      processInputP95Ms: _readOptionalDouble(json, 'processInputP95Ms'),
       encodeToSendAverageMs: _readOptionalDouble(json, 'encodeToSendAverageMs'),
       videoQueueWaitAverageMs: _readOptionalDouble(
         json,
@@ -704,6 +800,12 @@ final class NativeSessionSnapshot {
       capturedFrames: _readOptionalInt(json, 'capturedFrames'),
       captureReplacedFrames: _readOptionalInt(json, 'captureReplacedFrames'),
       cadenceSkippedFrames: _readOptionalInt(json, 'cadenceSkippedFrames'),
+      cadenceSkippedRecent: _readOptionalInt(json, 'cadenceSkippedRecent'),
+      cadenceSkipReason: _readOptionalString(
+        json,
+        'cadenceSkipReason',
+        defaultValue: 'unavailable',
+      ),
       conversionBackpressureDroppedFrames: _readOptionalInt(
         json,
         'conversionBackpressureDroppedFrames',
@@ -857,11 +959,15 @@ final class NativeSessionSnapshot {
       ),
       processInputRetries: _readOptionalInt(json, 'processInputRetries'),
       processOutputCalls: _readOptionalInt(json, 'processOutputCalls'),
-      processOutputFrames: _readOptionalInt(json, 'processOutputFrames'),      mftInputStreamFlags: _readOptionalInt(json, 'mftInputStreamFlags'),
+      processOutputFrames: _readOptionalInt(json, 'processOutputFrames'),
+      mftInputStreamFlags: _readOptionalInt(json, 'mftInputStreamFlags'),
       mftDoesNotAddref: _readOptionalBool(json, 'mftDoesNotAddref'),
       mftHoldsBuffers: _readOptionalBool(json, 'mftHoldsBuffers'),
       mftInputBufferSize: _readOptionalInt(json, 'mftInputBufferSize'),
-      mftInputBufferAlignment: _readOptionalInt(json, 'mftInputBufferAlignment'),
+      mftInputBufferAlignment: _readOptionalInt(
+        json,
+        'mftInputBufferAlignment',
+      ),
       encoderInputSampleId: _readOptionalInt(json, 'encoderInputSampleId'),
       encoderInputBufferId: _readOptionalInt(json, 'encoderInputBufferId'),
       inputSampleCreateCount: _readOptionalInt(json, 'inputSampleCreateCount'),
@@ -888,14 +994,8 @@ final class NativeSessionSnapshot {
         json,
         'lastKeyFrameIntervalFrames',
       ),
-      lastKeyFrameIntervalMs: _readOptionalInt(
-        json,
-        'lastKeyFrameIntervalMs',
-      ),
-      keyframeIntervalFrames: _readOptionalInt(
-        json,
-        'keyframeIntervalFrames',
-      ),
+      lastKeyFrameIntervalMs: _readOptionalInt(json, 'lastKeyFrameIntervalMs'),
+      keyframeIntervalFrames: _readOptionalInt(json, 'keyframeIntervalFrames'),
       processInputDurationAverageMs: _readOptionalDouble(
         json,
         'processInputDurationAverageMs',
@@ -928,7 +1028,8 @@ final class NativeSessionSnapshot {
       nv12ExpectedBytes: _readOptionalInt(json, 'nv12ExpectedBytes'),
       nv12AllocatedBytes: _readOptionalInt(json, 'nv12AllocatedBytes'),
       nv12UsedBytes: _readOptionalInt(json, 'nv12UsedBytes'),
-      encoderInputStride: _readOptionalInt(json, 'encoderInputStride'),      bgraToNv12Mode: _readOptionalString(
+      encoderInputStride: _readOptionalInt(json, 'encoderInputStride'),
+      bgraToNv12Mode: _readOptionalString(
         json,
         'bgraToNv12Mode',
         defaultValue: 'cpuBgraToNv12',
@@ -954,6 +1055,11 @@ final class NativeSessionSnapshot {
         defaultValue: '',
       ),
       bottleneckSummary: _readOptionalString(json, 'bottleneckSummary'),
+      captureBottleneckStage: _readOptionalString(
+        json,
+        'captureBottleneckStage',
+        defaultValue: 'unknown',
+      ),
       lastEncodeError: json['lastEncodeError'] as String?,
       lastSendError: json['lastSendError'] as String?,
       audioEnabled: _readOptionalBool(json, 'audioEnabled'),
@@ -1188,10 +1294,7 @@ final class NativeSessionSnapshot {
         json,
         'receiverPtsIntervalP50Ms',
       ),
-      encodedAccessUnitBytes: _readOptionalInt(
-        json,
-        'encodedAccessUnitBytes',
-      ),
+      encodedAccessUnitBytes: _readOptionalInt(json, 'encodedAccessUnitBytes'),
       transportedAccessUnitBytes: _readOptionalInt(
         json,
         'transportedAccessUnitBytes',
@@ -1240,10 +1343,7 @@ final class NativeSessionSnapshot {
         json,
         'receiverDecoderCropLeft',
       ),
-      receiverDecoderCropTop: _readOptionalInt(
-        json,
-        'receiverDecoderCropTop',
-      ),
+      receiverDecoderCropTop: _readOptionalInt(json, 'receiverDecoderCropTop'),
       receiverDecoderCropRight: _readOptionalInt(
         json,
         'receiverDecoderCropRight',

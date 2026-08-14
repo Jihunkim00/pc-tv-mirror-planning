@@ -107,6 +107,53 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.encode_duration_average_ms);
   map[EncodableValue("encodeDurationP95Ms")] =
       EncodableValue(snapshot.encode_duration_p95_ms);
+  map[EncodableValue("frameArrivedCallbackFps")] =
+      EncodableValue(snapshot.frame_arrived_callback_fps);
+  map[EncodableValue("tryGetNextFrameSuccessFps")] =
+      EncodableValue(snapshot.try_get_next_frame_success_fps);
+  map[EncodableValue("tryGetNextFrameNullCount")] =
+      EncodableValue(static_cast<int64_t>(
+          snapshot.try_get_next_frame_null_count));
+  map[EncodableValue("rawWgcIntervalP50Ms")] =
+      EncodableValue(snapshot.raw_wgc_interval_p50_ms);
+  map[EncodableValue("rawWgcIntervalP95Ms")] =
+      EncodableValue(snapshot.raw_wgc_interval_p95_ms);
+  map[EncodableValue("frameAcquireAverageMs")] =
+      EncodableValue(snapshot.frame_acquire_average_ms);
+  map[EncodableValue("frameAcquireP95Ms")] =
+      EncodableValue(snapshot.frame_acquire_p95_ms);
+  map[EncodableValue("copyResourceAverageMs")] =
+      EncodableValue(snapshot.copy_resource_average_ms);
+  map[EncodableValue("copyResourceP95Ms")] =
+      EncodableValue(snapshot.copy_resource_p95_ms);
+  map[EncodableValue("mapReadbackAverageMs")] =
+      EncodableValue(snapshot.map_readback_average_ms);
+  map[EncodableValue("mapReadbackP95Ms")] =
+      EncodableValue(snapshot.map_readback_p95_ms);
+  map[EncodableValue("scaleAverageMs")] =
+      EncodableValue(snapshot.scale_average_ms);
+  map[EncodableValue("scaleP95Ms")] =
+      EncodableValue(snapshot.scale_p95_ms);
+  map[EncodableValue("bgraToNv12AverageMs")] =
+      EncodableValue(snapshot.bgra_to_nv12_average_ms);
+  map[EncodableValue("bgraToNv12P95Ms")] =
+      EncodableValue(snapshot.bgra_to_nv12_p95_ms);
+  map[EncodableValue("nv12CopyAverageMs")] =
+      EncodableValue(snapshot.nv12_copy_average_ms);
+  map[EncodableValue("nv12CopyP95Ms")] =
+      EncodableValue(snapshot.nv12_copy_p95_ms);
+  map[EncodableValue("samplePrepareAverageMs")] =
+      EncodableValue(snapshot.sample_prepare_average_ms);
+  map[EncodableValue("samplePrepareP95Ms")] =
+      EncodableValue(snapshot.sample_prepare_p95_ms);
+  map[EncodableValue("captureToEncoderReadyAverageMs")] =
+      EncodableValue(snapshot.capture_to_encoder_ready_average_ms);
+  map[EncodableValue("captureToEncoderReadyP95Ms")] =
+      EncodableValue(snapshot.capture_to_encoder_ready_p95_ms);
+  map[EncodableValue("processInputAverageMs")] =
+      EncodableValue(snapshot.process_input_average_ms);
+  map[EncodableValue("processInputP95Ms")] =
+      EncodableValue(snapshot.process_input_p95_ms);
   map[EncodableValue("encodeToSendAverageMs")] =
       EncodableValue(snapshot.encode_to_send_average_ms);
   map[EncodableValue("videoQueueWaitAverageMs")] =
@@ -119,6 +166,10 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(static_cast<int64_t>(snapshot.capture_replaced_frames));
   map[EncodableValue("cadenceSkippedFrames")] =
       EncodableValue(static_cast<int64_t>(snapshot.cadence_skipped_frames));
+  map[EncodableValue("cadenceSkippedRecent")] =
+      EncodableValue(snapshot.cadence_skipped_recent);
+  map[EncodableValue("cadenceSkipReason")] =
+      EncodableValue(snapshot.cadence_skip_reason);
   map[EncodableValue("conversionBackpressureDroppedFrames")] =
       EncodableValue(static_cast<int64_t>(
           snapshot.conversion_backpressure_dropped_frames));
@@ -332,6 +383,8 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.unsupported_encoder_options);
   map[EncodableValue("bottleneckSummary")] =
       EncodableValue(snapshot.bottleneck_summary);
+  map[EncodableValue("captureBottleneckStage")] =
+      EncodableValue(snapshot.capture_bottleneck_stage_name);
   if (!snapshot.last_encode_error.empty()) {
     map[EncodableValue("lastEncodeError")] =
         EncodableValue(snapshot.last_encode_error);

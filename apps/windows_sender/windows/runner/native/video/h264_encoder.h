@@ -56,6 +56,12 @@ struct H264EncoderDiagnostics {
   double process_input_duration_p95_ms = 0.0;
   double process_output_duration_average_ms = 0.0;
   double process_output_duration_p95_ms = 0.0;
+  double nv12_copy_duration_average_ms = 0.0;
+  double nv12_copy_duration_p95_ms = 0.0;
+  double sample_prepare_duration_average_ms = 0.0;
+  double sample_prepare_duration_p95_ms = 0.0;
+  double capture_to_encoder_ready_average_ms = 0.0;
+  double capture_to_encoder_ready_p95_ms = 0.0;
   std::string low_latency_options_applied;
   std::string unsupported_encoder_options;
 };
@@ -105,6 +111,10 @@ class H264Encoder {
   mutable std::mutex diagnostics_mutex_;
   std::deque<std::pair<std::uint64_t, double>> process_input_samples_;
   std::deque<std::pair<std::uint64_t, double>> process_output_samples_;
+  std::deque<std::pair<std::uint64_t, double>> nv12_copy_samples_;
+  std::deque<std::pair<std::uint64_t, double>> sample_prepare_samples_;
+  std::deque<std::pair<std::uint64_t, double>>
+      capture_to_encoder_ready_samples_;
   std::uint64_t first_pts_us_ = 0;
   std::uint64_t next_input_sample_id_ = 1;
   std::uint64_t next_input_buffer_id_ = 1;

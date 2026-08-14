@@ -38,6 +38,13 @@ void TrimSamples(std::deque<std::pair<std::uint64_t, double>>* samples,
   }
 }
 
+void RecordSample(std::deque<std::pair<std::uint64_t, double>>* samples,
+                  std::uint64_t now_us,
+                  double value_ms) {
+  samples->push_back({now_us, value_ms});
+  TrimSamples(samples, now_us);
+}
+
 double Average(const std::deque<std::pair<std::uint64_t, double>>& samples) {
   if (samples.empty()) {
     return 0.0;
@@ -426,9 +433,12 @@ bool H264Encoder::Start(const VideoStreamConfig& config, std::string* error) {
     diagnostics_ = H264EncoderDiagnostics{};
     diagnostics_.encoder_input_format = VideoFormatText("NV12", config_);
     diagnostics_.encoder_output_format = VideoFormatText("H.264", config_);
-    diagnostics_.keyframe_interval_frames = config_.keyframe_interval_frames;
-    process_input_samples_.clear();
-    process_output_samples_.clear();
+  diagnostics_.keyframe_interval_frames = config_.keyframe_interval_frames;
+  process_input_samples_.clear();
+  process_output_samples_.clear();
+  nv12_copy_samples_.clear();
+  sample_prepare_samples_.clear();
+  capture_to_encoder_ready_samples_.clear();
   }
   encoder_backpressure_count_ = 0;
   encoder_backpressure_dropped_frames_ = 0;
@@ -529,6 +539,7 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
     return false;
   }
 
+  const auto sample_prepare_started_us = NowUs();
   winrt::com_ptr<IMFSample> sample;
   winrt::com_ptr<IMFMediaBuffer> buffer;
   HRESULT hr = MFCreateSample(sample.put());
@@ -547,7 +558,9 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
   if (Failed(hr, "IMFMediaBuffer::Lock", error)) {
     return false;
   }
+  const auto nv12_copy_started_us = NowUs();
   std::copy(frame.data.begin(), frame.data.begin() + input_bytes, destination);
+  const auto nv12_copy_completed_us = NowUs();
   buffer->Unlock();
   buffer->SetCurrentLength(static_cast<DWORD>(input_bytes));
   sample->AddBuffer(buffer.get());
@@ -576,6 +589,31 @@ bool H264Encoder::Encode(const Nv12Frame& frame,
 
   if (force_next_key_frame_.load() && !ForceNextKeyFrame(error)) {
     return false;
+  }
+
+  const auto sample_prepared_us = NowUs();
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    RecordSample(&nv12_copy_samples_, nv12_copy_completed_us,
+                 UsToMs(nv12_copy_completed_us - nv12_copy_started_us));
+    RecordSample(&sample_prepare_samples_, sample_prepared_us,
+                 UsToMs(sample_prepared_us - sample_prepare_started_us));
+    if (frame.capture_callback_us > 0 &&
+        sample_prepared_us >= frame.capture_callback_us) {
+      RecordSample(&capture_to_encoder_ready_samples_, sample_prepared_us,
+                   UsToMs(sample_prepared_us - frame.capture_callback_us));
+    }
+    diagnostics_.nv12_copy_duration_average_ms =
+        Average(nv12_copy_samples_);
+    diagnostics_.nv12_copy_duration_p95_ms = P95(nv12_copy_samples_);
+    diagnostics_.sample_prepare_duration_average_ms =
+        Average(sample_prepare_samples_);
+    diagnostics_.sample_prepare_duration_p95_ms =
+        P95(sample_prepare_samples_);
+    diagnostics_.capture_to_encoder_ready_average_ms =
+        Average(capture_to_encoder_ready_samples_);
+    diagnostics_.capture_to_encoder_ready_p95_ms =
+        P95(capture_to_encoder_ready_samples_);
   }
 
   auto input_start_us = NowUs();
@@ -664,6 +702,9 @@ void H264Encoder::Stop() {
     std::scoped_lock lock(diagnostics_mutex_);
     process_input_samples_.clear();
     process_output_samples_.clear();
+    nv12_copy_samples_.clear();
+    sample_prepare_samples_.clear();
+    capture_to_encoder_ready_samples_.clear();
   }
   if (mf_started_) {
     MFShutdown();

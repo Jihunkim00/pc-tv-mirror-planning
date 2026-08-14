@@ -62,6 +62,35 @@ void main() {
       'encoderReady': true,
       'signalingReady': true,
       'nativeVideoPathReady': true,
+      'targetFps': 30,
+      'frameArrivedCallbackFps': 60,
+      'tryGetNextFrameSuccessFps': 60,
+      'tryGetNextFrameNullCount': 2,
+      'rawWgcIntervalP50Ms': 16.67,
+      'rawWgcIntervalP95Ms': 16.70,
+      'frameAcquireAverageMs': 0.2,
+      'frameAcquireP95Ms': 0.4,
+      'copyResourceAverageMs': 0.3,
+      'copyResourceP95Ms': 0.5,
+      'mapReadbackAverageMs': 1.2,
+      'mapReadbackP95Ms': 2.0,
+      'scaleAverageMs': 0.1,
+      'scaleP95Ms': 0.2,
+      'bgraToNv12AverageMs': 10.5,
+      'bgraToNv12P95Ms': 12.0,
+      'nv12CopyAverageMs': 1.1,
+      'nv12CopyP95Ms': 1.5,
+      'samplePrepareAverageMs': 0.4,
+      'samplePrepareP95Ms': 0.7,
+      'processInputAverageMs': 0.8,
+      'processInputP95Ms': 1.4,
+      'captureToEncoderReadyAverageMs': 14.6,
+      'captureToEncoderReadyP95Ms': 17.2,
+      'admittedFrameFps': 30,
+      'cadenceSkippedFrames': 4,
+      'cadenceSkippedRecent': 1,
+      'cadenceSkipReason': 'source_above_target',
+      'captureBottleneckStage': 'bgra_to_nv12',
       'sourceTextureWidth': 1920,
       'sourceTextureHeight': 1080,
       'sourceTextureFormat': 'BGRA8',
@@ -100,9 +129,25 @@ void main() {
     );
 
     expect(text, contains('sourceTexture:'));
+    expect(text, contains('FrameArrived FPS: 60.00'));
+    expect(text, contains('TryGetNextFrame nulls: 2'));
+    expect(text, contains('BGRA->NV12 avg/p95: 10.50 / 12.00'));
+    expect(
+      text,
+      contains('Total capture->encoder-ready avg/p95: 14.60 / 17.20'),
+    );
+    expect(text, contains('Cadence skip reason: source_above_target'));
+    expect(text, contains('Measured bottleneck stage: bgra_to_nv12'));
     expect(text, contains('MFT flags/doesNotAddRef/holdsBuffers:'));
     expect(text, contains('keyframes/sinceLast/lastPtsUs/lastBytes:'));
     expect(text, contains('AU size/fragment/reassembly errors:'));
-    expect(text, contains('receiver decoder configured/output: 1920x1080 / 1920x1080'));
-    expect(text, contains('receiver surface/outputFormatChanges: 1920x1080 / 1'));
-  });}
+    expect(
+      text,
+      contains('receiver decoder configured/output: 1920x1080 / 1920x1080'),
+    );
+    expect(
+      text,
+      contains('receiver surface/outputFormatChanges: 1920x1080 / 1'),
+    );
+  });
+}

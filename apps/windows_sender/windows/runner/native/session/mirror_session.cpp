@@ -19,7 +19,6 @@
 namespace pctv {
 namespace {
 
-constexpr std::uint64_t kCadenceToleranceUs = 1'500;
 constexpr std::uint64_t kRollingWindowUs = 5'000'000;
 constexpr std::uint64_t kMinimumStaleVideoAgeUs = 80'000;
 
@@ -408,6 +407,29 @@ double P95SampleMs(std::deque<std::pair<std::uint64_t, double>>* samples,
   return P95(RecentSampleValues(samples, now_us));
 }
 
+std::string CaptureBottleneckStage(
+    const CapturePipelineTimingSnapshot& capture,
+    const H264EncoderDiagnostics& encoder) {
+  std::string stage = "unknown";
+  double highest_ms = 0.0;
+  const auto consider = [&stage, &highest_ms](const char* name,
+                                               double value_ms) {
+    if (value_ms > highest_ms) {
+      highest_ms = value_ms;
+      stage = name;
+    }
+  };
+  consider("frame_acquire", capture.frame_acquire_p95_ms);
+  consider("copy_resource", capture.copy_resource_p95_ms);
+  consider("map_readback", capture.map_readback_p95_ms);
+  consider("scale", capture.scale_p95_ms);
+  consider("bgra_to_nv12", capture.bgra_to_nv12_p95_ms);
+  consider("nv12_copy", encoder.nv12_copy_duration_p95_ms);
+  consider("sample_prepare", encoder.sample_prepare_duration_p95_ms);
+  consider("process_input", encoder.process_input_duration_p95_ms);
+  return highest_ms > 0.0 ? stage : "unknown";
+}
+
 std::string SenderBottleneckSummary(double capture_callback_fps,
                                     double admitted_fps,
                                     double converted_fps,
@@ -601,6 +623,7 @@ NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
     target_fps_ = static_cast<double>(std::max(1, applied_video.fps));
     target_frame_interval_us_ =
         static_cast<std::uint64_t>(1'000'000.0 / target_fps_);
+    cadence_limiter_.SetTargetIntervalUs(target_frame_interval_us_);
   };
   apply_video_config();
 
@@ -798,7 +821,8 @@ void MirrorSession::EncodeLoop() {
     if (IsPaused()) {
       {
         std::scoped_lock status_lock(status_mutex_);
-        next_admission_deadline_us_ = 0;
+        cadence_limiter_.Reset();
+        cadence_skip_reason_ = "unavailable";
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
       continue;
@@ -814,22 +838,20 @@ void MirrorSession::EncodeLoop() {
     }
 
     bool admitted = false;
-    auto should_convert = [this, &admitted](std::uint64_t capture_us) {
+    auto should_convert = [this, &admitted](std::uint64_t capture_us,
+                                             std::uint64_t source_pts_us,
+                                             bool source_pts_valid) {
       std::scoped_lock status_lock(status_mutex_);
-      if (next_admission_deadline_us_ == 0) {
-        next_admission_deadline_us_ = capture_us;
-      }
-      if (capture_us + kCadenceToleranceUs < next_admission_deadline_us_) {
+      const auto decision = cadence_limiter_.Admit(
+          capture_us, source_pts_us, source_pts_valid);
+      cadence_skip_reason_ = CadenceSkipReasonText(decision.reason);
+      if (!decision.admitted) {
         admitted = false;
         RecordEvent(&cadence_dropped_events_us_, capture_us);
         return false;
       }
-      if (capture_us > next_admission_deadline_us_ + target_frame_interval_us_) {
-        next_admission_deadline_us_ = capture_us;
-      }
       RecordEvent(&target_admission_events_us_, capture_us);
       RecordEvent(&admitted_frame_events_us_, capture_us);
-      next_admission_deadline_us_ += target_frame_interval_us_;
       admitted = true;
       return true;
     };
@@ -1455,7 +1477,6 @@ void MirrorSession::ApplyResume(std::uint64_t command_id,
   {
     std::scoped_lock status_lock(status_mutex_);
     codec_config_sent_for_stream_.store(false);
-    next_admission_deadline_us_ = 0;
     session_user_message_ = "Playback is resuming from a fresh IDR frame.";
   }
   resume_codec_config_resends_.fetch_add(1);
@@ -1603,9 +1624,13 @@ NativeSnapshot MirrorSession::Snapshot() {
 NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
                                             const std::string& user_message) {
   bool capture_ready = false;
+  CapturePipelineTimingSnapshot capture_timing;
   {
     std::scoped_lock lock(mutex_);
     capture_ready = capture_ != nullptr;
+    if (capture_ != nullptr) {
+      capture_timing = capture_->timing_snapshot();
+    }
   }
 
   NativeSnapshot snapshot;
@@ -1638,6 +1663,9 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.sent_video_fps = snapshot.sent_access_unit_fps;
   snapshot.cadence_dropped_fps =
       RollingFps(&cadence_dropped_events_us_, now_us);
+  snapshot.cadence_skipped_recent =
+      static_cast<int>(cadence_dropped_events_us_.size());
+  snapshot.cadence_skip_reason = cadence_skip_reason_;
   snapshot.encoder_busy_dropped_fps =
       RollingFps(&encoder_busy_dropped_events_us_, now_us);
   snapshot.conversion_busy_dropped_fps =
@@ -1660,6 +1688,26 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
       AverageSampleMs(&encode_duration_samples_, now_us);
   snapshot.encode_duration_p95_ms =
       P95SampleMs(&encode_duration_samples_, now_us);
+  snapshot.frame_arrived_callback_fps =
+      capture_timing.frame_arrived_callback_fps;
+  snapshot.try_get_next_frame_success_fps =
+      capture_timing.try_get_next_frame_success_fps;
+  snapshot.try_get_next_frame_null_count =
+      capture_timing.try_get_next_frame_null_count;
+  snapshot.raw_wgc_interval_p50_ms = capture_timing.raw_wgc_interval_p50_ms;
+  snapshot.raw_wgc_interval_p95_ms = capture_timing.raw_wgc_interval_p95_ms;
+  snapshot.frame_acquire_average_ms = capture_timing.frame_acquire_average_ms;
+  snapshot.frame_acquire_p95_ms = capture_timing.frame_acquire_p95_ms;
+  snapshot.copy_resource_average_ms =
+      capture_timing.copy_resource_average_ms;
+  snapshot.copy_resource_p95_ms = capture_timing.copy_resource_p95_ms;
+  snapshot.map_readback_average_ms = capture_timing.map_readback_average_ms;
+  snapshot.map_readback_p95_ms = capture_timing.map_readback_p95_ms;
+  snapshot.scale_average_ms = capture_timing.scale_average_ms;
+  snapshot.scale_p95_ms = capture_timing.scale_p95_ms;
+  snapshot.bgra_to_nv12_average_ms =
+      capture_timing.bgra_to_nv12_average_ms;
+  snapshot.bgra_to_nv12_p95_ms = capture_timing.bgra_to_nv12_p95_ms;
   snapshot.encode_to_send_average_ms =
       AverageSampleMs(&encode_to_send_samples_, now_us);
   snapshot.video_queue_wait_average_ms =
@@ -1878,6 +1926,23 @@ snapshot.receiver_codec_configs_received = receiver_codec_configs_received_;
       encoder_diagnostics.process_input_duration_average_ms;
   snapshot.process_input_duration_p95_ms =
       encoder_diagnostics.process_input_duration_p95_ms;
+  snapshot.process_input_average_ms =
+      encoder_diagnostics.process_input_duration_average_ms;
+  snapshot.process_input_p95_ms =
+      encoder_diagnostics.process_input_duration_p95_ms;
+  snapshot.nv12_copy_average_ms =
+      encoder_diagnostics.nv12_copy_duration_average_ms;
+  snapshot.nv12_copy_p95_ms = encoder_diagnostics.nv12_copy_duration_p95_ms;
+  snapshot.sample_prepare_average_ms =
+      encoder_diagnostics.sample_prepare_duration_average_ms;
+  snapshot.sample_prepare_p95_ms =
+      encoder_diagnostics.sample_prepare_duration_p95_ms;
+  snapshot.capture_to_encoder_ready_average_ms =
+      encoder_diagnostics.capture_to_encoder_ready_average_ms;
+  snapshot.capture_to_encoder_ready_p95_ms =
+      encoder_diagnostics.capture_to_encoder_ready_p95_ms;
+  snapshot.capture_bottleneck_stage_name =
+      CaptureBottleneckStage(capture_timing, encoder_diagnostics);
   snapshot.process_output_duration_average_ms =
       encoder_diagnostics.process_output_duration_average_ms;
   snapshot.process_output_duration_p95_ms =
@@ -2043,7 +2108,6 @@ void MirrorSession::ResetCounters() {
   resume_codec_config_resends_ = 0;
   last_playback_command_id_ = 0;
   std::scoped_lock status_lock(status_mutex_);
-  next_admission_deadline_us_ = 0;
   capture_callback_events_us_.clear();
   captured_events_us_.clear();
   target_admission_events_us_.clear();
@@ -2072,6 +2136,8 @@ void MirrorSession::ResetCounters() {
   packet_writer_audio_wait_samples_.clear();
   first_access_unit_sent_ = false;
   codec_config_sent_for_stream_ = false;
+  cadence_limiter_.Reset();
+  cadence_skip_reason_ = "unavailable";
   session_error_code_.clear();
   session_user_message_.clear();
   session_developer_message_.clear();
