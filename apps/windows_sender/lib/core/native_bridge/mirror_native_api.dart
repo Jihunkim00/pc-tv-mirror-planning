@@ -151,6 +151,35 @@ final class NativeSessionSnapshot {
     required this.signalingReady,
     required this.nativeVideoPathReady,
     this.targetFps = 30,
+    this.framePoolApi = 'CreateFreeThreaded',
+    this.framePoolBufferCount = 3,
+    this.frameArrivedCallbackEnterCount = 0,
+    this.frameArrivedCallbackExitCount = 0,
+    this.frameArrivedCallbackAverageMs = 0,
+    this.frameArrivedCallbackP95Ms = 0,
+    this.frameArrivedCallbackMaxMs = 0,
+    this.frameHeldAverageMs = 0,
+    this.frameHeldP95Ms = 0,
+    this.frameHeldMaxMs = 0,
+    this.ownedTextureCopyFps = 0,
+    this.ownedTextureCopyAverageMs = 0,
+    this.ownedTextureCopyP95Ms = 0,
+    this.workerProcessingAverageMs = 0,
+    this.workerProcessingP95Ms = 0,
+    this.handoffSlots = 3,
+    this.handoffInUse = 0,
+    this.workerQueueDepth = 0,
+    this.workerFramesAccepted = 0,
+    this.workerFramesProcessed = 0,
+    this.workerFrameReplacementCount = 0,
+    this.workerFrameDropCount = 0,
+    this.latestFrameAgeMs = 0,
+    this.captureThreadId = 0,
+    this.conversionThreadId = 0,
+    this.callbackOverlapCount = 0,
+    this.callbackReentrantCount = 0,
+    this.d3dMultithreadProtectionEnabled = false,
+    this.measuredDeliveryBottleneck = 'unknown',
     this.captureCallbackFps = 0,
     this.capturedFps = 0,
     this.targetAdmissionFps = 0,
@@ -425,6 +454,35 @@ final class NativeSessionSnapshot {
   final bool signalingReady;
   final bool nativeVideoPathReady;
   final double targetFps;
+  final String framePoolApi;
+  final int framePoolBufferCount;
+  final int frameArrivedCallbackEnterCount;
+  final int frameArrivedCallbackExitCount;
+  final double frameArrivedCallbackAverageMs;
+  final double frameArrivedCallbackP95Ms;
+  final double frameArrivedCallbackMaxMs;
+  final double frameHeldAverageMs;
+  final double frameHeldP95Ms;
+  final double frameHeldMaxMs;
+  final double ownedTextureCopyFps;
+  final double ownedTextureCopyAverageMs;
+  final double ownedTextureCopyP95Ms;
+  final double workerProcessingAverageMs;
+  final double workerProcessingP95Ms;
+  final int handoffSlots;
+  final int handoffInUse;
+  final int workerQueueDepth;
+  final int workerFramesAccepted;
+  final int workerFramesProcessed;
+  final int workerFrameReplacementCount;
+  final int workerFrameDropCount;
+  final double latestFrameAgeMs;
+  final int captureThreadId;
+  final int conversionThreadId;
+  final int callbackOverlapCount;
+  final int callbackReentrantCount;
+  final bool d3dMultithreadProtectionEnabled;
+  final String measuredDeliveryBottleneck;
   final double captureCallbackFps;
   final double capturedFps;
   final double targetAdmissionFps;
@@ -701,6 +759,80 @@ final class NativeSessionSnapshot {
       signalingReady: _readBool(json, 'signalingReady'),
       nativeVideoPathReady: _readBool(json, 'nativeVideoPathReady'),
       targetFps: _readOptionalDouble(json, 'targetFps', defaultValue: 30),
+      framePoolApi: _readOptionalString(
+        json,
+        'framePoolApi',
+        defaultValue: 'CreateFreeThreaded',
+      ),
+      framePoolBufferCount: _readOptionalInt(
+        json,
+        'framePoolBufferCount',
+        defaultValue: 3,
+      ),
+      frameArrivedCallbackEnterCount: _readOptionalInt(
+        json,
+        'frameArrivedCallbackEnterCount',
+      ),
+      frameArrivedCallbackExitCount: _readOptionalInt(
+        json,
+        'frameArrivedCallbackExitCount',
+      ),
+      frameArrivedCallbackAverageMs: _readOptionalDouble(
+        json,
+        'frameArrivedCallbackAverageMs',
+      ),
+      frameArrivedCallbackP95Ms: _readOptionalDouble(
+        json,
+        'frameArrivedCallbackP95Ms',
+      ),
+      frameArrivedCallbackMaxMs: _readOptionalDouble(
+        json,
+        'frameArrivedCallbackMaxMs',
+      ),
+      frameHeldAverageMs: _readOptionalDouble(json, 'frameHeldAverageMs'),
+      frameHeldP95Ms: _readOptionalDouble(json, 'frameHeldP95Ms'),
+      frameHeldMaxMs: _readOptionalDouble(json, 'frameHeldMaxMs'),
+      ownedTextureCopyFps: _readOptionalDouble(json, 'ownedTextureCopyFps'),
+      ownedTextureCopyAverageMs: _readOptionalDouble(
+        json,
+        'ownedTextureCopyAverageMs',
+      ),
+      ownedTextureCopyP95Ms: _readOptionalDouble(
+        json,
+        'ownedTextureCopyP95Ms',
+      ),
+      workerProcessingAverageMs: _readOptionalDouble(
+        json,
+        'workerProcessingAverageMs',
+      ),
+      workerProcessingP95Ms: _readOptionalDouble(
+        json,
+        'workerProcessingP95Ms',
+      ),
+      handoffSlots: _readOptionalInt(json, 'handoffSlots', defaultValue: 3),
+      handoffInUse: _readOptionalInt(json, 'handoffInUse'),
+      workerQueueDepth: _readOptionalInt(json, 'workerQueueDepth'),
+      workerFramesAccepted: _readOptionalInt(json, 'workerFramesAccepted'),
+      workerFramesProcessed: _readOptionalInt(json, 'workerFramesProcessed'),
+      workerFrameReplacementCount: _readOptionalInt(
+        json,
+        'workerFrameReplacementCount',
+      ),
+      workerFrameDropCount: _readOptionalInt(json, 'workerFrameDropCount'),
+      latestFrameAgeMs: _readOptionalDouble(json, 'latestFrameAgeMs'),
+      captureThreadId: _readOptionalInt(json, 'captureThreadId'),
+      conversionThreadId: _readOptionalInt(json, 'conversionThreadId'),
+      callbackOverlapCount: _readOptionalInt(json, 'callbackOverlapCount'),
+      callbackReentrantCount: _readOptionalInt(json, 'callbackReentrantCount'),
+      d3dMultithreadProtectionEnabled: _readOptionalBool(
+        json,
+        'd3dMultithreadProtectionEnabled',
+      ),
+      measuredDeliveryBottleneck: _readOptionalString(
+        json,
+        'measuredDeliveryBottleneck',
+        defaultValue: 'unknown',
+      ),
       captureCallbackFps: _readOptionalDouble(json, 'captureCallbackFps'),
       capturedFps: _readOptionalDouble(json, 'capturedFps'),
       targetAdmissionFps: _readOptionalDouble(json, 'targetAdmissionFps'),

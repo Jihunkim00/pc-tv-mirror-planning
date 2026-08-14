@@ -837,22 +837,20 @@ void MirrorSession::EncodeLoop() {
       break;
     }
 
-    bool admitted = false;
-    auto should_convert = [this, &admitted](std::uint64_t capture_us,
-                                             std::uint64_t source_pts_us,
-                                             bool source_pts_valid) {
+    auto should_convert = [this](std::uint64_t capture_us,
+                                 std::uint64_t source_pts_us,
+                                 bool source_pts_valid) {
       std::scoped_lock status_lock(status_mutex_);
       const auto decision = cadence_limiter_.Admit(
           capture_us, source_pts_us, source_pts_valid);
       cadence_skip_reason_ = CadenceSkipReasonText(decision.reason);
       if (!decision.admitted) {
-        admitted = false;
+        cadence_skipped_frames_.fetch_add(1);
         RecordEvent(&cadence_dropped_events_us_, capture_us);
         return false;
       }
       RecordEvent(&target_admission_events_us_, capture_us);
       RecordEvent(&admitted_frame_events_us_, capture_us);
-      admitted = true;
       return true;
     };
 
@@ -907,8 +905,7 @@ void MirrorSession::EncodeLoop() {
         capture_dropped_frames_.fetch_add(replaced);
       }
     }
-    if (!admitted || frame.data.empty()) {
-      cadence_skipped_frames_.fetch_add(1);
+    if (frame.data.empty()) {
       encoder_input_dropped_frames_.fetch_add(1);
       continue;
     }
@@ -1646,6 +1643,47 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.developer_message = session_developer_message_;
   const auto now_us = NowUs();
   snapshot.target_fps = target_fps_;
+  snapshot.frame_pool_api = capture_timing.frame_pool_api;
+  snapshot.frame_pool_buffer_count = capture_timing.frame_pool_buffer_count;
+  snapshot.frame_arrived_callback_enter_count =
+      capture_timing.frame_arrived_callback_enter_count;
+  snapshot.frame_arrived_callback_exit_count =
+      capture_timing.frame_arrived_callback_exit_count;
+  snapshot.frame_arrived_callback_average_ms =
+      capture_timing.frame_arrived_callback_average_ms;
+  snapshot.frame_arrived_callback_p95_ms =
+      capture_timing.frame_arrived_callback_p95_ms;
+  snapshot.frame_arrived_callback_max_ms =
+      capture_timing.frame_arrived_callback_max_ms;
+  snapshot.frame_held_average_ms = capture_timing.frame_held_average_ms;
+  snapshot.frame_held_p95_ms = capture_timing.frame_held_p95_ms;
+  snapshot.frame_held_max_ms = capture_timing.frame_held_max_ms;
+  snapshot.owned_texture_copy_fps = capture_timing.owned_texture_copy_fps;
+  snapshot.owned_texture_copy_average_ms =
+      capture_timing.owned_texture_copy_average_ms;
+  snapshot.owned_texture_copy_p95_ms =
+      capture_timing.owned_texture_copy_p95_ms;
+  snapshot.worker_processing_average_ms =
+      capture_timing.worker_processing_average_ms;
+  snapshot.worker_processing_p95_ms =
+      capture_timing.worker_processing_p95_ms;
+  snapshot.handoff_slots = capture_timing.handoff_slots;
+  snapshot.handoff_in_use = capture_timing.handoff_in_use;
+  snapshot.worker_queue_depth = capture_timing.worker_queue_depth;
+  snapshot.worker_frames_accepted = capture_timing.worker_frames_accepted;
+  snapshot.worker_frames_processed = capture_timing.worker_frames_processed;
+  snapshot.worker_frame_replacement_count =
+      capture_timing.worker_frame_replacement_count;
+  snapshot.worker_frame_drop_count = capture_timing.worker_frame_drop_count;
+  snapshot.latest_frame_age_ms = capture_timing.latest_frame_age_ms;
+  snapshot.capture_thread_id = capture_timing.capture_thread_id;
+  snapshot.conversion_thread_id = capture_timing.conversion_thread_id;
+  snapshot.callback_overlap_count = capture_timing.callback_overlap_count;
+  snapshot.callback_reentrant_count = capture_timing.callback_reentrant_count;
+  snapshot.d3d_multithread_protection_enabled =
+      capture_timing.d3d_multithread_protection_enabled;
+  snapshot.measured_delivery_bottleneck =
+      capture_timing.measured_delivery_bottleneck;
   snapshot.capture_callback_fps =
       RollingFps(&capture_callback_events_us_, now_us);
   snapshot.captured_fps = RollingFps(&captured_events_us_, now_us);

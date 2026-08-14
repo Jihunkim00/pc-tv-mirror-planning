@@ -66,6 +66,67 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
   map[EncodableValue("nativeVideoPathReady")] =
       EncodableValue(snapshot.native_video_path_ready);
   map[EncodableValue("targetFps")] = EncodableValue(snapshot.target_fps);
+  map[EncodableValue("framePoolApi")] =
+      EncodableValue(snapshot.frame_pool_api);
+  map[EncodableValue("framePoolBufferCount")] =
+      EncodableValue(snapshot.frame_pool_buffer_count);
+  map[EncodableValue("frameArrivedCallbackEnterCount")] =
+      EncodableValue(static_cast<int64_t>(
+          snapshot.frame_arrived_callback_enter_count));
+  map[EncodableValue("frameArrivedCallbackExitCount")] =
+      EncodableValue(static_cast<int64_t>(
+          snapshot.frame_arrived_callback_exit_count));
+  map[EncodableValue("frameArrivedCallbackAverageMs")] =
+      EncodableValue(snapshot.frame_arrived_callback_average_ms);
+  map[EncodableValue("frameArrivedCallbackP95Ms")] =
+      EncodableValue(snapshot.frame_arrived_callback_p95_ms);
+  map[EncodableValue("frameArrivedCallbackMaxMs")] =
+      EncodableValue(snapshot.frame_arrived_callback_max_ms);
+  map[EncodableValue("frameHeldAverageMs")] =
+      EncodableValue(snapshot.frame_held_average_ms);
+  map[EncodableValue("frameHeldP95Ms")] =
+      EncodableValue(snapshot.frame_held_p95_ms);
+  map[EncodableValue("frameHeldMaxMs")] =
+      EncodableValue(snapshot.frame_held_max_ms);
+  map[EncodableValue("ownedTextureCopyFps")] =
+      EncodableValue(snapshot.owned_texture_copy_fps);
+  map[EncodableValue("ownedTextureCopyAverageMs")] =
+      EncodableValue(snapshot.owned_texture_copy_average_ms);
+  map[EncodableValue("ownedTextureCopyP95Ms")] =
+      EncodableValue(snapshot.owned_texture_copy_p95_ms);
+  map[EncodableValue("workerProcessingAverageMs")] =
+      EncodableValue(snapshot.worker_processing_average_ms);
+  map[EncodableValue("workerProcessingP95Ms")] =
+      EncodableValue(snapshot.worker_processing_p95_ms);
+  map[EncodableValue("handoffSlots")] =
+      EncodableValue(snapshot.handoff_slots);
+  map[EncodableValue("handoffInUse")] =
+      EncodableValue(snapshot.handoff_in_use);
+  map[EncodableValue("workerQueueDepth")] =
+      EncodableValue(snapshot.worker_queue_depth);
+  map[EncodableValue("workerFramesAccepted")] =
+      EncodableValue(static_cast<int64_t>(snapshot.worker_frames_accepted));
+  map[EncodableValue("workerFramesProcessed")] =
+      EncodableValue(static_cast<int64_t>(snapshot.worker_frames_processed));
+  map[EncodableValue("workerFrameReplacementCount")] =
+      EncodableValue(static_cast<int64_t>(
+          snapshot.worker_frame_replacement_count));
+  map[EncodableValue("workerFrameDropCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.worker_frame_drop_count));
+  map[EncodableValue("latestFrameAgeMs")] =
+      EncodableValue(snapshot.latest_frame_age_ms);
+  map[EncodableValue("captureThreadId")] =
+      EncodableValue(static_cast<int64_t>(snapshot.capture_thread_id));
+  map[EncodableValue("conversionThreadId")] =
+      EncodableValue(static_cast<int64_t>(snapshot.conversion_thread_id));
+  map[EncodableValue("callbackOverlapCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.callback_overlap_count));
+  map[EncodableValue("callbackReentrantCount")] =
+      EncodableValue(static_cast<int64_t>(snapshot.callback_reentrant_count));
+  map[EncodableValue("d3dMultithreadProtectionEnabled")] =
+      EncodableValue(snapshot.d3d_multithread_protection_enabled);
+  map[EncodableValue("measuredDeliveryBottleneck")] =
+      EncodableValue(snapshot.measured_delivery_bottleneck);
   map[EncodableValue("captureCallbackFps")] =
       EncodableValue(snapshot.capture_callback_fps);
   map[EncodableValue("capturedFps")] = EncodableValue(snapshot.captured_fps);

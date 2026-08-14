@@ -62,5 +62,10 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_executable(cadence_limiter_test EXCLUDE_FROM_ALL
   "native/session/cadence_limiter_test.cpp"
 )
+add_executable(latest_frame_handoff_test EXCLUDE_FROM_ALL
+  "native/capture/latest_frame_handoff_test.cpp"
+)
 target_include_directories(cadence_limiter_test PRIVATE ".")
+target_include_directories(latest_frame_handoff_test PRIVATE ".")
+target_compile_features(latest_frame_handoff_test PRIVATE cxx_std_17)
 add_dependencies(${BINARY_NAME} flutter_assemble)
