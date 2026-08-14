@@ -66,6 +66,18 @@ void main() {
       'frameArrivedCallbackFps': 60,
       'tryGetNextFrameSuccessFps': 60,
       'tryGetNextFrameNullCount': 2,
+      'workerD3dLockWaitAverageMs': 0.10,
+      'workerD3dLockWaitP95Ms': 0.25,
+      'workerCopyResourceAverageMs': 0.30,
+      'workerCopyResourceP95Ms': 0.50,
+      'workerMapAverageMs': 1.20,
+      'workerMapP95Ms': 2.00,
+      'workerCpuBgraCopyAverageMs': 2.50,
+      'workerCpuBgraCopyP95Ms': 3.00,
+      'workerBgraToNv12AverageMs': 10.5,
+      'workerBgraToNv12P95Ms': 12.0,
+      'workerTotalAverageMs': 14.5,
+      'workerTotalP95Ms': 17.2,
       'rawWgcIntervalP50Ms': 16.67,
       'rawWgcIntervalP95Ms': 16.70,
       'frameAcquireAverageMs': 0.2,
@@ -131,6 +143,12 @@ void main() {
     expect(text, contains('sourceTexture:'));
     expect(text, contains('FrameArrived FPS: 60.00'));
     expect(text, contains('TryGetNextFrame nulls: 2'));
+    expect(text, contains('Worker D3D lock wait avg/p95Ms: 0.10 / 0.25'));
+    expect(text, contains('Worker CopyResource avg/p95Ms: 0.30 / 0.50'));
+    expect(text, contains('Worker Map avg/p95Ms: 1.20 / 2.00'));
+    expect(text, contains('Worker CPU BGRA copy avg/p95Ms: 2.50 / 3.00'));
+    expect(text, contains('Worker BGRA->NV12 avg/p95Ms: 10.50 / 12.00'));
+    expect(text, contains('Worker total avg/p95Ms: 14.50 / 17.20'));
     expect(text, contains('BGRA->NV12 avg/p95: 10.50 / 12.00'));
     expect(
       text,

@@ -56,6 +56,18 @@ struct CapturePipelineTimingSnapshot {
   double scale_p95_ms = 0.0;
   double bgra_to_nv12_average_ms = 0.0;
   double bgra_to_nv12_p95_ms = 0.0;
+  double worker_d3d_lock_wait_average_ms = 0.0;
+  double worker_d3d_lock_wait_p95_ms = 0.0;
+  double worker_copy_resource_average_ms = 0.0;
+  double worker_copy_resource_p95_ms = 0.0;
+  double worker_map_average_ms = 0.0;
+  double worker_map_p95_ms = 0.0;
+  double worker_cpu_bgra_copy_average_ms = 0.0;
+  double worker_cpu_bgra_copy_p95_ms = 0.0;
+  double worker_bgra_to_nv12_average_ms = 0.0;
+  double worker_bgra_to_nv12_p95_ms = 0.0;
+  double worker_total_average_ms = 0.0;
+  double worker_total_p95_ms = 0.0;
   double worker_processing_average_ms = 0.0;
   double worker_processing_p95_ms = 0.0;
   int handoff_slots = 3;
@@ -182,6 +194,16 @@ class DisplayCapture {
   mutable std::deque<std::pair<std::uint64_t, double>> frame_held_samples_;
   mutable std::deque<std::pair<std::uint64_t, double>>
       owned_texture_copy_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>>
+      worker_d3d_lock_wait_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>>
+      worker_copy_resource_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>> worker_map_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>>
+      worker_cpu_bgra_copy_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>>
+      worker_bgra_to_nv12_samples_;
+  mutable std::deque<std::pair<std::uint64_t, double>> worker_total_samples_;
   mutable std::deque<std::pair<std::uint64_t, double>> worker_processing_samples_;
   std::uint64_t worker_frames_accepted_ = 0;
   std::uint64_t worker_frames_processed_ = 0;

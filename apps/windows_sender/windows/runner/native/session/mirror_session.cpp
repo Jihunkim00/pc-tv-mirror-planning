@@ -1746,6 +1746,26 @@ NativeSnapshot MirrorSession::BuildSnapshot(const std::string& state,
   snapshot.bgra_to_nv12_average_ms =
       capture_timing.bgra_to_nv12_average_ms;
   snapshot.bgra_to_nv12_p95_ms = capture_timing.bgra_to_nv12_p95_ms;
+  snapshot.worker_d3d_lock_wait_average_ms =
+      capture_timing.worker_d3d_lock_wait_average_ms;
+  snapshot.worker_d3d_lock_wait_p95_ms =
+      capture_timing.worker_d3d_lock_wait_p95_ms;
+  snapshot.worker_copy_resource_average_ms =
+      capture_timing.worker_copy_resource_average_ms;
+  snapshot.worker_copy_resource_p95_ms =
+      capture_timing.worker_copy_resource_p95_ms;
+  snapshot.worker_map_average_ms = capture_timing.worker_map_average_ms;
+  snapshot.worker_map_p95_ms = capture_timing.worker_map_p95_ms;
+  snapshot.worker_cpu_bgra_copy_average_ms =
+      capture_timing.worker_cpu_bgra_copy_average_ms;
+  snapshot.worker_cpu_bgra_copy_p95_ms =
+      capture_timing.worker_cpu_bgra_copy_p95_ms;
+  snapshot.worker_bgra_to_nv12_average_ms =
+      capture_timing.worker_bgra_to_nv12_average_ms;
+  snapshot.worker_bgra_to_nv12_p95_ms =
+      capture_timing.worker_bgra_to_nv12_p95_ms;
+  snapshot.worker_total_average_ms = capture_timing.worker_total_average_ms;
+  snapshot.worker_total_p95_ms = capture_timing.worker_total_p95_ms;
   snapshot.encode_to_send_average_ms =
       AverageSampleMs(&encode_to_send_samples_, now_us);
   snapshot.video_queue_wait_average_ms =

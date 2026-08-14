@@ -166,6 +166,18 @@ final class NativeSessionSnapshot {
     this.ownedTextureCopyP95Ms = 0,
     this.workerProcessingAverageMs = 0,
     this.workerProcessingP95Ms = 0,
+    this.workerD3dLockWaitAverageMs = 0,
+    this.workerD3dLockWaitP95Ms = 0,
+    this.workerCopyResourceAverageMs = 0,
+    this.workerCopyResourceP95Ms = 0,
+    this.workerMapAverageMs = 0,
+    this.workerMapP95Ms = 0,
+    this.workerCpuBgraCopyAverageMs = 0,
+    this.workerCpuBgraCopyP95Ms = 0,
+    this.workerBgraToNv12AverageMs = 0,
+    this.workerBgraToNv12P95Ms = 0,
+    this.workerTotalAverageMs = 0,
+    this.workerTotalP95Ms = 0,
     this.handoffSlots = 3,
     this.handoffInUse = 0,
     this.workerQueueDepth = 0,
@@ -469,6 +481,18 @@ final class NativeSessionSnapshot {
   final double ownedTextureCopyP95Ms;
   final double workerProcessingAverageMs;
   final double workerProcessingP95Ms;
+  final double workerD3dLockWaitAverageMs;
+  final double workerD3dLockWaitP95Ms;
+  final double workerCopyResourceAverageMs;
+  final double workerCopyResourceP95Ms;
+  final double workerMapAverageMs;
+  final double workerMapP95Ms;
+  final double workerCpuBgraCopyAverageMs;
+  final double workerCpuBgraCopyP95Ms;
+  final double workerBgraToNv12AverageMs;
+  final double workerBgraToNv12P95Ms;
+  final double workerTotalAverageMs;
+  final double workerTotalP95Ms;
   final int handoffSlots;
   final int handoffInUse;
   final int workerQueueDepth;
@@ -809,6 +833,42 @@ final class NativeSessionSnapshot {
         json,
         'workerProcessingP95Ms',
       ),
+      workerD3dLockWaitAverageMs: _readOptionalDouble(
+        json,
+        'workerD3dLockWaitAverageMs',
+      ),
+      workerD3dLockWaitP95Ms: _readOptionalDouble(
+        json,
+        'workerD3dLockWaitP95Ms',
+      ),
+      workerCopyResourceAverageMs: _readOptionalDouble(
+        json,
+        'workerCopyResourceAverageMs',
+      ),
+      workerCopyResourceP95Ms: _readOptionalDouble(
+        json,
+        'workerCopyResourceP95Ms',
+      ),
+      workerMapAverageMs: _readOptionalDouble(json, 'workerMapAverageMs'),
+      workerMapP95Ms: _readOptionalDouble(json, 'workerMapP95Ms'),
+      workerCpuBgraCopyAverageMs: _readOptionalDouble(
+        json,
+        'workerCpuBgraCopyAverageMs',
+      ),
+      workerCpuBgraCopyP95Ms: _readOptionalDouble(
+        json,
+        'workerCpuBgraCopyP95Ms',
+      ),
+      workerBgraToNv12AverageMs: _readOptionalDouble(
+        json,
+        'workerBgraToNv12AverageMs',
+      ),
+      workerBgraToNv12P95Ms: _readOptionalDouble(
+        json,
+        'workerBgraToNv12P95Ms',
+      ),
+      workerTotalAverageMs: _readOptionalDouble(json, 'workerTotalAverageMs'),
+      workerTotalP95Ms: _readOptionalDouble(json, 'workerTotalP95Ms'),
       handoffSlots: _readOptionalInt(json, 'handoffSlots', defaultValue: 3),
       handoffInUse: _readOptionalInt(json, 'handoffInUse'),
       workerQueueDepth: _readOptionalInt(json, 'workerQueueDepth'),

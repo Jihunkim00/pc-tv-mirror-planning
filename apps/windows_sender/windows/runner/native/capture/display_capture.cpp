@@ -215,6 +215,12 @@ bool DisplayCapture::Start(const std::string& source_id,
     map_readback_samples_.clear();
     scale_samples_.clear();
     bgra_to_nv12_samples_.clear();
+    worker_d3d_lock_wait_samples_.clear();
+    worker_copy_resource_samples_.clear();
+    worker_map_samples_.clear();
+    worker_cpu_bgra_copy_samples_.clear();
+    worker_bgra_to_nv12_samples_.clear();
+    worker_total_samples_.clear();
     source_x_offsets_.clear();
     source_y_indices_.clear();
     sampling_source_width_ = 0;
@@ -591,6 +597,7 @@ void DisplayCapture::ConversionLoop() {
     conversion_thread_id_ = static_cast<std::uint64_t>(GetCurrentThreadId());
   }
 
+  std::vector<std::uint8_t> bgra_buffer;
   while (!stop_requested_.load()) {
     std::size_t slot_index = 0;
     Nv12Frame frame;
@@ -624,27 +631,41 @@ void DisplayCapture::ConversionLoop() {
       continue;
     }
 
-    std::vector<std::uint8_t> bgra;
     UINT row_pitch = 0;
+    double d3d_lock_wait_ms = 0.0;
+    double worker_copy_resource_ms = 0.0;
+    double worker_map_ms = 0.0;
+    double worker_cpu_bgra_copy_ms = 0.0;
+    bool map_succeeded = false;
+    const auto d3d_lock_wait_started_us = NowUs();
     {
-      std::scoped_lock lock(d3d_mutex_);
+      std::unique_lock lock(d3d_mutex_);
+      const auto d3d_lock_acquired_us = NowUs();
+      d3d_lock_wait_ms =
+          static_cast<double>(d3d_lock_acquired_us - d3d_lock_wait_started_us) /
+          1000.0;
+      const auto copy_started_us = d3d_lock_acquired_us;
       d3d_context_->CopyResource(staging_texture_.get(), owned_texture.get());
+      const auto copy_completed_us = NowUs();
+      worker_copy_resource_ms =
+          static_cast<double>(copy_completed_us - copy_started_us) / 1000.0;
       D3D11_MAPPED_SUBRESOURCE mapped{};
       const auto map_started_us = NowUs();
       const HRESULT hr =
           d3d_context_->Map(staging_texture_.get(), 0, D3D11_MAP_READ, 0,
                             &mapped);
+      const auto map_completed_us = NowUs();
+      worker_map_ms =
+          static_cast<double>(map_completed_us - map_started_us) / 1000.0;
       if (FAILED(hr)) {
         error = HResultText("ID3D11DeviceContext::Map", hr);
       } else {
-        const auto map_completed_us = NowUs();
-        RecordDuration(&map_readback_samples_, map_completed_us,
-                       static_cast<double>(map_completed_us - map_started_us) /
-                           1000.0);
+        map_succeeded = true;
         row_pitch = mapped.RowPitch;
-        bgra.resize(static_cast<std::size_t>(row_pitch) *
-                    frame.source_texture_height);
-        auto* destination = bgra.data();
+        bgra_buffer.resize(static_cast<std::size_t>(row_pitch) *
+                           frame.source_texture_height);
+        const auto cpu_copy_started_us = NowUs();
+        auto* destination = bgra_buffer.data();
         const auto* source =
             static_cast<const std::uint8_t*>(mapped.pData);
         for (UINT y = 0; y < frame.source_texture_height; ++y) {
@@ -652,8 +673,23 @@ void DisplayCapture::ConversionLoop() {
                       source + static_cast<std::size_t>(y) * mapped.RowPitch,
                       mapped.RowPitch);
         }
+        const auto cpu_copy_completed_us = NowUs();
+        worker_cpu_bgra_copy_ms =
+            static_cast<double>(cpu_copy_completed_us - cpu_copy_started_us) /
+            1000.0;
         d3d_context_->Unmap(staging_texture_.get(), 0);
       }
+    }
+    const auto timing_recorded_us = NowUs();
+    RecordDuration(&worker_d3d_lock_wait_samples_, timing_recorded_us,
+                   d3d_lock_wait_ms);
+    RecordDuration(&worker_copy_resource_samples_, timing_recorded_us,
+                   worker_copy_resource_ms);
+    if (map_succeeded) {
+      RecordDuration(&map_readback_samples_, timing_recorded_us, worker_map_ms);
+      RecordDuration(&worker_map_samples_, timing_recorded_us, worker_map_ms);
+      RecordDuration(&worker_cpu_bgra_copy_samples_, timing_recorded_us,
+                     worker_cpu_bgra_copy_ms);
     }
     if (!error.empty()) {
       {
@@ -665,12 +701,20 @@ void DisplayCapture::ConversionLoop() {
     }
 
     D3D11_MAPPED_SUBRESOURCE cpu_mapped{};
-    cpu_mapped.pData = bgra.data();
+    cpu_mapped.pData = bgra_buffer.data();
     cpu_mapped.RowPitch = row_pitch;
     frame.convert_started_us = NowUs();
+    const auto bgra_to_nv12_started_us = frame.convert_started_us;
     ConvertMappedBgraToNv12(cpu_mapped, frame.source_texture_width,
                             frame.source_texture_height, &frame);
     frame.converted_us = NowUs();
+    const auto bgra_to_nv12_duration_ms =
+        static_cast<double>(frame.converted_us - bgra_to_nv12_started_us) /
+        1000.0;
+    RecordDuration(&bgra_to_nv12_samples_, frame.converted_us,
+                   bgra_to_nv12_duration_ms);
+    RecordDuration(&worker_bgra_to_nv12_samples_, frame.converted_us,
+                   bgra_to_nv12_duration_ms);
     frame.convert_duration_us =
         frame.converted_us >= frame.convert_started_us
             ? frame.converted_us - frame.convert_started_us
@@ -678,6 +722,10 @@ void DisplayCapture::ConversionLoop() {
 
     const auto processing_completed_us = NowUs();
     RecordDuration(&worker_processing_samples_, processing_completed_us,
+                   static_cast<double>(processing_completed_us -
+                                       processing_started_us) /
+                       1000.0);
+    RecordDuration(&worker_total_samples_, processing_completed_us,
                    static_cast<double>(processing_completed_us -
                                        processing_started_us) /
                        1000.0);
@@ -1025,6 +1073,12 @@ CapturePipelineTimingSnapshot DisplayCapture::timing_snapshot() const {
   TrimSamples(&map_readback_samples_, now_us);
   TrimSamples(&scale_samples_, now_us);
   TrimSamples(&bgra_to_nv12_samples_, now_us);
+  TrimSamples(&worker_d3d_lock_wait_samples_, now_us);
+  TrimSamples(&worker_copy_resource_samples_, now_us);
+  TrimSamples(&worker_map_samples_, now_us);
+  TrimSamples(&worker_cpu_bgra_copy_samples_, now_us);
+  TrimSamples(&worker_bgra_to_nv12_samples_, now_us);
+  TrimSamples(&worker_total_samples_, now_us);
   TrimSamples(&worker_processing_samples_, now_us);
   snapshot.frame_acquire_average_ms = Average(frame_acquire_samples_);
   snapshot.frame_acquire_p95_ms = Percentile95(frame_acquire_samples_);
@@ -1048,6 +1102,26 @@ CapturePipelineTimingSnapshot DisplayCapture::timing_snapshot() const {
   snapshot.scale_p95_ms = Percentile95(scale_samples_);
   snapshot.bgra_to_nv12_average_ms = Average(bgra_to_nv12_samples_);
   snapshot.bgra_to_nv12_p95_ms = Percentile95(bgra_to_nv12_samples_);
+  snapshot.worker_d3d_lock_wait_average_ms =
+      Average(worker_d3d_lock_wait_samples_);
+  snapshot.worker_d3d_lock_wait_p95_ms =
+      Percentile95(worker_d3d_lock_wait_samples_);
+  snapshot.worker_copy_resource_average_ms =
+      Average(worker_copy_resource_samples_);
+  snapshot.worker_copy_resource_p95_ms =
+      Percentile95(worker_copy_resource_samples_);
+  snapshot.worker_map_average_ms = Average(worker_map_samples_);
+  snapshot.worker_map_p95_ms = Percentile95(worker_map_samples_);
+  snapshot.worker_cpu_bgra_copy_average_ms =
+      Average(worker_cpu_bgra_copy_samples_);
+  snapshot.worker_cpu_bgra_copy_p95_ms =
+      Percentile95(worker_cpu_bgra_copy_samples_);
+  snapshot.worker_bgra_to_nv12_average_ms =
+      Average(worker_bgra_to_nv12_samples_);
+  snapshot.worker_bgra_to_nv12_p95_ms =
+      Percentile95(worker_bgra_to_nv12_samples_);
+  snapshot.worker_total_average_ms = Average(worker_total_samples_);
+  snapshot.worker_total_p95_ms = Percentile95(worker_total_samples_);
   snapshot.worker_processing_average_ms =
       Average(worker_processing_samples_);
   snapshot.worker_processing_p95_ms =

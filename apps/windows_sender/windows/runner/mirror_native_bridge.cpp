@@ -57,6 +57,30 @@ bool ReadBool(const EncodableMap& map, const char* key, bool fallback) {
 
 EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
   EncodableMap map;
+  map[EncodableValue("workerD3dLockWaitAverageMs")] =
+      EncodableValue(snapshot.worker_d3d_lock_wait_average_ms);
+  map[EncodableValue("workerD3dLockWaitP95Ms")] =
+      EncodableValue(snapshot.worker_d3d_lock_wait_p95_ms);
+  map[EncodableValue("workerCopyResourceAverageMs")] =
+      EncodableValue(snapshot.worker_copy_resource_average_ms);
+  map[EncodableValue("workerCopyResourceP95Ms")] =
+      EncodableValue(snapshot.worker_copy_resource_p95_ms);
+  map[EncodableValue("workerMapAverageMs")] =
+      EncodableValue(snapshot.worker_map_average_ms);
+  map[EncodableValue("workerMapP95Ms")] =
+      EncodableValue(snapshot.worker_map_p95_ms);
+  map[EncodableValue("workerCpuBgraCopyAverageMs")] =
+      EncodableValue(snapshot.worker_cpu_bgra_copy_average_ms);
+  map[EncodableValue("workerCpuBgraCopyP95Ms")] =
+      EncodableValue(snapshot.worker_cpu_bgra_copy_p95_ms);
+  map[EncodableValue("workerBgraToNv12AverageMs")] =
+      EncodableValue(snapshot.worker_bgra_to_nv12_average_ms);
+  map[EncodableValue("workerBgraToNv12P95Ms")] =
+      EncodableValue(snapshot.worker_bgra_to_nv12_p95_ms);
+  map[EncodableValue("workerTotalAverageMs")] =
+      EncodableValue(snapshot.worker_total_average_ms);
+  map[EncodableValue("workerTotalP95Ms")] =
+      EncodableValue(snapshot.worker_total_p95_ms);
   map[EncodableValue("state")] = EncodableValue(snapshot.state);
   map[EncodableValue("userMessage")] = EncodableValue(snapshot.user_message);
   map[EncodableValue("captureReady")] = EncodableValue(snapshot.capture_ready);
