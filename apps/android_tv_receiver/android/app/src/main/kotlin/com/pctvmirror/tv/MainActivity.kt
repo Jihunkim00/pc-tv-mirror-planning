@@ -207,7 +207,10 @@ private const val MAX_AUDIO_ACCESS_UNIT_PAYLOAD = 256 * 1024
 private const val MAX_PARAMETER_SET_BYTES = 64 * 1024
 private const val MAX_PENDING_DECODER_TIMESTAMPS = 30
 private const val MAX_LATENCY_SAMPLES = 120
-private const val MAX_ACCESS_UNIT_QUEUE_DEPTH = 2
+private const val MAX_ACCESS_UNIT_QUEUE_DEPTH = 4
+private const val MAX_INPUTS_PER_PUMP = 8
+private const val MAX_OUTPUTS_PER_PUMP = 8
+private const val DECODER_IDLE_WAIT_MS = 1L
 private const val STALE_ACCESS_UNIT_THRESHOLD_US = 100_000L
 private const val INITIAL_PLAYOUT_DELAY_NS = 30_000_000L
 private const val MAX_SCHEDULED_DELAY_NS = 66_000_000L
@@ -586,6 +589,32 @@ private class StageOneReceiverServer(
             .put("decoderOutputReleased", snapshot.releasedToSurfaceFrames)
             .put("decoderOutputReleasedImmediate", snapshot.immediateRenderFrames)
             .put("decoderOutputReleasedScheduled", snapshot.scheduledRenderFrames)
+            .put("decoderQueueDepth", snapshot.receiverQueueDepth)
+            .put("decoderQueueMaxDepth", snapshot.decoderQueueMaxDepth)
+            .put("decoderQueueOverflowCount", snapshot.decoderQueueOverflowCount)
+            .put("decoderQueueLastOverflowReason", snapshot.decoderQueueLastOverflowReason)
+            .put("decoderInputDequeueAttempts", snapshot.decoderInputDequeueAttempts)
+            .put("decoderInputDequeueAttemptFps", snapshot.decoderInputDequeueAttemptFps)
+            .put("decoderInputDequeueSuccesses", snapshot.decoderInputDequeueSuccesses)
+            .put("decoderInputDequeueSuccessFps", snapshot.decoderInputDequeueSuccessFps)
+            .put("decoderInputUnavailableCount", snapshot.decoderInputUnavailableCount)
+            .put("decoderInputUnavailableFps", snapshot.decoderInputUnavailableFps)
+            .put("decoderOutputDequeueAttempts", snapshot.decoderOutputDequeueAttempts)
+            .put("decoderOutputDequeueAttemptFps", snapshot.decoderOutputDequeueAttemptFps)
+            .put("decoderOutputDequeueSuccesses", snapshot.decoderOutputDequeueSuccesses)
+            .put("decoderOutputDequeueSuccessFps", snapshot.decoderOutputDequeueSuccessFps)
+            .put("decoderOutputUnavailableCount", snapshot.decoderOutputUnavailableCount)
+            .put("decoderOutputUnavailableFps", snapshot.decoderOutputUnavailableFps)
+            .put("decoderOutputReleaseCount", snapshot.decoderOutputReleaseCount)
+            .put("decoderOutputReleaseFps", snapshot.decoderOutputReleaseFps)
+            .put("decoderPumpCycles", snapshot.pumpCycles)
+            .put("decoderPumpCyclesPerSecond", snapshot.pumpCyclesPerSecond)
+            .put("decoderProductivePumpCycles", snapshot.productivePumpCycles)
+            .put("decoderProductivePumpCyclesPerSecond", snapshot.productivePumpCyclesPerSecond)
+            .put("decoderIdlePumpCycles", snapshot.idlePumpCycles)
+            .put("decoderIdlePumpCyclesPerSecond", snapshot.idlePumpCyclesPerSecond)
+            .put("decoderMaxInputsQueuedInPump", snapshot.maxInputsQueuedInPump)
+            .put("decoderMaxOutputsReleasedInPump", snapshot.maxOutputsReleasedInPump)
             .put("codecRenderedFpsRecent", snapshot.codecRenderedFpsRecent)
             .put("onFrameRenderedCallbackCount", snapshot.codecRenderedFrames)
             .put("receiverVideoRenderMode", snapshot.rendererMode)
@@ -831,6 +860,46 @@ private class StageOneReceiverServer(
             "decoderInputFps" to decoderSnapshot.decoderInputFps,
             "decoderOutputFps" to decoderSnapshot.decoderOutputFps,
             "releasedToSurfaceFps" to decoderSnapshot.releasedToSurfaceFps,
+            "decoderQueueMaxDepth" to decoderSnapshot.decoderQueueMaxDepth,
+            "decoderQueueOverflowCount" to decoderSnapshot.decoderQueueOverflowCount,
+            "decoderQueueLastOverflowReason" to
+                (decoderSnapshot.decoderQueueLastOverflowReason ?: ""),
+            "decoderInputDequeueAttempts" to decoderSnapshot.decoderInputDequeueAttempts,
+            "decoderInputDequeueAttemptFps" to
+                decoderSnapshot.decoderInputDequeueAttemptFps,
+            "decoderInputDequeueSuccesses" to
+                decoderSnapshot.decoderInputDequeueSuccesses,
+            "decoderInputDequeueSuccessFps" to
+                decoderSnapshot.decoderInputDequeueSuccessFps,
+            "decoderInputUnavailableCount" to
+                decoderSnapshot.decoderInputUnavailableCount,
+            "decoderInputUnavailableFps" to
+                decoderSnapshot.decoderInputUnavailableFps,
+            "decoderOutputDequeueAttempts" to
+                decoderSnapshot.decoderOutputDequeueAttempts,
+            "decoderOutputDequeueAttemptFps" to
+                decoderSnapshot.decoderOutputDequeueAttemptFps,
+            "decoderOutputDequeueSuccesses" to
+                decoderSnapshot.decoderOutputDequeueSuccesses,
+            "decoderOutputDequeueSuccessFps" to
+                decoderSnapshot.decoderOutputDequeueSuccessFps,
+            "decoderOutputUnavailableCount" to
+                decoderSnapshot.decoderOutputUnavailableCount,
+            "decoderOutputUnavailableFps" to
+                decoderSnapshot.decoderOutputUnavailableFps,
+            "decoderOutputReleaseCount" to decoderSnapshot.decoderOutputReleaseCount,
+            "decoderOutputReleaseFps" to decoderSnapshot.decoderOutputReleaseFps,
+            "decoderPumpCycles" to decoderSnapshot.pumpCycles,
+            "decoderPumpCyclesPerSecond" to decoderSnapshot.pumpCyclesPerSecond,
+            "decoderProductivePumpCycles" to decoderSnapshot.productivePumpCycles,
+            "decoderProductivePumpCyclesPerSecond" to
+                decoderSnapshot.productivePumpCyclesPerSecond,
+            "decoderIdlePumpCycles" to decoderSnapshot.idlePumpCycles,
+            "decoderIdlePumpCyclesPerSecond" to
+                decoderSnapshot.idlePumpCyclesPerSecond,
+            "decoderMaxInputsQueuedInPump" to decoderSnapshot.maxInputsQueuedInPump,
+            "decoderMaxOutputsReleasedInPump" to
+                decoderSnapshot.maxOutputsReleasedInPump,
             "codecRenderedFrames" to decoderSnapshot.codecRenderedFrames,
             "codecRenderedFpsRecent" to decoderSnapshot.codecRenderedFpsRecent,
             "renderedIntervalP50Ms" to decoderSnapshot.renderedIntervalP50Ms,
@@ -1068,6 +1137,31 @@ private data class DecoderSnapshot(
     val presentedFrameIntervalAverageMs: Double,
     val presentedFrameIntervalP95Ms: Double,
     val receiverQueueDepth: Int,
+    val decoderQueueMaxDepth: Int,
+    val decoderQueueOverflowCount: Long,
+    val decoderQueueLastOverflowReason: String?,
+    val decoderInputDequeueAttempts: Long,
+    val decoderInputDequeueAttemptFps: Double,
+    val decoderInputDequeueSuccesses: Long,
+    val decoderInputDequeueSuccessFps: Double,
+    val decoderInputUnavailableCount: Long,
+    val decoderInputUnavailableFps: Double,
+    val decoderOutputDequeueAttempts: Long,
+    val decoderOutputDequeueAttemptFps: Double,
+    val decoderOutputDequeueSuccesses: Long,
+    val decoderOutputDequeueSuccessFps: Double,
+    val decoderOutputUnavailableCount: Long,
+    val decoderOutputUnavailableFps: Double,
+    val decoderOutputReleaseCount: Long,
+    val decoderOutputReleaseFps: Double,
+    val pumpCycles: Long,
+    val pumpCyclesPerSecond: Double,
+    val productivePumpCycles: Long,
+    val productivePumpCyclesPerSecond: Double,
+    val idlePumpCycles: Long,
+    val idlePumpCyclesPerSecond: Double,
+    val maxInputsQueuedInPump: Int,
+    val maxOutputsReleasedInPump: Int,
     val codecCreateCount: Long,
     val codecReleaseCount: Long,
     val surfaceCreatedCount: Long,
@@ -2023,12 +2117,24 @@ private class StageOneVideoDecoder(
     private var configuredFingerprint: H264ConfigFingerprint? = null
     private var codecSurfaceId: Int? = null
     private var paused = false
-    private val accessUnitQueue = ArrayDeque<QueuedAccessUnit>()
+    private val accessUnitQueue = DecoderAccessUnitQueue<QueuedAccessUnit>(
+        MAX_ACCESS_UNIT_QUEUE_DEPTH,
+    )
     private var decoderWorkerRunning = true
     private val receivedAccessUnitCounter = RollingEventWindow()
     private val decoderInputCounter = RollingEventWindow()
     private val decoderOutputCounter = RollingEventWindow()
     private val releasedToSurfaceCounter = RollingEventWindow()
+    private val decoderInputDequeueAttemptCounter = RollingEventWindow()
+    private val decoderInputDequeueSuccessCounter = RollingEventWindow()
+    private val decoderInputUnavailableCounter = RollingEventWindow()
+    private val decoderOutputDequeueAttemptCounter = RollingEventWindow()
+    private val decoderOutputDequeueSuccessCounter = RollingEventWindow()
+    private val decoderOutputUnavailableCounter = RollingEventWindow()
+    private val decoderOutputReleaseCounter = RollingEventWindow()
+    private val pumpCycleCounter = RollingEventWindow()
+    private val productivePumpCycleCounter = RollingEventWindow()
+    private val idlePumpCycleCounter = RollingEventWindow()
     private val lateFrameDropCounter = RollingEventWindow()
     private val codecRenderedCounter = RollingEventWindow()
     private val renderedJitterSamples = RollingSampleWindow()
@@ -2043,6 +2149,18 @@ private class StageOneVideoDecoder(
     private var decoderInputFrames = 0L
     private var decoderOutputFrames = 0L
     private var releasedToSurfaceFrames = 0L
+    private var decoderInputDequeueAttempts = 0L
+    private var decoderInputDequeueSuccesses = 0L
+    private var decoderInputUnavailableCount = 0L
+    private var decoderOutputDequeueAttempts = 0L
+    private var decoderOutputDequeueSuccesses = 0L
+    private var decoderOutputUnavailableCount = 0L
+    private var decoderOutputReleaseCount = 0L
+    private var pumpCycles = 0L
+    private var productivePumpCycles = 0L
+    private var idlePumpCycles = 0L
+    private var maxInputsQueuedInPump = 0
+    private var maxOutputsReleasedInPump = 0
     private var droppedFrames = 0L
     private var codecCreateCount = 0L
     private var codecReleaseCount = 0L
@@ -2085,6 +2203,7 @@ private class StageOneVideoDecoder(
     private var latencyP95Ms = 0.0
     private var receiverQueueDepth = 0
     private var maxReceiverQueueDepth = 0
+    private var lastQueueOverflowReason: String? = null
     private var staleAccessUnitsDropped = 0L
     private var videoPtsDiscontinuityCount = 0L
     private var videoPtsRegressionCount = 0L
@@ -2169,6 +2288,35 @@ private class StageOneVideoDecoder(
                 presentedFrameIntervalP95Ms =
                     releasedToSurfaceCounter.p95IntervalMs(nowUs),
                 receiverQueueDepth = receiverQueueDepth,
+                decoderQueueMaxDepth = maxReceiverQueueDepth,
+                decoderQueueOverflowCount = accessUnitQueue.overflowCount,
+                decoderQueueLastOverflowReason = lastQueueOverflowReason,
+                decoderInputDequeueAttempts = decoderInputDequeueAttempts,
+                decoderInputDequeueAttemptFps =
+                    decoderInputDequeueAttemptCounter.fps(nowUs),
+                decoderInputDequeueSuccesses = decoderInputDequeueSuccesses,
+                decoderInputDequeueSuccessFps =
+                    decoderInputDequeueSuccessCounter.fps(nowUs),
+                decoderInputUnavailableCount = decoderInputUnavailableCount,
+                decoderInputUnavailableFps = decoderInputUnavailableCounter.fps(nowUs),
+                decoderOutputDequeueAttempts = decoderOutputDequeueAttempts,
+                decoderOutputDequeueAttemptFps =
+                    decoderOutputDequeueAttemptCounter.fps(nowUs),
+                decoderOutputDequeueSuccesses = decoderOutputDequeueSuccesses,
+                decoderOutputDequeueSuccessFps =
+                    decoderOutputDequeueSuccessCounter.fps(nowUs),
+                decoderOutputUnavailableCount = decoderOutputUnavailableCount,
+                decoderOutputUnavailableFps = decoderOutputUnavailableCounter.fps(nowUs),
+                decoderOutputReleaseCount = decoderOutputReleaseCount,
+                decoderOutputReleaseFps = decoderOutputReleaseCounter.fps(nowUs),
+                pumpCycles = pumpCycles,
+                pumpCyclesPerSecond = pumpCycleCounter.fps(nowUs),
+                productivePumpCycles = productivePumpCycles,
+                productivePumpCyclesPerSecond = productivePumpCycleCounter.fps(nowUs),
+                idlePumpCycles = idlePumpCycles,
+                idlePumpCyclesPerSecond = idlePumpCycleCounter.fps(nowUs),
+                maxInputsQueuedInPump = maxInputsQueuedInPump,
+                maxOutputsReleasedInPump = maxOutputsReleasedInPump,
                 codecCreateCount = codecCreateCount,
                 codecReleaseCount = codecReleaseCount,
                 surfaceCreatedCount = surfaceCreatedCount,
@@ -2243,6 +2391,28 @@ private class StageOneVideoDecoder(
             decoderInputCounter.clear()
             decoderOutputCounter.clear()
             releasedToSurfaceCounter.clear()
+            decoderInputDequeueAttemptCounter.clear()
+            decoderInputDequeueSuccessCounter.clear()
+            decoderInputUnavailableCounter.clear()
+            decoderOutputDequeueAttemptCounter.clear()
+            decoderOutputDequeueSuccessCounter.clear()
+            decoderOutputUnavailableCounter.clear()
+            decoderOutputReleaseCounter.clear()
+            pumpCycleCounter.clear()
+            productivePumpCycleCounter.clear()
+            idlePumpCycleCounter.clear()
+            decoderInputDequeueAttempts = 0
+            decoderInputDequeueSuccesses = 0
+            decoderInputUnavailableCount = 0
+            decoderOutputDequeueAttempts = 0
+            decoderOutputDequeueSuccesses = 0
+            decoderOutputUnavailableCount = 0
+            decoderOutputReleaseCount = 0
+            pumpCycles = 0
+            productivePumpCycles = 0
+            idlePumpCycles = 0
+            maxInputsQueuedInPump = 0
+            maxOutputsReleasedInPump = 0
             codecRenderedCounter.clear()
             renderedJitterSamples.clear()
             videoPtsIntervalSamples.clear()
@@ -2276,6 +2446,8 @@ private class StageOneVideoDecoder(
             latencyAverageMs = 0.0
             latencyP95Ms = 0.0
             maxReceiverQueueDepth = 0
+            lastQueueOverflowReason = null
+            accessUnitQueue.resetDiagnostics()
             staleAccessUnitsDropped = 0
             lateOutputBuffersDropped = 0
             frameSequenceGaps = 0
@@ -2564,6 +2736,8 @@ private class StageOneVideoDecoder(
                 lastVideoPtsUs = ptsUs
             }
             while (accessUnitQueue.size >= MAX_ACCESS_UNIT_QUEUE_DEPTH) {
+                accessUnitQueue.recordOverflow()
+                lastQueueOverflowReason = "Receiver access-unit queue reached capacity."
                 val dropIndex = accessUnitQueue.indexOfFirst { !it.keyFrame }
                 if (dropIndex < 0) {
                     if (!keyFrame) {
@@ -2580,7 +2754,7 @@ private class StageOneVideoDecoder(
                 staleAccessUnitsDropped += 1
                 droppedFrames += 1
             }
-            accessUnitQueue.addLast(
+            val queued = accessUnitQueue.addLast(
                 QueuedAccessUnit(
                     payload = payload,
                     ptsUs = ptsUs,
@@ -2589,8 +2763,14 @@ private class StageOneVideoDecoder(
                     arrivalUs = arrivalUs,
                 ),
             )
+            if (!queued) {
+                droppedFrames += 1
+                lastQueueOverflowReason = "Receiver access-unit queue rejected an access unit."
+                lastDecoderError = lastQueueOverflowReason
+                return@synchronized false
+            }
             receiverQueueDepth = accessUnitQueue.size
-            maxReceiverQueueDepth = maxOf(maxReceiverQueueDepth, receiverQueueDepth)
+            maxReceiverQueueDepth = maxOf(maxReceiverQueueDepth, accessUnitQueue.maxObservedDepth)
             lock.notifyAll()
             lastDecoderError = null
             true
@@ -2609,61 +2789,111 @@ private class StageOneVideoDecoder(
 
     private fun decoderLoop() {
         while (decoderWorkerRunning) {
-            val unit = synchronized(lock) {
-                while (decoderWorkerRunning && accessUnitQueue.isEmpty()) {
-                    try {
-                        lock.wait()
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        decoderWorkerRunning = false
-                    }
-                }
+            val madeProgress = synchronized(lock) {
                 if (!decoderWorkerRunning) {
                     return
                 }
-                val next = accessUnitQueue.removeFirst()
-                receiverQueueDepth = accessUnitQueue.size
-                next
+                pumpDecoderLocked()
             }
-            decodeAccessUnit(unit)
+            if (madeProgress) {
+                continue
+            }
+
+            synchronized(lock) {
+                if (!decoderWorkerRunning) {
+                    return
+                }
+                try {
+                    if (accessUnitQueue.isEmpty() && (codec == null || paused)) {
+                        lock.wait()
+                    } else {
+                        lock.wait(DECODER_IDLE_WAIT_MS)
+                    }
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    decoderWorkerRunning = false
+                }
+            }
         }
     }
 
-    private fun decodeAccessUnit(unit: QueuedAccessUnit) {
-        synchronized(lock) {
+    private fun pumpDecoderLocked(): Boolean {
+        val activeCodec = codec
+        if (activeCodec == null || paused) {
+            recordPumpCycleLocked(false, 0, 0)
+            return false
+        }
+
+        val budget = DecoderPumpBudget(
+            maxInputsPerPump = MAX_INPUTS_PER_PUMP,
+            maxOutputsPerPump = MAX_OUTPUTS_PER_PUMP,
+        )
+        var madeProgress = drainOutputLocked(activeCodec, budget)
+        val inputsQueued = feedInputsLocked(activeCodec, budget)
+        madeProgress = madeProgress || inputsQueued > 0
+        if (codec === activeCodec) {
+            madeProgress = drainOutputLocked(activeCodec, budget) || madeProgress
+        }
+        recordPumpCycleLocked(
+            madeProgress = madeProgress,
+            inputsQueued = budget.inputsQueued,
+            outputsReleased = budget.outputsReleased,
+        )
+        return madeProgress
+    }
+
+    private fun recordPumpCycleLocked(
+        madeProgress: Boolean,
+        inputsQueued: Int,
+        outputsReleased: Int,
+    ) {
+        val nowUs = elapsedRealtimeUs()
+        pumpCycles += 1
+        pumpCycleCounter.record(nowUs)
+        maxInputsQueuedInPump = maxOf(maxInputsQueuedInPump, inputsQueued)
+        maxOutputsReleasedInPump = maxOf(maxOutputsReleasedInPump, outputsReleased)
+        if (madeProgress) {
+            productivePumpCycles += 1
+            productivePumpCycleCounter.record(nowUs)
+        } else {
+            idlePumpCycles += 1
+            idlePumpCycleCounter.record(nowUs)
+        }
+    }
+
+    private fun feedInputsLocked(
+        activeCodec: MediaCodec,
+        budget: DecoderPumpBudget,
+    ): Int {
+        var inputsQueued = 0
+        while (budget.canQueueInput()) {
+            val unit = accessUnitQueue.firstOrNull() ?: break
             if (needsKeyFrame && !unit.keyFrame) {
+                accessUnitQueue.removeFirst()
+                receiverQueueDepth = accessUnitQueue.size
                 droppedFrames += 1
                 staleAccessUnitsDropped += 1
                 lastDecoderError = "Dropped queued non-key access unit while waiting for IDR."
-                return
-            }
-            if (paused) {
-                droppedFrames += 1
-                return
-            }
-            val activeCodec = codec
-            if (activeCodec == null) {
-                droppedFrames += 1
-                lastDecoderError = "MediaCodec is not configured for access units yet."
-                return
+                continue
             }
 
+            decoderInputDequeueAttempts += 1
+            val dequeueUs = elapsedRealtimeUs()
+            decoderInputDequeueAttemptCounter.record(dequeueUs)
             try {
-                val inputIndex = activeCodec.dequeueInputBuffer(10_000)
+                val inputIndex = activeCodec.dequeueInputBuffer(0)
                 if (inputIndex < 0) {
-                    drainOutputLocked(activeCodec)
-                    droppedFrames += 1
-                    staleAccessUnitsDropped += if (unit.keyFrame) 0 else 1
-                    lastDecoderError =
-                        "Dropped access unit because MediaCodec input was not available."
-                    return
+                    decoderInputUnavailableCount += 1
+                    decoderInputUnavailableCounter.record(dequeueUs)
+                    break
                 }
+                decoderInputDequeueSuccesses += 1
+                decoderInputDequeueSuccessCounter.record(dequeueUs)
 
                 val inputBuffer = activeCodec.getInputBuffer(inputIndex)
                 if (inputBuffer == null || unit.payload.size > inputBuffer.capacity()) {
-                    droppedFrames += 1
                     lastDecoderError = "Access unit did not fit in a MediaCodec input buffer."
-                    return
+                    break
                 }
 
                 inputBuffer.clear()
@@ -2676,27 +2906,35 @@ private class StageOneVideoDecoder(
                     unit.ptsUs,
                     0,
                 )
+                check(accessUnitQueue.removeHeadIf(unit)) {
+                    "Decoder input queue head changed before queueInputBuffer commit."
+                }
+                receiverQueueDepth = accessUnitQueue.size
                 decoderInputFrames += 1
                 decoderInputCounter.record(decoderInputUs)
                 recordDecoderInputLocked(unit.ptsUs, unit.arrivalUs, decoderInputUs)
-            if (unit.keyFrame) {
-                needsKeyFrame = false
-                rendererMode = "immediate"
-            }
-                drainOutputLocked(activeCodec)
+                budget.recordInputQueued()
+                inputsQueued += 1
+                if (unit.keyFrame) {
+                    needsKeyFrame = false
+                    rendererMode = "immediate"
+                }
                 lastDecoderError = null
             } catch (error: MediaCodec.CodecException) {
                 droppedFrames += 1
                 recordDecoderErrorLocked(describeCodecException(error))
                 releaseCodecLocked("MediaCodec CodecException while queueing input")
                 needsKeyFrame = true
+                break
             } catch (error: Exception) {
                 droppedFrames += 1
                 recordDecoderErrorLocked(error.message ?: "MediaCodec input failed.")
                 releaseCodecLocked("MediaCodec exception while queueing input")
                 needsKeyFrame = true
+                break
             }
         }
+        return inputsQueued
     }
 
     private fun dropStaleQueuedAccessUnitsLocked(nowUs: Long) {
@@ -2823,44 +3061,76 @@ private class StageOneVideoDecoder(
         }
 
     }
-    private fun drainOutputLocked(activeCodec: MediaCodec) {
+    private fun drainOutputLocked(
+        activeCodec: MediaCodec,
+        budget: DecoderPumpBudget,
+    ): Boolean {
         val bufferInfo = MediaCodec.BufferInfo()
-        while (true) {
-            when (val outputIndex = activeCodec.dequeueOutputBuffer(bufferInfo, 0)) {
-                MediaCodec.INFO_TRY_AGAIN_LATER -> return
+        var madeProgress = false
+        var outputPolls = 0
+        while (outputPolls < MAX_OUTPUTS_PER_PUMP && budget.canReleaseOutput()) {
+            outputPolls += 1
+            val dequeueUs = elapsedRealtimeUs()
+            decoderOutputDequeueAttempts += 1
+            decoderOutputDequeueAttemptCounter.record(dequeueUs)
+            val outputIndex = try {
+                activeCodec.dequeueOutputBuffer(bufferInfo, 0)
+            } catch (error: Exception) {
+                recordDecoderErrorLocked(error.message ?: "MediaCodec output dequeue failed.")
+                return madeProgress
+            }
+            when (outputIndex) {
+                MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    decoderOutputUnavailableCount += 1
+                    decoderOutputUnavailableCounter.record(dequeueUs)
+                    return madeProgress
+                }
                 MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     outputFormatChangedCount += 1
                     recordOutputFormatLocked(activeCodec.outputFormat)
+                    madeProgress = true
                 }
-                MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {
+                    madeProgress = true
+                }
                 else -> {
-                    if (outputIndex >= 0) {
-                        val render = bufferInfo.size > 0 &&
-                            (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                        decoderOutputFrames += 1
-                        decoderOutputCounter.record(elapsedRealtimeUs())
-                        if (render) {
-                            val released = releaseOutputBufferImmediatelyLocked(activeCodec, outputIndex)
-                            if (released) {
-                                recordDecoderOutputLocked(bufferInfo.presentationTimeUs)
-                                releasedToSurfaceFrames += 1
-                                if (!firstOutputBufferReleaseLogged) {
-                                    firstOutputBufferReleaseLogged = true
-                                    Log.i(
-                                        "PC_TV_MIRROR",
-                                        "First output buffer released to Surface ptsUs=${bufferInfo.presentationTimeUs} size=${bufferInfo.size} output=${outputWidth}x$outputHeight",
-                                    )
-                                }
+                    if (outputIndex < 0) {
+                        return madeProgress
+                    }
+                    decoderOutputDequeueSuccesses += 1
+                    decoderOutputDequeueSuccessCounter.record(dequeueUs)
+                    val render = bufferInfo.size > 0 &&
+                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                    decoderOutputFrames += 1
+                    decoderOutputCounter.record(dequeueUs)
+                    if (render) {
+                        val released = releaseOutputBufferImmediatelyLocked(activeCodec, outputIndex)
+                        if (released) {
+                            recordDecoderOutputLocked(bufferInfo.presentationTimeUs)
+                            releasedToSurfaceFrames += 1
+                            if (!firstOutputBufferReleaseLogged) {
+                                firstOutputBufferReleaseLogged = true
+                                Log.i(
+                                    "PC_TV_MIRROR",
+                                    "First output buffer released to Surface ptsUs=${bufferInfo.presentationTimeUs} size=${bufferInfo.size} output=${outputWidth}x$outputHeight",
+                                )
                             }
-                        } else {
-                            activeCodec.releaseOutputBuffer(outputIndex, false)
                         }
                     } else {
-                        return
+                        try {
+                            activeCodec.releaseOutputBuffer(outputIndex, false)
+                            recordDecoderOutputReleaseLocked()
+                        } catch (error: Exception) {
+                            lastDecoderError =
+                                error.message ?: "Output buffer release failed."
+                        }
                     }
+                    budget.recordOutputReleased()
+                    madeProgress = true
                 }
             }
         }
+        return madeProgress
     }
 
     private fun recordDecoderInputLocked(ptsUs: Long, arrivalUs: Long, decoderInputUs: Long) {
@@ -2880,6 +3150,7 @@ private class StageOneVideoDecoder(
     ): Boolean {
         return try {
             activeCodec.releaseOutputBuffer(outputIndex, true)
+            recordDecoderOutputReleaseLocked()
             rendererMode = "immediate"
             immediateRenderFrames += 1
             releasedToSurfaceCounter.record(elapsedRealtimeUs())
@@ -2889,10 +3160,16 @@ private class StageOneVideoDecoder(
             lastDecoderError = error.message ?: "Immediate Surface release failed."
             try {
                 activeCodec.releaseOutputBuffer(outputIndex, false)
+                recordDecoderOutputReleaseLocked()
             } catch (_: Exception) {
             }
             false
         }
+    }
+
+    private fun recordDecoderOutputReleaseLocked() {
+        decoderOutputReleaseCount += 1
+        decoderOutputReleaseCounter.record(elapsedRealtimeUs())
     }
     private fun recordAvSyncOffsetLocked(offsetUs: Long) {
         avSyncOffsetMs = offsetUs.toDouble() / 1_000.0

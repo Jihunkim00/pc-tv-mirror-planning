@@ -24,6 +24,10 @@ if (hasUploadKeystore) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+dependencies {
+    testImplementation(kotlin("test"))
+}
+
 fun signingProperty(name: String): String =
     keystoreProperties.getProperty(name)
         ?: throw GradleException("Release signing requires android/key.properties")
