@@ -19,10 +19,14 @@ enum SenderVideoProfile {
       SenderVideoProfile.highQuality1080p30 => '1080p30 HQ',
       SenderVideoProfile.cinema1080p24 => '1080p24 Cinema',
       SenderVideoProfile.compatibility720p30 => '720p30 Compat',
-      SenderVideoProfile.highQuality1080p60 => '1080p60 Mirror',
-      SenderVideoProfile.experimental4k30 => '4K 30fps (Experimental)',
+      SenderVideoProfile.highQuality1080p60 => 'FHD 1080p60',
+      SenderVideoProfile.experimental4k30 => '4K 30fps',
     };
   }
+
+  bool get isExperimental =>
+      this == SenderVideoProfile.highQuality1080p60 ||
+      this == SenderVideoProfile.experimental4k30;
 
   String get description {
     return switch (this) {
@@ -31,7 +35,7 @@ enum SenderVideoProfile {
       SenderVideoProfile.cinema1080p24 =>
         'FHD 24fps Cinema H.264 with display pacing',
       SenderVideoProfile.highQuality1080p60 =>
-        'FHD 60fps Mirror H.264 at 14 Mbps',
+        'FHD 60fps Mirror H.264 at 14 Mbps (Experimental)',
       SenderVideoProfile.compatibility720p30 => 'Lower bitrate 720p30 H.264',
       SenderVideoProfile.experimental4k30 =>
         'Requires compatible hardware encoder, Android TV decoder, and wired LAN',
@@ -70,9 +74,8 @@ class MirrorController extends ChangeNotifier {
   String? _selectedPcMonitorDeviceId;
   String? _activeSessionId;
   bool _busy = false;
-  bool _systemAudioEnabled = true;
   bool _pcLocalAudioMuteRequested = false;
-  SenderVideoProfile _videoProfile = SenderVideoProfile.lowLatency720p30;
+  SenderVideoProfile _videoProfile = SenderVideoProfile.cinema1080p24;
   String? _userMessage;
   String? _developerMessage;
   Timer? _statusTimer;
@@ -88,7 +91,6 @@ class MirrorController extends ChangeNotifier {
   String? get selectedTvAudioSourceDeviceId => _selectedTvAudioSourceDeviceId;
   String? get selectedPcMonitorDeviceId => _selectedPcMonitorDeviceId;
   bool get busy => _busy;
-  bool get systemAudioEnabled => _systemAudioEnabled;
   bool get pcLocalAudioMuteRequested => _pcLocalAudioMuteRequested;
   SenderVideoProfile get videoProfile => _videoProfile;
   String? get userMessage => _userMessage;
@@ -109,9 +111,6 @@ class MirrorController extends ChangeNotifier {
   bool get pcLocalAudioMuteSupportedBySelection =>
       audioRoutingUnsupportedReason == null;
   String? get audioRoutingUnsupportedReason {
-    if (!_systemAudioEnabled) {
-      return 'System audio is disabled';
-    }
     final source = selectedTvAudioSourceDevice;
     final monitor = selectedPcMonitorDevice;
     if (source == null) {
@@ -227,23 +226,8 @@ class MirrorController extends ChangeNotifier {
     }
   }
 
-  void setSystemAudioEnabled(bool enabled) {
-    if (_systemAudioEnabled == enabled || isRunning) {
-      return;
-    }
-    _systemAudioEnabled = enabled;
-    if (!enabled) {
-      _pcLocalAudioMuteRequested = false;
-    }
-    _appendLog('System audio ${enabled ? 'enabled' : 'disabled'}.');
-    notifyListeners();
-  }
-
   void setPcLocalAudioMuteRequested(bool enabled) {
     if (_pcLocalAudioMuteRequested == enabled) {
-      return;
-    }
-    if (!_systemAudioEnabled) {
       return;
     }
     _pcLocalAudioMuteRequested = enabled;
@@ -311,7 +295,7 @@ class MirrorController extends ChangeNotifier {
     _appendLog(
       'Starting ${_videoProfile.videoProfile.performanceProfile.wireName} '
       'video session '
-      'with system audio ${_systemAudioEnabled ? 'enabled' : 'disabled'} '
+      'with system audio enabled '
       'and PC speaker mute '
       '${_pcLocalAudioMuteRequested ? 'requested' : 'off'}.',
     );
@@ -323,9 +307,7 @@ class MirrorController extends ChangeNotifier {
       sourceType: SourceType.display,
       sourceId: sourceId,
       video: _videoProfile.videoProfile,
-      audio: _systemAudioEnabled
-          ? const AudioProfile.systemAacLc()
-          : const AudioProfile.disabled(),
+      audio: const AudioProfile.systemAacLc(),
     );
 
     try {

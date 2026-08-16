@@ -6,7 +6,7 @@ import 'package:windows_sender/core/native_bridge/mirror_native_api.dart';
 import 'package:windows_sender/features/mirroring/mirror_controller.dart';
 
 void main() {
-  testWidgets('loads displays and sends a STAGE 4 video/audio start request', (
+  testWidgets('loads displays and sends the MVP video/audio start request', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1280, 900);
@@ -43,13 +43,59 @@ void main() {
     expect(json.containsKey('privacyScreen'), isFalse);
     expect(
       (json['video'] as Map<String, Object?>)['performanceProfile'],
-      'lowLatency720p30',
+      'cinema1080p24',
     );
-    expect((json['video'] as Map<String, Object?>)['bitrateKbps'], 6000);
+    expect((json['video'] as Map<String, Object?>)['bitrateKbps'], 8000);
     expect(nativeApi.lastStartRequest!.pcLocalAudioMuteRequested, isFalse);
     expect(nativeApi.lastStartRequest!.tvAudioSourceDeviceId, 'virtual-tv');
     expect(nativeApi.lastStartRequest!.pcMonitorDeviceId, 'speakers');
     expect(find.text('State: negotiating'), findsOneWidget);
+    expect(find.text('System audio'), findsNothing);
+    expect(find.text('Mute PC speakers'), findsNothing);
+    expect(find.text('Audio routing'), findsNothing);
+  });
+
+  testWidgets(
+    'switches display while streaming by restarting the existing session',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final nativeApi = _FakeMirrorNativeApi();
+      await tester.pumpWidget(WindowsSenderApp(nativeApi: nativeApi));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(EditableText).first, '192.168.1.40');
+      final startButton = find.widgetWithText(FilledButton, 'Start');
+      await tester.ensureVisible(startButton);
+      await tester.tap(startButton);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('DISPLAY2'));
+      await tester.pumpAndSettle();
+
+      expect(nativeApi.stopCalls, 1);
+      expect(nativeApi.startCalls, 2);
+      expect(nativeApi.lastStartRequest!.streamRequest.sourceId, 'DISPLAY2');
+    },
+  );
+
+  testWidgets('marks 1080p60 and 4K profiles as Experimental', (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      WindowsSenderApp(nativeApi: _FakeMirrorNativeApi()),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<SenderVideoProfile>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Experimental'), findsNWidgets(2));
   });
 
   test('uses a balanced STAGE 4 1080p profile bitrate', () {
@@ -61,7 +107,7 @@ void main() {
     expect(profile.bitrateKbps, 7500);
     expect(profile.performanceProfile, PerformanceProfile.highQuality1080p30);
   });
-  test('uses the FHD 1080p60 Mirror profile values', () {
+  test('uses the Experimental FHD 1080p60 profile values', () {
     final profile = SenderVideoProfile.highQuality1080p60.videoProfile;
 
     expect(profile.width, 1920);
@@ -69,6 +115,7 @@ void main() {
     expect(profile.fps, 60);
     expect(profile.bitrateKbps, 14000);
     expect(profile.performanceProfile, PerformanceProfile.highQuality1080p60);
+    expect(SenderVideoProfile.highQuality1080p60.isExperimental, isTrue);
   });
   test('uses the FHD 1080p24 Cinema profile values', () {
     final profile = SenderVideoProfile.cinema1080p24.videoProfile;
@@ -344,6 +391,8 @@ void main() {
 
 final class _FakeMirrorNativeApi implements MirrorNativeApi {
   StartMirrorSessionRequest? lastStartRequest;
+  var startCalls = 0;
+  var stopCalls = 0;
 
   @override
   Future<List<DisplayInfo>> listDisplays() async {
@@ -357,6 +406,16 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
         y: 0,
         scaleFactor: 1,
         isPrimary: true,
+      ),
+      DisplayInfo(
+        id: 'DISPLAY2',
+        name: 'DISPLAY2',
+        width: 1920,
+        height: 1080,
+        x: 1280,
+        y: 0,
+        scaleFactor: 1,
+        isPrimary: false,
       ),
     ];
   }
@@ -384,6 +443,7 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
     StartMirrorSessionRequest request,
   ) async {
     lastStartRequest = request;
+    startCalls++;
     return const NativeSessionSnapshot(
       state: MirrorSessionState.negotiating,
       userMessage: 'Control signaling is ready.',
@@ -396,6 +456,7 @@ final class _FakeMirrorNativeApi implements MirrorNativeApi {
 
   @override
   Future<NativeSessionSnapshot> stopSession(String sessionId) async {
+    stopCalls++;
     return const NativeSessionSnapshot(
       state: MirrorSessionState.idle,
       userMessage: 'Stopped.',

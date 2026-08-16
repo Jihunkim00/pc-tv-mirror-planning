@@ -76,15 +76,9 @@ class _MirroringPageState extends State<MirroringPage> {
                   hostController: _hostController,
                   portController: _portController,
                   onRefresh: _controller.loadDisplays,
-                  onRefreshAudioDevices: _controller.refreshAudioDevices,
                   onStart: _start,
                   onStop: _controller.stop,
-                  onSystemAudioChanged: _controller.setSystemAudioEnabled,
-                  onPcLocalAudioMuteChanged:
-                      _controller.setPcLocalAudioMuteRequested,
                   onVideoProfileChanged: _controller.setVideoProfile,
-                  onTvAudioSourceChanged: _controller.selectTvAudioSourceDevice,
-                  onPcMonitorDeviceChanged: _controller.selectPcMonitorDevice,
                   onCopyDiagnostics: _copyDiagnostics,
                 );
 
@@ -96,7 +90,10 @@ class _MirroringPageState extends State<MirroringPage> {
                           children: [
                             Expanded(
                               flex: 5,
-                              child: _DisplayPanel(controller: _controller),
+                              child: _DisplayPanel(
+                                controller: _controller,
+                                onSelected: _selectDisplay,
+                              ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(flex: 4, child: sessionPanel),
@@ -107,7 +104,10 @@ class _MirroringPageState extends State<MirroringPage> {
                           children: [
                             SizedBox(
                               height: constraints.maxHeight * 0.38,
-                              child: _DisplayPanel(controller: _controller),
+                              child: _DisplayPanel(
+                                controller: _controller,
+                                onSelected: _selectDisplay,
+                              ),
                             ),
                             const SizedBox(height: 16),
                             Expanded(child: sessionPanel),
@@ -120,6 +120,35 @@ class _MirroringPageState extends State<MirroringPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _selectDisplay(String displayId) async {
+    if (_controller.busy || _controller.selectedDisplayId == displayId) {
+      return;
+    }
+    if (!_controller.isRunning) {
+      _controller.selectDisplay(displayId);
+      return;
+    }
+
+    final host = _hostController.text.trim();
+    if (!_isValidIpv4(host)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a valid TV IPv4 address.')),
+        );
+      }
+      return;
+    }
+    final port = int.tryParse(_portController.text.trim()) ?? 50720;
+
+    await _controller.stop();
+    if (!mounted || _controller.state != MirrorSessionState.idle) {
+      return;
+    }
+
+    _controller.selectDisplay(displayId);
+    await _controller.start(receiverHost: host, receiverPort: port);
   }
 
   Future<void> _start() async {
@@ -190,10 +219,30 @@ File _settingsFile() {
   );
 }
 
-class _DisplayPanel extends StatelessWidget {
-  const _DisplayPanel({required this.controller});
+class _DisplayPanel extends StatefulWidget {
+  const _DisplayPanel({required this.controller, required this.onSelected});
 
   final MirrorController controller;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_DisplayPanel> createState() => _DisplayPanelState();
+}
+
+class _DisplayPanelState extends State<_DisplayPanel> {
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -219,19 +268,20 @@ class _DisplayPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: controller.displays.isEmpty
+              child: widget.controller.displays.isEmpty
                   ? const Center(child: Text('No displays found.'))
                   : ListView.separated(
-                      itemCount: controller.displays.length,
+                      controller: _scrollController,
+                      itemCount: widget.controller.displays.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
-                        final display = controller.displays[index];
+                        final display = widget.controller.displays[index];
                         return _DisplayTile(
                           display: display,
-                          selected: display.id == controller.selectedDisplayId,
-                          enabled: !controller.isRunning,
-                          onSelected: () =>
-                              controller.selectDisplay(display.id),
+                          selected:
+                              display.id == widget.controller.selectedDisplayId,
+                          enabled: !widget.controller.busy,
+                          onSelected: () => widget.onSelected(display.id),
                         );
                       },
                     ),
@@ -307,14 +357,9 @@ class _SessionPanel extends StatelessWidget {
     required this.hostController,
     required this.portController,
     required this.onRefresh,
-    required this.onRefreshAudioDevices,
     required this.onStart,
     required this.onStop,
-    required this.onSystemAudioChanged,
-    required this.onPcLocalAudioMuteChanged,
     required this.onVideoProfileChanged,
-    required this.onTvAudioSourceChanged,
-    required this.onPcMonitorDeviceChanged,
     required this.onCopyDiagnostics,
   });
 
@@ -322,35 +367,13 @@ class _SessionPanel extends StatelessWidget {
   final TextEditingController hostController;
   final TextEditingController portController;
   final VoidCallback onRefresh;
-  final VoidCallback onRefreshAudioDevices;
   final VoidCallback onStart;
   final VoidCallback onStop;
-  final ValueChanged<bool> onSystemAudioChanged;
-  final ValueChanged<bool> onPcLocalAudioMuteChanged;
   final ValueChanged<SenderVideoProfile> onVideoProfileChanged;
-  final ValueChanged<String> onTvAudioSourceChanged;
-  final ValueChanged<String> onPcMonitorDeviceChanged;
   final VoidCallback onCopyDiagnostics;
 
   @override
   Widget build(BuildContext context) {
-    final routingReason =
-        _firstNonEmpty(
-          controller.snapshot?.audioRoutingUnsupportedReason,
-          controller.snapshot?.audioMuteUnsupportedReason,
-          controller.audioRoutingUnsupportedReason,
-        ) ??
-        '';
-    final pcMuteSupported =
-        controller.snapshot?.pcLocalAudioMuteSupported ??
-        controller.pcLocalAudioMuteSupportedBySelection;
-    final pcMuteUnsupported =
-        controller.pcLocalAudioMuteRequested && !pcMuteSupported;
-    final pcMuteSubtitle = pcMuteUnsupported
-        ? 'Unavailable: $routingReason'
-        : controller.pcLocalAudioMuteRequested
-        ? 'PC muted - TV audio continues'
-        : 'PC audio on - TV audio continues';
     final experimental4kReason = controller.experimental4kUnavailableReason;
 
     return DecoratedBox(
@@ -416,11 +439,7 @@ class _SessionPanel extends StatelessWidget {
                     enabled:
                         profile != SenderVideoProfile.experimental4k30 ||
                         controller.canSelectExperimental4k30,
-                    child: Text(
-                      profile.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    child: _VideoProfileMenuItem(profile: profile),
                   ),
                 )
                 .toList(growable: false),
@@ -443,110 +462,6 @@ class _SessionPanel extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
-          const SizedBox(height: 8),
-          _MetricSection(
-            title: 'Audio routing',
-            rows: [
-              DropdownButtonFormField<String>(
-                initialValue: controller.selectedTvAudioSourceDeviceId,
-                isExpanded: true,
-                items: controller.audioDevices
-                    .map(
-                      (device) => DropdownMenuItem(
-                        value: device.id,
-                        child: Text(
-                          device.isLikelyVirtual
-                              ? '${device.name} - virtual'
-                              : device.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: controller.isRunning
-                    ? null
-                    : (value) {
-                        if (value != null) {
-                          onTvAudioSourceChanged(value);
-                        }
-                      },
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'TV audio source',
-                ),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: controller.selectedPcMonitorDeviceId,
-                isExpanded: true,
-                items: controller.audioDevices
-                    .map(
-                      (device) => DropdownMenuItem(
-                        value: device.id,
-                        child: Text(
-                          device.isDefault
-                              ? '${device.name} - default'
-                              : device.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: controller.isRunning
-                    ? null
-                    : (value) {
-                        if (value != null) {
-                          onPcMonitorDeviceChanged(value);
-                        }
-                      },
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'PC speaker output',
-                ),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: controller.busy || controller.isRunning
-                    ? null
-                    : onRefreshAudioDevices,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh audio devices'),
-              ),
-              if (routingReason.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  routingReason,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 8),
-          Material(
-            type: MaterialType.transparency,
-            child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: controller.systemAudioEnabled,
-              onChanged: controller.isRunning ? null : onSystemAudioChanged,
-              title: const Text('System audio'),
-              secondary: const Icon(Icons.volume_up),
-            ),
-          ),
-          Material(
-            type: MaterialType.transparency,
-            child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: controller.pcLocalAudioMuteRequested,
-              onChanged: controller.busy || !controller.systemAudioEnabled
-                  ? null
-                  : onPcLocalAudioMuteChanged,
-              title: const Text('Mute PC speakers'),
-              subtitle: Text(pcMuteSubtitle),
-              secondary: const Icon(Icons.speaker),
-            ),
-          ),
           const SizedBox(height: 16),
           _StateBanner(controller: controller),
           if (controller.snapshot != null) ...[
@@ -587,13 +502,42 @@ class _SessionPanel extends StatelessWidget {
   }
 }
 
-String? _firstNonEmpty(String? first, String? second, String? third) {
-  for (final value in [first, second, third]) {
-    if (value != null && value.isNotEmpty) {
-      return value;
-    }
+class _VideoProfileMenuItem extends StatelessWidget {
+  const _VideoProfileMenuItem({required this.profile});
+
+  final SenderVideoProfile profile;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            profile.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (profile.isExperimental) ...[
+          const SizedBox(width: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: colorScheme.tertiaryContainer,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              child: Text(
+                'Experimental',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
   }
-  return null;
 }
 
 class _SenderCounters extends StatelessWidget {
@@ -829,14 +773,6 @@ class _SenderCounters extends StatelessWidget {
                     value: snapshot.audioLastError,
                   ),
                 _MetricRow(
-                  label: 'Mute PC speakers',
-                  value:
-                      'requested ${snapshot.pcLocalAudioMuteRequested}, '
-                      'supported ${snapshot.pcLocalAudioMuteSupported}, '
-                      'applied ${snapshot.pcLocalAudioMuteApplied}, '
-                      'original ${snapshot.pcLocalAudioOriginalMuteState}',
-                ),
-                _MetricRow(
                   label: 'TV audio path',
                   value:
                       'stream ${snapshot.tvAudioStreaming}, '
@@ -844,47 +780,6 @@ class _SenderCounters extends StatelessWidget {
                       'enc ${snapshot.audioEncoderActive}, '
                       'net ${snapshot.audioTransportActive}',
                 ),
-                _MetricRow(
-                  label: 'Audio routing',
-                  value:
-                      '${snapshot.audioRoutingMode}, monitor ${snapshot.localMonitorActive}',
-                ),
-                _MetricRow(
-                  label: 'TV source',
-                  value: snapshot.tvAudioSourceDeviceName.isEmpty
-                      ? 'unknown'
-                      : snapshot.tvAudioSourceDeviceName,
-                ),
-                _MetricRow(
-                  label: 'PC speaker output',
-                  value: snapshot.pcMonitorDeviceName.isEmpty
-                      ? 'unknown'
-                      : snapshot.pcMonitorDeviceName,
-                ),
-                _MetricRow(
-                  label: 'Local monitor',
-                  value:
-                      'muted ${snapshot.localMonitorMuted}, queue ${snapshot.localMonitorQueueDepth}, '
-                      'drop ${snapshot.localMonitorDroppedBuffers}',
-                ),
-                _MetricRow(
-                  label: 'Audio format',
-                  value:
-                      '${snapshot.audioCaptureFormat.isEmpty ? 'unknown' : snapshot.audioCaptureFormat} / '
-                      '${snapshot.audioMonitorFormat.isEmpty ? 'unknown' : snapshot.audioMonitorFormat}',
-                ),
-                if (snapshot.audioMuteUnsupportedReason.isNotEmpty)
-                  _MetricRow(
-                    label: 'Speaker route error',
-                    value: snapshot.audioMuteUnsupportedReason,
-                  ),
-                if (snapshot.audioRoutingUnsupportedReason.isNotEmpty &&
-                    snapshot.audioRoutingUnsupportedReason !=
-                        snapshot.audioMuteUnsupportedReason)
-                  _MetricRow(
-                    label: 'Routing error',
-                    value: snapshot.audioRoutingUnsupportedReason,
-                  ),
               ],
             ),
             const Divider(height: 18),
