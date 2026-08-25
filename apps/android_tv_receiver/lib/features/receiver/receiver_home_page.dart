@@ -682,7 +682,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'PC TV Mirror',
+                  'PC to TV Mirror',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall,

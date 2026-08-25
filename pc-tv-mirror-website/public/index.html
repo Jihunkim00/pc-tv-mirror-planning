@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Windows PC 화면과 시스템 오디오를 Android TV로 간편하게 미러링하는 PC to TV Mirror.">
+  <title>PC to TV Mirror — PC 화면을 TV로</title>
+  <link rel="icon" type="image/x-icon" href="assets/app_icon.ico">
+  <link rel="icon" type="image/png" sizes="256x256" href="assets/app-icon.png">
+  <link rel="apple-touch-icon" href="assets/app-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="shell nav-inner">
+    <a class="brand" href="index.html"><span class="brand-mark"><img src="assets/app-icon.png" alt="" aria-hidden="true"></span><span>PC to TV Mirror</span></a>
+    <div class="nav-links">
+      <a href="index.html#features">Features</a>
+      <a href="windows/index.html">Windows</a>
+      <a href="tv/index.html">TV App</a>
+      <a class="keep" href="privacy/index.html">Privacy</a>
+    </div>
+  </div>
+</nav>
+<main>
+  <section class="hero shell">
+    <div>
+      <div class="hero-app-icon-wrap">
+        <img class="hero-app-icon" src="assets/app-icon.png" alt="PC to TV Mirror 앱 아이콘">
+      </div>
+      <div class="eyebrow"><span class="dot"></span> Windows + Android TV</div>
+      <h1>PC 화면을<br>TV에 그대로.</h1>
+      <p>Windows Sender와 Android TV Receiver를 연결해 같은 네트워크에서 화면과 시스템 오디오를 빠르고 간단하게 미러링하세요.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="windows/index.html">Windows 앱 다운로드</a>
+        <a class="btn" href="tv/index.html">TV 앱 받기</a>
+      </div>
+      <div class="product-stage" aria-label="PC에서 TV로 미러링되는 제품 일러스트레이션">
+        <div class="device monitor"><div class="screen"></div></div>
+        <div class="device tv"><div class="screen"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section shell" id="features">
+    <div class="section-head">
+      <div class="kicker">Simple by design</div>
+      <h2>설치는 두 번.<br>연결은 한 번에.</h2>
+      <p>PC에는 Sender, TV에는 Receiver만 설치하면 됩니다. 복잡한 계정이나 클라우드 업로드 없이 로컬 네트워크 중심으로 동작합니다.</p>
+    </div>
+    <div class="grid-3">
+      <article class="card"><div class="card-icon">01</div><h3>Windows Sender</h3><p>미러링할 화면 또는 창을 선택하고 스트리밍을 시작합니다.</p></article>
+      <article class="card"><div class="card-icon">02</div><h3>Android TV Receiver</h3><p>TV에서 Receiver 앱을 열고 같은 네트워크에서 PC 연결을 받습니다.</p></article>
+      <article class="card"><div class="card-icon">03</div><h3>Screen + System Audio</h3><p>영상과 시스템 오디오를 함께 TV로 전송하는 데 초점을 맞췄습니다.</p></article>
+    </div>
+  </section>
+
+  <section class="section shell" id="download">
+    <div class="section-head">
+      <div class="kicker">Download</div>
+      <h2>두 앱을 설치하세요.</h2>
+    </div>
+    <div class="download-grid">
+      <article class="download-card">
+        <div>
+          <img class="download-app-icon" src="assets/app-icon.png" alt="" aria-hidden="true">
+          <div class="meta">Windows 10 / 11</div>
+          <h3>PC Sender</h3>
+          <p>PC 화면 캡처와 시스템 오디오 전송을 담당하는 Windows 앱입니다.</p>
+        </div>
+        <div><a class="btn primary" href="windows/index.html">Windows 다운로드 페이지 →</a></div>
+      </article>
+      <article class="download-card">
+        <div>
+          <img class="download-app-icon" src="assets/app-icon.png" alt="" aria-hidden="true">
+          <div class="meta">Android TV</div>
+          <h3>TV Receiver</h3>
+          <p>Windows Sender가 보내는 화면과 오디오를 TV에서 재생하는 Receiver 앱입니다.</p>
+        </div>
+        <div><a class="btn" href="tv/index.html">TV 앱 다운로드 페이지 →</a></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section shell" id="privacy">
+    <div class="privacy-band">
+      <div>
+        <div class="kicker">Privacy</div>
+        <h3>화면은 TV로. 데이터는 클라우드로 보내지 않습니다.</h3>
+        <p>현재 MVP는 계정 생성, 광고 추적, 클라우드 영상 저장을 요구하지 않습니다. 화면·시스템 오디오는 미러링을 위해 로컬에서 처리되며, 웹사이트 호스팅 과정의 기본 요청 로그는 Firebase/Google 인프라에서 처리될 수 있습니다.</p>
+      </div>
+      <a class="btn" href="privacy/index.html">개인정보 처리방침 보기</a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="shell footer-inner">
+    <div>© <span data-year></span> PC to TV Mirror</div>
+    <div class="footer-links">
+      <a href="privacy/index.html">개인정보 처리방침</a>
+      <a href="windows/index.html">Windows 다운로드</a>
+      <a href="tv/index.html">TV 앱</a>
+    </div>
+  </div>
+</footer>
+<script src="config.js"></script><script src="app.js"></script>
+</body>
+</html>

@@ -11,7 +11,7 @@ class WindowsSenderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PC TV Mirror',
+      title: 'PC to TV Mirror',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

@@ -213,7 +213,7 @@ File _settingsFile() {
   final base = Platform.environment['APPDATA'];
   final root = base == null || base.isEmpty
       ? Directory.systemTemp.path
-      : '$base${Platform.pathSeparator}PC TV Mirror';
+      : '$base${Platform.pathSeparator}PC to TV Mirror';
   return File(
     '$root${Platform.pathSeparator}windows_sender_last_receiver_ip.txt',
   );
@@ -390,7 +390,7 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Stage 5 session',
+                  'Beta version',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
