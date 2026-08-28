@@ -13,7 +13,7 @@ Firebase Hosting용 정적 웹사이트 템플릿입니다.
 
 ```js
 window.PCMIRROR_CONFIG = {
-  windowsDownloadUrl: "https://github.com/Jihunkim00/pc-tv-mirror-planning/releases/download/v.1.0/windows_sender.exe",
+  windowsDownloadUrl: "https://github.com/Jihunkim00/pc-tv-mirror-planning/releases/download/v.1.0/pc.to.TV.mirror-sender.zip",
   tvDownloadUrl: "https://...",
   githubUrl: "https://github.com/Jihunkim00/pc-tv-mirror-planning",
   supportEmail: "jihun@thj-project.info"
