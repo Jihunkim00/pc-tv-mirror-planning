@@ -6,6 +6,45 @@ import 'package:windows_sender/core/native_bridge/mirror_native_api.dart';
 import 'package:windows_sender/features/mirroring/mirror_controller.dart';
 
 void main() {
+  testWidgets('changes language in place without restarting a session', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final nativeApi = _FakeMirrorNativeApi();
+    await tester.pumpWidget(
+      WindowsSenderApp(
+        nativeApi: nativeApi,
+        languageSettingsPath: String.fromCharCode(0),
+        preferredLocalesOverride: const [Locale('en')],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(EditableText).first, '192.168.1.40');
+    final startButton = find.widgetWithText(FilledButton, 'Start');
+    await tester.ensureVisible(startButton);
+    await tester.tap(startButton);
+    await tester.pumpAndSettle();
+    expect(nativeApi.startCalls, 1);
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日本語').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).locale,
+      const Locale('ja'),
+    );
+    expect(find.text('言語'), findsOneWidget);
+    expect(nativeApi.startCalls, 1);
+    expect(nativeApi.stopCalls, 0);
+  });
+
   testWidgets('loads displays and sends the MVP video/audio start request', (
     tester,
   ) async {
@@ -49,9 +88,12 @@ void main() {
     expect(nativeApi.lastStartRequest!.pcLocalAudioMuteRequested, isFalse);
     expect(nativeApi.lastStartRequest!.tvAudioSourceDeviceId, 'virtual-tv');
     expect(nativeApi.lastStartRequest!.pcMonitorDeviceId, 'speakers');
-    expect(find.text('State: negotiating'), findsOneWidget);
+    expect(find.text('Preparing stream'), findsOneWidget);
     expect(find.text('System audio'), findsNothing);
-    expect(find.text('Mute PC speakers'), findsNothing);
+    expect(
+      find.widgetWithText(SwitchListTile, 'Mute PC speakers'),
+      findsOneWidget,
+    );
     expect(find.text('Audio routing'), findsNothing);
   });
 
@@ -267,6 +309,10 @@ void main() {
       'pcLocalAudioMuteSupported': false,
       'pcLocalAudioMuteApplied': false,
       'pcLocalAudioOriginalMuteState': false,
+      'pcLocalAudioActualMuted': true,
+      'pcLocalAudioMuteExternalOverride': true,
+      'pcLocalAudioMuteTargetDeviceId': 'virtual-tv',
+      'pcLocalAudioMuteErrorCode': 'restore_failed',
       'tvAudioStreaming': true,
       'audioCaptureActive': true,
       'audioEncoderActive': true,
@@ -358,6 +404,10 @@ void main() {
     expect(snapshot.pcLocalAudioMuteRequested, isTrue);
     expect(snapshot.pcLocalAudioMuteSupported, isFalse);
     expect(snapshot.pcLocalAudioMuteApplied, isFalse);
+    expect(snapshot.pcLocalAudioActualMuted, isTrue);
+    expect(snapshot.pcLocalAudioMuteExternalOverride, isTrue);
+    expect(snapshot.pcLocalAudioMuteTargetDeviceId, 'virtual-tv');
+    expect(snapshot.pcLocalAudioMuteErrorCode, 'restore_failed');
     expect(snapshot.tvAudioStreaming, isTrue);
     expect(snapshot.audioCaptureActive, isTrue);
     expect(snapshot.audioEncoderActive, isTrue);

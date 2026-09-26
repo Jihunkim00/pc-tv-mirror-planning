@@ -484,6 +484,8 @@ std::string SenderBottleneckSummary(double capture_callback_fps,
 
 }  // namespace
 
+MirrorSession::~MirrorSession() { Stop(); }
+
 NativeSnapshot MirrorSession::Start(const StartSessionOptions& options) {
   Stop();
   ResetCounters();
@@ -790,24 +792,7 @@ NativeSnapshot MirrorSession::Stop() {
 
 NativeSnapshot MirrorSession::SetPcLocalAudioMuteRequested(bool requested) {
   pc_local_audio_mute_requested_.store(requested);
-  ApplyLocalMonitorMute(requested);
   return Snapshot();
-}
-
-void MirrorSession::ApplyLocalMonitorMute(bool requested) {
-  std::scoped_lock route_lock(audio_route_mutex_);
-  if (local_monitor_renderer_ != nullptr &&
-      pc_local_audio_mute_supported_.load()) {
-    local_monitor_renderer_->SetMuted(requested);
-    local_monitor_muted_.store(requested);
-    pc_local_audio_mute_applied_.store(requested);
-    local_monitor_queue_depth_.store(local_monitor_renderer_->queue_depth());
-    local_monitor_dropped_buffers_.store(
-        local_monitor_renderer_->dropped_buffers());
-    return;
-  }
-  pc_local_audio_mute_applied_.store(false);
-  local_monitor_muted_.store(false);
 }
 
 void MirrorSession::EncodeLoop() {
@@ -1067,6 +1052,9 @@ void MirrorSession::AudioLoop() {
     std::scoped_lock status_lock(status_mutex_);
     audio_capture_state_ = "starting";
     audio_last_error_.clear();
+    local_speaker_mute_last_error_.clear();
+    pc_local_audio_mute_target_device_id_.clear();
+    pc_local_audio_mute_error_code_.clear();
   }
 
   std::string error;
@@ -1075,9 +1063,60 @@ void MirrorSession::AudioLoop() {
     std::scoped_lock status_lock(status_mutex_);
     audio_capture_state_ = "failed";
     audio_last_error_ = error;
+    if (pc_local_audio_mute_requested_.load()) {
+      pc_local_audio_mute_error_code_ = "audio_capture_unavailable";
+      local_speaker_mute_last_error_ = error;
+    }
     return;
   }
 
+  AudioEndpointMuteController endpoint_mute;
+  bool mute_controller_supported = false;
+  bool mute_attempted = false;
+  const std::string mute_target_device_id = capture.device_id();
+  std::string mute_error_code;
+  std::string mute_error;
+  auto publish_mute_state = [&]() {
+    pc_local_audio_mute_supported_.store(mute_controller_supported);
+    pc_local_audio_mute_applied_.store(endpoint_mute.applied_by_app());
+    pc_local_audio_actual_mute_.store(endpoint_mute.actual_muted());
+    pc_local_audio_original_mute_state_.store(endpoint_mute.original_muted());
+    pc_local_audio_mute_external_override_.store(
+        endpoint_mute.externally_overridden());
+    std::scoped_lock status_lock(status_mutex_);
+    pc_local_audio_mute_target_device_id_ = mute_target_device_id;
+    pc_local_audio_mute_error_code_ = mute_error_code;
+    local_speaker_mute_last_error_ = mute_error;
+  };
+  auto apply_mute_request = [&](bool requested) {
+    if (!requested && !mute_attempted && !endpoint_mute.started()) {
+      return;
+    }
+    if (requested) {
+      if (!mute_attempted) {
+        mute_attempted = true;
+        mute_controller_supported = endpoint_mute.Start(
+            capture.endpoint(), &mute_error_code, &mute_error);
+      }
+      if (mute_controller_supported && endpoint_mute.started()) {
+        endpoint_mute.ApplyRequestedState(
+            true, &mute_error_code, &mute_error);
+      }
+    } else {
+      if (endpoint_mute.started()) {
+        endpoint_mute.ApplyRequestedState(
+            false, &mute_error_code, &mute_error);
+      } else {
+        mute_error_code.clear();
+        mute_error.clear();
+      }
+      mute_attempted = false;
+    }
+    publish_mute_state();
+  };
+  if (pc_local_audio_mute_requested_.load()) {
+    apply_mute_request(true);
+  }
   WasapiLocalMonitorRenderer local_monitor;
   bool local_monitor_started = false;
   {
@@ -1103,7 +1142,6 @@ void MirrorSession::AudioLoop() {
       }
     } else {
       local_monitor_started = true;
-      local_monitor.SetMuted(pc_local_audio_mute_requested_.load());
     }
 
     std::scoped_lock status_lock(status_mutex_);
@@ -1120,33 +1158,27 @@ void MirrorSession::AudioLoop() {
     audio_routing_unsupported_reason_ =
         local_monitor_started ? std::string() : routing_error;
   }
-  {
-    std::scoped_lock route_lock(audio_route_mutex_);
-    local_monitor_renderer_ = local_monitor_started ? &local_monitor : nullptr;
-  }
-  pc_local_audio_mute_supported_.store(local_monitor_started);
-  pc_local_audio_mute_applied_.store(
-      local_monitor_started && pc_local_audio_mute_requested_.load());
   local_monitor_active_.store(local_monitor_started);
-  local_monitor_muted_.store(
-      local_monitor_started && pc_local_audio_mute_requested_.load());
+  local_monitor_muted_.store(local_monitor.muted());
 
   AacEncoder encoder;
   if (!encoder.Start(&error)) {
-    {
-      std::scoped_lock route_lock(audio_route_mutex_);
-      if (local_monitor_renderer_ == &local_monitor) {
-        local_monitor_renderer_ = nullptr;
-      }
+    if (endpoint_mute.started()) {
+      endpoint_mute.Stop(&mute_error_code, &mute_error);
+      publish_mute_state();
     }
     local_monitor.Stop();
     local_monitor_active_.store(false);
     local_monitor_muted_.store(false);
-    pc_local_audio_mute_applied_.store(false);
     capture.Stop();
     std::scoped_lock status_lock(status_mutex_);
     audio_capture_state_ = "failed";
     audio_last_error_ = error;
+    if (pc_local_audio_mute_requested_.load()) {
+      pc_local_audio_mute_error_code_ = "audio_capture_failed";
+      local_speaker_mute_last_error_ =
+          "Audio encoder failed after capture initialization";
+    }
     return;
   }
 
@@ -1180,6 +1212,7 @@ void MirrorSession::AudioLoop() {
 
   PcmAudioFrame pcm_frame;
   while (running_) {
+    apply_mute_request(pc_local_audio_mute_requested_.load());
     error.clear();
     if (IsPaused()) {
       if (!capture.CaptureNext(&pcm_frame, 50, &error) && !error.empty()) {
@@ -1251,16 +1284,13 @@ void MirrorSession::AudioLoop() {
     }
   }
   encoder.Stop();
-  {
-    std::scoped_lock route_lock(audio_route_mutex_);
-    if (local_monitor_renderer_ == &local_monitor) {
-      local_monitor_renderer_ = nullptr;
-    }
+  if (endpoint_mute.started()) {
+    endpoint_mute.Stop(&mute_error_code, &mute_error);
+    publish_mute_state();
   }
   local_monitor.Stop();
   local_monitor_active_.store(false);
   local_monitor_muted_.store(false);
-  pc_local_audio_mute_applied_.store(false);
   capture.Stop();
 }
 
@@ -2057,7 +2087,14 @@ snapshot.receiver_codec_configs_received = receiver_codec_configs_received_;
   snapshot.pc_local_audio_mute_supported =
       pc_local_audio_mute_supported_.load();
   snapshot.pc_local_audio_mute_applied = pc_local_audio_mute_applied_.load();
-  snapshot.pc_local_audio_original_mute_state = false;
+  snapshot.pc_local_audio_original_mute_state =
+      pc_local_audio_original_mute_state_.load();
+  snapshot.pc_local_audio_actual_mute = pc_local_audio_actual_mute_.load();
+  snapshot.pc_local_audio_mute_external_override =
+      pc_local_audio_mute_external_override_.load();
+  snapshot.pc_local_audio_mute_target_device_id =
+      pc_local_audio_mute_target_device_id_;
+  snapshot.pc_local_audio_mute_error_code = pc_local_audio_mute_error_code_;
   snapshot.audio_capture_active =
       snapshot.audio_enabled && snapshot.audio_capture_state == "capturing";
   snapshot.audio_encoder_active =
@@ -2083,20 +2120,15 @@ snapshot.receiver_codec_configs_received = receiver_codec_configs_received_;
   snapshot.audio_monitor_format = audio_monitor_format_;
   snapshot.audio_routing_unsupported_reason =
       audio_routing_unsupported_reason_;
-  snapshot.audio_mute_unsupported_reason =
-      snapshot.pc_local_audio_mute_supported
-          ? std::string()
-          : audio_routing_unsupported_reason_;
+  snapshot.audio_mute_unsupported_reason = pc_local_audio_mute_error_code_;
   snapshot.local_speaker_mute_mode =
       snapshot.pc_local_audio_mute_requested ? "pcLocalMuteRequested"
                                              : "pcAndTv";
   snapshot.local_speaker_mute_state =
-      snapshot.pc_local_audio_mute_applied
-          ? "muted"
-          : (snapshot.pc_local_audio_mute_requested ? "unsupported"
-                                                    : "disabled");
-  snapshot.local_speaker_mute_last_error =
-      snapshot.audio_mute_unsupported_reason;
+      snapshot.pc_local_audio_mute_error_code.empty()
+          ? (snapshot.pc_local_audio_actual_mute ? "muted" : "notMuted")
+          : "error";
+  snapshot.local_speaker_mute_last_error = local_speaker_mute_last_error_;
   return snapshot;
 }
 
@@ -2149,6 +2181,9 @@ void MirrorSession::ResetCounters() {
   pc_local_audio_mute_requested_ = false;
   pc_local_audio_mute_supported_ = false;
   pc_local_audio_mute_applied_ = false;
+  pc_local_audio_actual_mute_ = false;
+  pc_local_audio_original_mute_state_ = false;
+  pc_local_audio_mute_external_override_ = false;
   local_monitor_active_ = false;
   local_monitor_muted_ = false;
   local_monitor_queue_depth_ = 0;
@@ -2273,6 +2308,9 @@ void MirrorSession::ResetCounters() {
   audio_input_sample_rate_ = 0;
   audio_input_channels_ = 0;
   audio_last_error_.clear();
+  local_speaker_mute_last_error_.clear();
+  pc_local_audio_mute_target_device_id_.clear();
+  pc_local_audio_mute_error_code_.clear();
   last_capture_to_encode_ms_ = 0.0;
   total_capture_to_encode_ms_ = 0.0;
   max_capture_to_encode_ms_ = 0.0;

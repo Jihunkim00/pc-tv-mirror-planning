@@ -387,6 +387,10 @@ final class NativeSessionSnapshot {
     this.pcLocalAudioMuteSupported = false,
     this.pcLocalAudioMuteApplied = false,
     this.pcLocalAudioOriginalMuteState = false,
+    this.pcLocalAudioActualMuted = false,
+    this.pcLocalAudioMuteExternalOverride = false,
+    this.pcLocalAudioMuteTargetDeviceId = '',
+    this.pcLocalAudioMuteErrorCode = '',
     this.tvAudioStreaming = false,
     this.audioCaptureActive = false,
     this.audioEncoderActive = false,
@@ -702,6 +706,10 @@ final class NativeSessionSnapshot {
   final bool pcLocalAudioMuteSupported;
   final bool pcLocalAudioMuteApplied;
   final bool pcLocalAudioOriginalMuteState;
+  final bool pcLocalAudioActualMuted;
+  final bool pcLocalAudioMuteExternalOverride;
+  final String pcLocalAudioMuteTargetDeviceId;
+  final String pcLocalAudioMuteErrorCode;
   final bool tvAudioStreaming;
   final bool audioCaptureActive;
   final bool audioEncoderActive;
@@ -821,18 +829,12 @@ final class NativeSessionSnapshot {
         json,
         'ownedTextureCopyAverageMs',
       ),
-      ownedTextureCopyP95Ms: _readOptionalDouble(
-        json,
-        'ownedTextureCopyP95Ms',
-      ),
+      ownedTextureCopyP95Ms: _readOptionalDouble(json, 'ownedTextureCopyP95Ms'),
       workerProcessingAverageMs: _readOptionalDouble(
         json,
         'workerProcessingAverageMs',
       ),
-      workerProcessingP95Ms: _readOptionalDouble(
-        json,
-        'workerProcessingP95Ms',
-      ),
+      workerProcessingP95Ms: _readOptionalDouble(json, 'workerProcessingP95Ms'),
       workerD3dLockWaitAverageMs: _readOptionalDouble(
         json,
         'workerD3dLockWaitAverageMs',
@@ -863,10 +865,7 @@ final class NativeSessionSnapshot {
         json,
         'workerBgraToNv12AverageMs',
       ),
-      workerBgraToNv12P95Ms: _readOptionalDouble(
-        json,
-        'workerBgraToNv12P95Ms',
-      ),
+      workerBgraToNv12P95Ms: _readOptionalDouble(json, 'workerBgraToNv12P95Ms'),
       workerTotalAverageMs: _readOptionalDouble(json, 'workerTotalAverageMs'),
       workerTotalP95Ms: _readOptionalDouble(json, 'workerTotalP95Ms'),
       handoffSlots: _readOptionalInt(json, 'handoffSlots', defaultValue: 3),
@@ -1341,6 +1340,24 @@ final class NativeSessionSnapshot {
       pcLocalAudioOriginalMuteState: _readOptionalBool(
         json,
         'pcLocalAudioOriginalMuteState',
+      ),
+      pcLocalAudioActualMuted: _readOptionalBool(
+        json,
+        'pcLocalAudioActualMuted',
+      ),
+      pcLocalAudioMuteExternalOverride: _readOptionalBool(
+        json,
+        'pcLocalAudioMuteExternalOverride',
+      ),
+      pcLocalAudioMuteTargetDeviceId: _readOptionalString(
+        json,
+        'pcLocalAudioMuteTargetDeviceId',
+        defaultValue: '',
+      ),
+      pcLocalAudioMuteErrorCode: _readOptionalString(
+        json,
+        'pcLocalAudioMuteErrorCode',
+        defaultValue: '',
       ),
       tvAudioStreaming: _readOptionalBool(json, 'tvAudioStreaming'),
       audioCaptureActive: _readOptionalBool(json, 'audioCaptureActive'),

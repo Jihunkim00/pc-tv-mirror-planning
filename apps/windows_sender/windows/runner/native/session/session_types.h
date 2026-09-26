@@ -248,6 +248,10 @@ struct NativeSnapshot {
   bool pc_local_audio_mute_supported = false;
   bool pc_local_audio_mute_applied = false;
   bool pc_local_audio_original_mute_state = false;
+  bool pc_local_audio_actual_mute = false;
+  bool pc_local_audio_mute_external_override = false;
+  std::string pc_local_audio_mute_target_device_id;
+  std::string pc_local_audio_mute_error_code;
   bool tv_audio_streaming = false;
   bool audio_capture_active = false;
   bool audio_encoder_active = false;

@@ -30,6 +30,7 @@ class SystemAudioLoopback {
 
   std::string device_name() const { return device_name_; }
   std::string device_id() const { return device_id_; }
+  IMMDevice* endpoint() const { return device_.get(); }
   std::string capture_format() const { return capture_format_; }
   int input_sample_rate() const { return input_sample_rate_; }
   int input_channels() const { return input_channels_; }

@@ -4,7 +4,7 @@ description: "Android TV receiver app for the PC TV Mirror STAGE 1 video path."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none'
 
-version: 0.3.6+29
+version: 0.4.0+30
 
 environment:
   sdk: ^3.12.2
@@ -13,6 +13,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
   mirror_protocol:
     path: ../../packages/mirror_protocol
 
@@ -30,6 +33,7 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  generate: true
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

@@ -544,6 +544,14 @@ EncodableValue ToEncodable(const pctv::NativeSnapshot& snapshot) {
       EncodableValue(snapshot.pc_local_audio_mute_applied);
   map[EncodableValue("pcLocalAudioOriginalMuteState")] =
       EncodableValue(snapshot.pc_local_audio_original_mute_state);
+  map[EncodableValue("pcLocalAudioActualMuted")] =
+      EncodableValue(snapshot.pc_local_audio_actual_mute);
+  map[EncodableValue("pcLocalAudioMuteExternalOverride")] =
+      EncodableValue(snapshot.pc_local_audio_mute_external_override);
+  map[EncodableValue("pcLocalAudioMuteTargetDeviceId")] =
+      EncodableValue(snapshot.pc_local_audio_mute_target_device_id);
+  map[EncodableValue("pcLocalAudioMuteErrorCode")] =
+      EncodableValue(snapshot.pc_local_audio_mute_error_code);
   map[EncodableValue("tvAudioStreaming")] =
       EncodableValue(snapshot.tv_audio_streaming);
   map[EncodableValue("audioCaptureActive")] =

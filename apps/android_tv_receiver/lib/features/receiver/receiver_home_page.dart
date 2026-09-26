@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
+import 'package:android_tv_receiver/l10n/generated/app_localizations.dart';
 
 import '../../core/native_bridge/receiver_native_api.dart';
 import '../../widgets/tv_focus_button.dart';
@@ -497,12 +498,14 @@ class _VideoSurface extends StatelessWidget {
                       color: Colors.black.withValues(alpha: 0.72),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Padding(
+                    child: Padding(
                       padding: EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      child: Text('Waiting for PC video frames'),
+                      child: Text(
+                        AppLocalizations.of(context).waitingForVideoFrames,
+                      ),
                     ),
                   ),
                 ),
@@ -564,44 +567,60 @@ class _PlaybackDebugOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final value = snapshot;
     final lines = <String>[
-      'VIDEO DEBUG',
-      'Render mode ' + (value?.rendererMode ?? 'immediate'),
-      'Release immediate/scheduled ' +
+      l10n.videoDebug,
+      l10n.renderMode + ' ' + (value?.rendererMode ?? 'immediate'),
+      l10n.releaseImmediateScheduled +
+          ' ' +
           (value?.immediateRenderFrames ?? 0).toString() +
           ' / ' +
           (value?.scheduledRenderFrames ?? 0).toString(),
-      'Input ' +
+      l10n.input +
+          ' ' +
           _rate(value?.receivedAccessUnitFps ?? 0) +
-          '  Decoder ' +
+          '  ' +
+          l10n.decoder +
+          ' ' +
           _rate(value?.decoderOutputFps ?? 0),
-      'Codec rendered ' + _rate(value?.codecRenderedFpsRecent ?? 0),
-      'Render p50/p95/max ' +
+      l10n.codecRendered + ' ' + _rate(value?.codecRenderedFpsRecent ?? 0),
+      l10n.renderP50P95Max +
+          ' ' +
           _ms(value?.renderedIntervalP50Ms ?? 0) +
           ' / ' +
           _ms(value?.renderedIntervalP95Ms ?? 0) +
           ' / ' +
           _ms(value?.renderedIntervalMaxMs ?? 0),
-      'Jitter p95 ' +
+      l10n.jitterP95 +
+          ' ' +
           _ms(value?.renderedJitterP95Ms ?? 0) +
-          '  Gaps ' +
+          '  ' +
+          l10n.gaps +
+          ' ' +
           (value?.longFrameGapCountRecent ?? 0).toString(),
-      'Drops ' +
+      l10n.drops +
+          ' ' +
           (value?.droppedFrames ?? 0).toString() +
           '  PTS ' +
           (value?.videoPtsSource ?? 'unavailable') +
-          ' drift ' +
+          ' ' +
+          l10n.drift +
+          ' ' +
           _ms(value?.ptsDriftMs ?? 0),
-      'Display ' +
+      l10n.display +
+          ' ' +
           (value?.displayWidth ?? 0).toString() +
           'x' +
           (value?.displayHeight ?? 0).toString() +
           '@' +
           _rate(value?.displayRefreshRateHz ?? 0),
-      'Surface ' +
+      l10n.surface +
+          ' ' +
           _rate(value?.surfaceRequestedRateFps ?? 0) +
-          '  Mode ' +
+          '  ' +
+          l10n.mode +
+          ' ' +
           (value?.frameRateModeMatch ?? 'NOT_MATCHED'),
     ];
     return DecoratedBox(
@@ -664,6 +683,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final capabilities = controller.capabilities;
     final snapshot = controller.snapshot;
     final outputCrop = _formatCrop(snapshot);
@@ -692,8 +712,8 @@ class _ReceiverStatusPanel extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           _StatusBadge(
-            label: controller.state.wireName,
-            message: controller.statusMessage,
+            label: _receiverStateLabel(l10n, controller.state),
+            message: _receiverStatusMessage(l10n, controller.state),
           ),
           const SizedBox(height: 18),
           FocusTraversalOrder(
@@ -709,7 +729,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
               onPressed: onRestart,
               onNextFocus: fullscreenFocusNode.requestFocus,
               icon: Icons.refresh,
-              label: 'Restart receiver',
+              label: l10n.restartReceiver,
             ),
           ),
           const SizedBox(height: 10),
@@ -727,7 +747,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
               onPreviousFocus: restartFocusNode.requestFocus,
               onNextFocus: stopFocusNode.requestFocus,
               icon: Icons.fullscreen,
-              label: 'Fullscreen',
+              label: l10n.fullscreen,
             ),
           ),
           const SizedBox(height: 10),
@@ -740,7 +760,7 @@ class _ReceiverStatusPanel extends StatelessWidget {
               onPressed: onStop,
               onPreviousFocus: fullscreenFocusNode.requestFocus,
               icon: Icons.stop,
-              label: 'Stop receiver',
+              label: l10n.stopReceiver,
             ),
           ),
           const SizedBox(height: 18),
@@ -751,297 +771,321 @@ class _ReceiverStatusPanel extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               value: autoFullscreen,
               onChanged: onAutoFullscreenChanged,
-              title: const Text('Auto fullscreen'),
+              title: Text(l10n.autoFullscreen),
             ),
           ),
           Material(
             type: MaterialType.transparency,
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('FPS debug overlay'),
-              subtitle: const Text('Actual codec render/display timing'),
+              title: Text(l10n.fpsDebugOverlay),
+              subtitle: Text(l10n.actualCodecTiming),
               value: showPlaybackDebug,
               onChanged: onPlaybackDebugChanged,
             ),
           ),
           const SizedBox(height: 8),
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'fit', label: Text('Fit')),
-              ButtonSegment(value: 'fill', label: Text('Fill')),
+            segments: [
+              ButtonSegment(value: 'fit', label: Text(l10n.fit)),
+              ButtonSegment(value: 'fill', label: Text(l10n.fill)),
             ],
             selected: {scaleMode},
             onSelectionChanged: (values) => onScaleModeChanged(values.first),
           ),
           const SizedBox(height: 18),
           _MetricRow(
-            label: 'Control port',
+            label: l10n.controlPort,
             value:
                 '${snapshot?.receiverPort ?? ReceiverController.defaultPort}',
           ),
           _MetricRow(
-            label: 'TV address',
+            label: l10n.tvAddress,
             value: _formatReceiverAddresses(snapshot),
           ),
           _MetricRow(
-            label: 'Protocol',
+            label: l10n.protocol,
             value: '${capabilities?.protocolVersion ?? 1}',
           ),
           _MetricRow(
-            label: 'Video',
+            label: l10n.video,
             value: capabilities == null
                 ? 'H.264 720p30'
                 : '${capabilities.videoCodecs.map((codec) => codec.wireName).join(', ')} '
                       '${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}',
           ),
           _MetricRow(
-            label: '4K',
+            label: l10n.fourK,
             value:
                 '${capabilities?.supports4k30 ?? snapshot?.receiverSupports4k30 ?? false} '
                 '${snapshot?.receiverMaxVideoWidth ?? capabilities?.maxWidth ?? 0}x'
                 '${snapshot?.receiverMaxVideoHeight ?? capabilities?.maxHeight ?? 0}',
           ),
           _MetricRow(
-            label: 'Decoder',
+            label: l10n.decoder,
             value: snapshot?.decoderReady == true
                 ? snapshot?.receiverDecoderName ??
                       capabilities?.decoderName ??
-                      'MediaCodec ready'
-                : 'Checking',
+                      l10n.mediaCodecReady
+                : l10n.checking,
           ),
           _MetricRow(
-            label: 'Surface',
+            label: l10n.surface,
             value: snapshot?.surfaceRendererReady == true
-                ? 'SurfaceView ready'
-                : 'Pending',
+                ? l10n.surfaceViewReady
+                : l10n.pending,
           ),
           const SizedBox(height: 18),
-          Text('Performance', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            l10n.performance,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
           _MetricRow(
-            label: 'Summary',
+            label: l10n.summary,
             value: snapshot?.bottleneckSummary ?? 'warming_up',
           ),
           _MetricRow(
-            label: 'Receive / Decode / Present',
+            label: l10n.receiveDecodePresent,
             value:
                 '${(snapshot?.receivedAccessUnitFps ?? 0).toStringAsFixed(1)} / '
                 '${(snapshot?.decoderOutputFps ?? 0).toStringAsFixed(1)} / '
                 '${(snapshot?.releasedToSurfaceFps ?? 0).toStringAsFixed(1)} fps',
           ),
           _MetricRow(
-            label: 'Present p95',
+            label: l10n.presentP95,
             value:
                 '${(snapshot?.presentedFrameIntervalP95Ms ?? 0).toStringAsFixed(1)} ms',
           ),
           _MetricRow(
-            label: 'Latency avg/p95',
+            label: l10n.latencyAvgP95,
             value:
                 '${(snapshot?.latencyAverageMs ?? 0).toStringAsFixed(1)}/'
                 '${(snapshot?.latencyP95Ms ?? 0).toStringAsFixed(1)} ms',
           ),
           _MetricRow(
-            label: 'Renderer',
+            label: l10n.renderer,
             value: snapshot?.rendererMode ?? 'lowLatencyPaced',
           ),
           _MetricRow(
-            label: 'Queue',
+            label: l10n.queue,
             value:
                 '${snapshot?.receiverQueueDepth ?? 0}/${snapshot?.maxReceiverQueueDepth ?? 0}',
           ),
           _MetricRow(
-            label: 'Drops',
+            label: l10n.drops,
             value:
                 'stale ${snapshot?.staleAccessUnitsDropped ?? 0}, late ${snapshot?.lateOutputBuffersDropped ?? 0}',
           ),
           _MetricRow(
-            label: 'Sequence gaps',
+            label: l10n.sequenceGaps,
             value: '${snapshot?.frameSequenceGaps ?? 0}',
           ),
           const SizedBox(height: 18),
-          Text('Audio', style: Theme.of(context).textTheme.titleMedium),
+          Text(l10n.audio, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: snapshot?.audioMuted ?? false,
             onChanged: (value) => controller.setAudioMuted(value),
-            title: Text('Audio: ${snapshot?.audioState ?? 'idle'}'),
+            title: Text('${l10n.audio}: ${snapshot?.audioState ?? l10n.idle}'),
           ),
           _MetricRow(
-            label: 'Codec',
+            label: l10n.audioCodec,
             value:
                 '${snapshot?.audioCodec ?? 'audio/mp4a-latm'} ${snapshot?.audioSampleRate ?? 0} Hz ${snapshot?.audioChannels ?? 0} ch',
           ),
           _MetricRow(
-            label: 'Decoder',
+            label: l10n.decoder,
             value:
                 '${snapshot?.audioDecoderState ?? 'released'} / ${snapshot?.audioDecoderName ?? 'unknown'}',
           ),
           _MetricRow(
-            label: 'Track',
+            label: l10n.track,
             value:
                 '${snapshot?.audioTrackState ?? 'NONE'} / ${snapshot?.audioTrackPlayState ?? 'STOPPED'}',
           ),
           _MetricRow(
-            label: 'Audio session',
+            label: l10n.audioSession,
             value:
                 '${snapshot?.receiverSessionGeneration ?? 0}/${snapshot?.audioSessionGeneration ?? 0}',
           ),
           _MetricRow(
-            label: 'Queue / PCM',
+            label: l10n.queuePcm,
             value:
                 '${snapshot?.audioQueueDepth ?? 0}/${snapshot?.pcmQueueDepth ?? 0}',
           ),
           _MetricRow(
-            label: 'Buffered',
+            label: l10n.buffered,
             value:
                 '${(snapshot?.audioBufferedDurationMs ?? 0).toStringAsFixed(1)} ms',
           ),
           _MetricRow(
-            label: 'A/V sync',
+            label: l10n.avSync,
             value:
                 '${(snapshot?.avSyncOffsetMs ?? 0).toStringAsFixed(1)} ms '
                 '(${snapshot?.syncMaster ?? 'videoLocal'})',
           ),
           _MetricRow(
-            label: 'A/V avg/p95',
+            label: l10n.avAvgP95,
             value:
                 '${(snapshot?.avSyncAverageMs ?? 0).toStringAsFixed(1)}/'
                 '${(snapshot?.avSyncP95Ms ?? 0).toStringAsFixed(1)} ms',
           ),
           _MetricRow(
-            label: 'Audio packets',
+            label: l10n.audioPackets,
             value:
                 '${snapshot?.receivedAudioPackets ?? 0}/${snapshot?.audioDecoderInputPackets ?? 0}/${snapshot?.audioDecoderOutputBuffers ?? 0} '
                 '(${(snapshot?.audioPacketsReceivedRecent ?? 0).toStringAsFixed(1)}/s)',
           ),
           _MetricRow(
-            label: 'Audio writes',
+            label: l10n.audioWrites,
             value:
                 '${snapshot?.audioTrackWrittenFrames ?? 0}f/${snapshot?.audioBytesWritten ?? 0}B '
                 '${(snapshot?.audioBytesWrittenRecent ?? 0).toStringAsFixed(0)}B/s',
           ),
           _MetricRow(
-            label: 'Audio recovery',
+            label: l10n.audioRecovery,
             value:
                 'recreate ${snapshot?.audioTrackRecreatedCount ?? 0}, '
                 'write ${snapshot?.audioTrackWriteErrorCount ?? 0}, '
                 'dead ${snapshot?.audioTrackDeadObjectCount ?? 0}',
           ),
           _MetricRow(
-            label: 'Audio reset',
+            label: l10n.audioReset,
             value:
                 '${snapshot?.audioSessionResetCount ?? 0}, pts ${snapshot?.audioPtsResetCount ?? 0}',
           ),
           _MetricRow(
-            label: 'Audio expected',
+            label: l10n.audioExpected,
             value:
                 '${snapshot?.tvAudioAudibleExpected ?? false}, play ${snapshot?.audioTrackPlayCalled ?? false}',
           ),
           _MetricRow(
-            label: 'Audio drops',
+            label: l10n.audioDrops,
             value:
                 '${snapshot?.audioDroppedPackets ?? 0}, av ${snapshot?.videoFramesDroppedForAvSync ?? 0}',
           ),
           if ((snapshot?.lastAudioSessionResetReason ?? '').isNotEmpty)
             _MetricRow(
-              label: 'Audio reset reason',
+              label: l10n.audioResetReason,
               value: snapshot!.lastAudioSessionResetReason,
             ),
           if (snapshot?.audioLastError != null)
-            _MetricRow(label: 'Audio error', value: snapshot!.audioLastError!),
+            _MetricRow(
+              label: l10n.audioError,
+              value: snapshot!.audioLastError!,
+            ),
           const SizedBox(height: 18),
-          Text('Presentation', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            l10n.presentation,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
-          _MetricRow(label: 'Fullscreen', value: '$fullscreenEnabled'),
-          _MetricRow(label: 'Auto fullscreen', value: '$autoFullscreen'),
+          _MetricRow(label: l10n.fullscreen, value: '$fullscreenEnabled'),
+          _MetricRow(label: l10n.autoFullscreen, value: '$autoFullscreen'),
           _MetricRow(
-            label: 'Auto entered',
+            label: l10n.autoEntered,
             value: '$autoFullscreenEnteredForSession',
           ),
-          _MetricRow(label: 'User exited', value: '$userExitedFullscreen'),
+          _MetricRow(label: l10n.userExited, value: '$userExitedFullscreen'),
           _MetricRow(
-            label: 'Playback',
+            label: l10n.playback,
             value:
                 '${snapshot?.playbackState ?? controller.state.wireName} '
                 'pause ${snapshot?.pauseCommandPending ?? false} '
                 'resume ${snapshot?.resumeCommandPending ?? false}',
           ),
-          _MetricRow(label: 'Scale mode', value: scaleMode),
           _MetricRow(
-            label: 'Display',
+            label: l10n.scaleMode,
+            value: scaleMode == 'fit' ? l10n.fit : l10n.fill,
+          ),
+          _MetricRow(
+            label: l10n.display,
             value:
                 '${snapshot?.containerWidth ?? 0}x${snapshot?.containerHeight ?? 0}',
           ),
           _MetricRow(
-            label: 'Video view',
+            label: l10n.videoView,
             value:
                 '${snapshot?.renderedViewWidth ?? 0}x${snapshot?.renderedViewHeight ?? 0}',
           ),
           _MetricRow(
-            label: 'Aspect error',
+            label: l10n.aspectError,
             value: (snapshot?.aspectRatioError ?? 0).toStringAsFixed(4),
           ),
           const SizedBox(height: 18),
-          Text('Diagnostics', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            l10n.diagnostics,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
-          _MetricRow(label: 'Bytes', value: '${snapshot?.bytesReceived ?? 0}'),
           _MetricRow(
-            label: 'Config',
+            label: l10n.bytes,
+            value: '${snapshot?.bytesReceived ?? 0}',
+          ),
+          _MetricRow(
+            label: l10n.config,
             value: '${snapshot?.configPacketsReceived ?? 0}',
           ),
           _MetricRow(
-            label: 'Access units',
+            label: l10n.accessUnits,
             value: '${snapshot?.accessUnitsReceived ?? 0}',
           ),
           _MetricRow(
-            label: 'Key frames',
+            label: l10n.keyFrames,
             value: '${snapshot?.keyFramesReceived ?? 0}',
           ),
           _MetricRow(
-            label: 'Decoder input/output',
+            label: l10n.decoderIo,
             value:
                 '${snapshot?.decoderInputFrames ?? 0}/${snapshot?.decoderOutputFrames ?? 0}',
           ),
           _MetricRow(
-            label: 'Released to surface',
+            label: l10n.releasedToSurface,
             value: '${snapshot?.releasedToSurfaceFrames ?? 0}',
           ),
           _MetricRow(
-            label: 'Codec create/release',
+            label: l10n.codecCreateRelease,
             value:
                 '${snapshot?.codecCreateCount ?? 0}/${snapshot?.codecReleaseCount ?? 0}',
           ),
           _MetricRow(
-            label: 'Surface lifecycle',
+            label: l10n.surfaceLifecycle,
             value:
                 '${snapshot?.surfaceCreatedCount ?? 0}/${snapshot?.surfaceChangedCount ?? 0}/${snapshot?.surfaceDestroyedCount ?? 0}',
           ),
           _MetricRow(
-            label: 'Surface valid',
+            label: l10n.surfaceValid,
             value: '${snapshot?.surfaceIsValid ?? false}',
           ),
           _MetricRow(
-            label: 'Surface size',
+            label: l10n.surfaceSize,
             value:
                 '${snapshot?.surfaceWidth ?? 0}x${snapshot?.surfaceHeight ?? 0}',
           ),
           _MetricRow(
-            label: 'Surface z-order',
+            label: l10n.surfaceZOrder,
             value: snapshot?.zOrderMode ?? 'unknown',
           ),
           _MetricRow(
-            label: 'Configured/output',
+            label: l10n.configuredOutput,
             value:
                 '${snapshot?.configuredWidth ?? 0}x${snapshot?.configuredHeight ?? 0} / '
                 '${snapshot?.outputWidth ?? 0}x${snapshot?.outputHeight ?? 0}',
           ),
           if (outputCrop != null)
-            _MetricRow(label: 'Output crop', value: outputCrop),
+            _MetricRow(label: l10n.outputCrop, value: outputCrop),
           if (snapshot?.lastDecoderError != null)
-            _MetricRow(label: 'Last error', value: snapshot!.lastDecoderError!),
+            _MetricRow(
+              label: l10n.lastError,
+              value: snapshot!.lastDecoderError!,
+            ),
           const SizedBox(height: 18),
-          Text('Receiver log', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            l10n.receiverLog,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
           ...controller.log.map(
             (entry) => Padding(
@@ -1081,6 +1125,48 @@ String? _formatCrop(ReceiverSessionSnapshot? snapshot) {
       'b:${snapshot.outputCropBottom ?? '-'}';
 }
 
+String _receiverStateLabel(
+  AppLocalizations l10n,
+  MirrorSessionState state,
+) => switch (state) {
+  MirrorSessionState.idle => l10n.receiverStateReady,
+  MirrorSessionState.starting => l10n.receiverStateStarting,
+  MirrorSessionState.listening => l10n.receiverStateListening,
+  MirrorSessionState.connecting => l10n.receiverStateConnecting,
+  MirrorSessionState.negotiating => l10n.receiverStateNegotiating,
+  MirrorSessionState.waitingForSurface => l10n.receiverStateWaitingForSurface,
+  MirrorSessionState.waitingForKeyFrame => l10n.receiverStateWaitingForKeyFrame,
+  MirrorSessionState.streaming => l10n.receiverStateStreaming,
+  MirrorSessionState.paused => l10n.receiverStatePaused,
+  MirrorSessionState.resuming => l10n.receiverStateResuming,
+  MirrorSessionState.disconnected => l10n.receiverStateFailed,
+  MirrorSessionState.error => l10n.receiverStateFailed,
+  MirrorSessionState.stopping => l10n.receiverStateStopping,
+  MirrorSessionState.restoring => l10n.receiverStateRestoring,
+  MirrorSessionState.failed => l10n.receiverStateFailed,
+};
+
+String _receiverStatusMessage(
+  AppLocalizations l10n,
+  MirrorSessionState state,
+) => switch (state) {
+  MirrorSessionState.idle => l10n.statusReady,
+  MirrorSessionState.starting => l10n.statusStarting,
+  MirrorSessionState.listening => l10n.statusListening,
+  MirrorSessionState.connecting => l10n.statusConnecting,
+  MirrorSessionState.negotiating => l10n.statusNegotiating,
+  MirrorSessionState.waitingForSurface => l10n.statusWaitingForSurface,
+  MirrorSessionState.waitingForKeyFrame => l10n.statusWaitingForKeyFrame,
+  MirrorSessionState.streaming => l10n.statusStreaming,
+  MirrorSessionState.paused => l10n.statusPaused,
+  MirrorSessionState.resuming => l10n.statusResuming,
+  MirrorSessionState.disconnected => l10n.statusFailed,
+  MirrorSessionState.error => l10n.statusFailed,
+  MirrorSessionState.stopping => l10n.statusStopping,
+  MirrorSessionState.restoring => l10n.statusRestoring,
+  MirrorSessionState.failed => l10n.statusFailed,
+};
+
 class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.label, required this.message});
 
@@ -1089,6 +1175,7 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -1105,7 +1192,7 @@ class _StatusBadge extends StatelessWidget {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [Text('State: $label'), Text(message)],
+                children: [Text('${l10n.state}: $label'), Text(message)],
               ),
             ),
           ],

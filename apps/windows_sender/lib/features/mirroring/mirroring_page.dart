@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:windows_sender/l10n/generated/app_localizations.dart';
 import 'package:mirror_protocol/mirror_protocol.dart';
 
 import '../../core/native_bridge/mirror_native_api.dart';
@@ -9,9 +10,16 @@ import 'diagnostics_clipboard_formatter.dart';
 import 'mirror_controller.dart';
 
 class MirroringPage extends StatefulWidget {
-  const MirroringPage({required this.nativeApi, super.key});
+  const MirroringPage({
+    required this.nativeApi,
+    this.languagePreferenceCode = 'system',
+    this.onLanguagePreferenceChanged,
+    super.key,
+  });
 
   final MirrorNativeApi nativeApi;
+  final String languagePreferenceCode;
+  final ValueChanged<String>? onLanguagePreferenceChanged;
 
   @override
   State<MirroringPage> createState() => _MirroringPageState();
@@ -41,13 +49,17 @@ class _MirroringPageState extends State<MirroringPage> {
       await Clipboard.setData(ClipboardData(text: text));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Diagnostics copied to clipboard.')),
+          SnackBar(
+            content: Text(AppLocalizations.of(context).diagnosticsCopied),
+          ),
         );
       }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not copy diagnostics: $error')),
+          SnackBar(
+            content: Text(AppLocalizations.of(context).diagnosticsCopyFailed),
+          ),
         );
       }
     }
@@ -63,58 +75,104 @@ class _MirroringPageState extends State<MirroringPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       body: SafeArea(
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 720;
-                final sessionPanel = _SessionPanel(
-                  controller: _controller,
-                  hostController: _hostController,
-                  portController: _portController,
-                  onRefresh: _controller.loadDisplays,
-                  onStart: _start,
-                  onStop: _controller.stop,
-                  onVideoProfileChanged: _controller.setVideoProfile,
-                  onCopyDiagnostics: _copyDiagnostics,
-                );
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(l10n.language),
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: widget.languagePreferenceCode,
+                        isDense: true,
+                        onChanged: widget.onLanguagePreferenceChanged == null
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  widget.onLanguagePreferenceChanged!(value);
+                                }
+                              },
+                        items: [
+                          DropdownMenuItem(
+                            value: 'system',
+                            child: Text(l10n.systemLanguage),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ko',
+                            child: Text(l10n.languageKorean),
+                          ),
+                          DropdownMenuItem(
+                            value: 'en',
+                            child: Text(l10n.languageEnglish),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ja',
+                            child: Text(l10n.languageJapanese),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >= 720;
+                        final sessionPanel = _SessionPanel(
+                          controller: _controller,
+                          hostController: _hostController,
+                          portController: _portController,
+                          onRefresh: _controller.loadDisplays,
+                          onStart: _start,
+                          onStop: _controller.stop,
+                          onVideoProfileChanged: _controller.setVideoProfile,
+                          onCopyDiagnostics: _copyDiagnostics,
+                        );
 
-                return Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: wide
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              flex: 5,
-                              child: _DisplayPanel(
-                                controller: _controller,
-                                onSelected: _selectDisplay,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(flex: 4, child: sessionPanel),
-                          ],
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            SizedBox(
-                              height: constraints.maxHeight * 0.38,
-                              child: _DisplayPanel(
-                                controller: _controller,
-                                onSelected: _selectDisplay,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            Expanded(child: sessionPanel),
-                          ],
-                        ),
-                );
-              },
+                        return wide
+                            ? Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    flex: 5,
+                                    child: _DisplayPanel(
+                                      controller: _controller,
+                                      onSelected: _selectDisplay,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(flex: 4, child: sessionPanel),
+                                ],
+                              )
+                            : Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  SizedBox(
+                                    height: constraints.maxHeight * 0.38,
+                                    child: _DisplayPanel(
+                                      controller: _controller,
+                                      onSelected: _selectDisplay,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Expanded(child: sessionPanel),
+                                ],
+                              );
+                      },
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         ),
@@ -135,7 +193,7 @@ class _MirroringPageState extends State<MirroringPage> {
     if (!_isValidIpv4(host)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a valid TV IPv4 address.')),
+          SnackBar(content: Text(AppLocalizations.of(context).invalidTvIpv4)),
         );
       }
       return;
@@ -155,7 +213,7 @@ class _MirroringPageState extends State<MirroringPage> {
     final host = _hostController.text.trim();
     if (!_isValidIpv4(host)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid TV IPv4 address.')),
+        SnackBar(content: Text(AppLocalizations.of(context).invalidTvIpv4)),
       );
       return;
     }
@@ -190,6 +248,98 @@ class _MirroringPageState extends State<MirroringPage> {
       // Keep the active session path independent from settings persistence.
     }
   }
+}
+
+String _videoProfileLabel(AppLocalizations l10n, SenderVideoProfile profile) =>
+    switch (profile) {
+      SenderVideoProfile.lowLatency720p30 => l10n.profile720p30Hq,
+      SenderVideoProfile.highQuality1080p30 => l10n.profile1080p30Hq,
+      SenderVideoProfile.highQuality1080p60 => l10n.profile1080p60,
+      SenderVideoProfile.cinema1080p24 => l10n.profile1080p24Cinema,
+      SenderVideoProfile.compatibility720p30 => l10n.profile720p30Compat,
+      SenderVideoProfile.experimental4k30 => l10n.profile4k30,
+    };
+
+String _senderStateLabel(AppLocalizations l10n, MirrorSessionState state) =>
+    switch (state) {
+      MirrorSessionState.idle => l10n.stateReady,
+      MirrorSessionState.starting => l10n.stateStarting,
+      MirrorSessionState.listening => l10n.stateListening,
+      MirrorSessionState.connecting => l10n.stateConnecting,
+      MirrorSessionState.negotiating => l10n.stateNegotiating,
+      MirrorSessionState.waitingForSurface => l10n.stateWaitingForSurface,
+      MirrorSessionState.waitingForKeyFrame => l10n.stateWaitingForKeyFrame,
+      MirrorSessionState.streaming => l10n.stateStreaming,
+      MirrorSessionState.paused => l10n.statePaused,
+      MirrorSessionState.resuming => l10n.stateResuming,
+      MirrorSessionState.disconnected => l10n.stateFailed,
+      MirrorSessionState.error => l10n.stateFailed,
+      MirrorSessionState.stopping => l10n.stateStopping,
+      MirrorSessionState.restoring => l10n.stateRestoring,
+      MirrorSessionState.failed => l10n.stateFailed,
+    };
+
+String _senderStatusMessage(AppLocalizations l10n, MirrorSessionState state) =>
+    switch (state) {
+      MirrorSessionState.idle => l10n.statusReady,
+      MirrorSessionState.starting => l10n.statusStarting,
+      MirrorSessionState.listening => l10n.statusListening,
+      MirrorSessionState.connecting => l10n.statusConnecting,
+      MirrorSessionState.negotiating => l10n.statusNegotiating,
+      MirrorSessionState.waitingForSurface => l10n.statusWaitingForSurface,
+      MirrorSessionState.waitingForKeyFrame => l10n.statusWaitingForKeyFrame,
+      MirrorSessionState.streaming => l10n.statusStreaming,
+      MirrorSessionState.paused => l10n.statusPaused,
+      MirrorSessionState.resuming => l10n.statusResuming,
+      MirrorSessionState.disconnected => l10n.statusFailed,
+      MirrorSessionState.error => l10n.statusFailed,
+      MirrorSessionState.stopping => l10n.statusStopping,
+      MirrorSessionState.restoring => l10n.statusRestoring,
+      MirrorSessionState.failed => l10n.statusFailed,
+    };
+
+String _pcSpeakerMuteMessage(
+  AppLocalizations l10n,
+  MirrorController controller,
+) {
+  final snapshot = controller.snapshot;
+  if (!controller.pcLocalAudioMuteRequested) {
+    return controller.isRunning && snapshot?.pcLocalAudioActualMuted == true
+        ? l10n.pcSoundMuteRestoring
+        : l10n.pcSoundMuteOff;
+  }
+  if (!controller.isRunning) return l10n.pcSoundMuteOnlyDuringMirroring;
+  if (snapshot == null) return l10n.pcSoundMuteWaiting;
+  if (snapshot.pcLocalAudioMuteExternalOverride) {
+    return l10n.pcSoundMuteUserChanged;
+  }
+  switch (snapshot.pcLocalAudioMuteErrorCode) {
+    case 'endpoint_unavailable':
+      return l10n.pcSoundMuteEndpointUnavailable;
+    case 'endpoint_volume_unavailable':
+    case 'callback_registration_failed':
+      return l10n.pcSoundMuteControlUnavailable;
+    case 'set_mute_failed':
+      return l10n.pcSoundMuteApplyFailed;
+    case 'restore_failed':
+      return l10n.pcSoundMuteRestoreFailed;
+    case 'audio_capture_unavailable':
+    case 'audio_capture_failed':
+      return l10n.pcSoundMuteCaptureFailed;
+  }
+  if (snapshot.pcLocalAudioMuteErrorCode.isNotEmpty) {
+    return l10n.pcSoundMuteControlUnavailable;
+  }
+  if (!snapshot.audioCaptureActive || !snapshot.pcLocalAudioMuteSupported) {
+    return l10n.pcSoundMuteWaiting;
+  }
+  if (snapshot.pcLocalAudioOriginalMuteState) {
+    return l10n.pcSoundMuteAlreadyMuted;
+  }
+  if (snapshot.pcLocalAudioMuteApplied && snapshot.pcLocalAudioActualMuted) {
+    return l10n.pcSoundMuteActive;
+  }
+  return l10n.pcSoundMuteWaiting;
 }
 
 bool _isValidIpv4(String value) {
@@ -246,6 +396,7 @@ class _DisplayPanelState extends State<_DisplayPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainer,
@@ -261,7 +412,7 @@ class _DisplayPanelState extends State<_DisplayPanel> {
                 const Icon(Icons.monitor),
                 const SizedBox(width: 10),
                 Text(
-                  'Monitor source',
+                  l10n.monitorSource,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ],
@@ -269,7 +420,7 @@ class _DisplayPanelState extends State<_DisplayPanel> {
             const SizedBox(height: 12),
             Expanded(
               child: widget.controller.displays.isEmpty
-                  ? const Center(child: Text('No displays found.'))
+                  ? Center(child: Text(l10n.noDisplays))
                   : ListView.separated(
                       controller: _scrollController,
                       itemCount: widget.controller.displays.length,
@@ -374,7 +525,12 @@ class _SessionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final experimental4kReason = controller.experimental4kUnavailableReason;
+    final l10n = AppLocalizations.of(context);
+    final experimental4kReason = controller.canSelectExperimental4k30
+        ? null
+        : controller.selectedDisplay == null
+        ? l10n.fourKSelectDisplay
+        : l10n.fourKDisplayTooSmall;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -390,19 +546,19 @@ class _SessionPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Beta version',
+                  l10n.betaVersion,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
               IconButton(
-                tooltip: 'Refresh displays',
+                tooltip: l10n.refreshDisplays,
                 onPressed: controller.busy ? null : onRefresh,
                 icon: const Icon(Icons.refresh),
               ),
               IconButton(
-                tooltip: 'Copy Diagnostics',
+                tooltip: l10n.copyDiagnostics,
                 onPressed: onCopyDiagnostics,
                 icon: const Icon(Icons.copy),
               ),
@@ -412,10 +568,10 @@ class _SessionPanel extends StatelessWidget {
           TextField(
             controller: hostController,
             enabled: !controller.isRunning,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               border: OutlineInputBorder(),
-              labelText: 'Receiver IP',
-              hintText: 'Example: 192.168.1.40',
+              labelText: l10n.receiverIp,
+              hintText: l10n.receiverIpExample,
             ),
           ),
           const SizedBox(height: 10),
@@ -423,9 +579,9 @@ class _SessionPanel extends StatelessWidget {
             controller: portController,
             enabled: !controller.isRunning,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               border: OutlineInputBorder(),
-              labelText: 'Control port',
+              labelText: l10n.controlPort,
             ),
           ),
           const SizedBox(height: 8),
@@ -450,9 +606,9 @@ class _SessionPanel extends StatelessWidget {
                       onVideoProfileChanged(value);
                     }
                   },
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               border: OutlineInputBorder(),
-              labelText: 'Video profile',
+              labelText: l10n.videoProfile,
             ),
           ),
           if (experimental4kReason != null) ...[
@@ -463,6 +619,23 @@ class _SessionPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 16),
+          Material(
+            type: MaterialType.transparency,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: controller.pcLocalAudioMuteRequested,
+              onChanged: controller.setPcLocalAudioMuteRequested,
+              title: Text(l10n.pcSoundMute),
+              subtitle: Text(l10n.pcSoundMuteDescription),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 16, bottom: 8),
+            child: Text(
+              _pcSpeakerMuteMessage(l10n, controller),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
           _StateBanner(controller: controller),
           if (controller.snapshot != null) ...[
             const SizedBox(height: 12),
@@ -475,18 +648,18 @@ class _SessionPanel extends StatelessWidget {
               FilledButton.icon(
                 onPressed: controller.canStart ? onStart : null,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('Start'),
+                label: Text(l10n.start),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: controller.canStop ? onStop : null,
                 icon: const Icon(Icons.stop),
-                label: const Text('Stop'),
+                label: Text(l10n.stop),
               ),
             ],
           ),
           const SizedBox(height: 18),
-          Text('Session log', style: Theme.of(context).textTheme.titleMedium),
+          Text(l10n.sessionLog, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           SizedBox(
             height: 140,
@@ -509,12 +682,13 @@ class _VideoProfileMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     return Row(
       children: [
         Expanded(
           child: Text(
-            profile.label,
+            _videoProfileLabel(l10n, profile),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -529,7 +703,7 @@ class _VideoProfileMenuItem extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               child: Text(
-                'Experimental',
+                l10n.experimental,
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ),
@@ -547,6 +721,7 @@ class _SenderCounters extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -558,13 +733,16 @@ class _SenderCounters extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _MetricRow(label: 'Performance', value: snapshot.bottleneckSummary),
+            _MetricRow(
+              label: l10n.performance,
+              value: snapshot.bottleneckSummary,
+            ),
             const Divider(height: 18),
             _MetricSection(
-              title: 'Capture',
+              title: l10n.capture,
               rows: [
                 _MetricRow(
-                  label: 'Profile',
+                  label: l10n.profile,
                   value:
                       '${snapshot.requestedProfile} -> ${snapshot.appliedProfile} - '
                       '${snapshot.outputWidth}x${snapshot.outputHeight} - '
@@ -572,151 +750,151 @@ class _SenderCounters extends StatelessWidget {
                 ),
                 if (snapshot.profileFallbackReason.isNotEmpty)
                   _MetricRow(
-                    label: 'Fallback',
+                    label: l10n.fallback,
                     value: snapshot.profileFallbackReason,
                   ),
                 _MetricRow(
-                  label: 'Target / actual',
+                  label: l10n.targetActual,
                   value:
                       '${snapshot.targetFps.toStringAsFixed(1)} / '
                       '${snapshot.admittedFrameFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Callback',
+                  label: l10n.callback,
                   value:
                       '${snapshot.captureCallbackFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Interval p95',
+                  label: l10n.intervalP95,
                   value:
                       '${snapshot.captureFrameIntervalP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Target interval',
+                  label: l10n.targetInterval,
                   value:
                       '${snapshot.targetFrameIntervalMs.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Replaced / cadence',
+                  label: l10n.replacedCadence,
                   value:
                       '${snapshot.captureReplacedFrames} / ${snapshot.cadenceSkippedFrames}',
                 ),
                 _MetricRow(
-                  label: 'Queue depth',
+                  label: l10n.queueDepth,
                   value: '${snapshot.queueDepthCapture}',
                 ),
               ],
             ),
             const Divider(height: 18),
             _MetricSection(
-              title: 'Convert / Encode',
+              title: l10n.convertEncode,
               rows: [
                 _MetricRow(
-                  label: 'Admission / accepted',
+                  label: l10n.admissionAccepted,
                   value:
                       '${snapshot.admittedFrameFps.toStringAsFixed(1)} / '
                       '${snapshot.encoderAcceptedFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Converted',
+                  label: l10n.converted,
                   value: '${snapshot.convertedFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Encoder input',
+                  label: l10n.encoderInput,
                   value: '${snapshot.encoderInputFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Encoded',
+                  label: l10n.encoded,
                   value: '${snapshot.encodedFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Convert path',
+                  label: l10n.convertPath,
                   value:
                       '${snapshot.captureToConvertAverageMs.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Encode avg/p95',
+                  label: l10n.encodeAvgP95,
                   value:
                       '${snapshot.encodeDurationAverageMs.toStringAsFixed(1)}/'
                       '${snapshot.encodeDurationP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Encoder',
+                  label: l10n.encoder,
                   value: snapshot.hardwareEncoderActive
                       ? '${snapshot.encoderName} (hardware)'
                       : '${snapshot.encoderName} (software)',
                 ),
                 _MetricRow(
-                  label: '4K capability',
+                  label: l10n.fourKCapability,
                   value:
                       'enc ${snapshot.encoderSupportsRequestedResolution}, '
                       'tv ${snapshot.receiverSupports4k30} '
                       '${snapshot.receiverMaxWidth}x${snapshot.receiverMaxHeight}',
                 ),
                 _MetricRow(
-                  label: 'Backpressure',
+                  label: l10n.backpressure,
                   value:
                       'not accepting ${snapshot.encoderNotAcceptingCount}, '
                       'drops ${snapshot.encoderBackpressureDroppedFrames}',
                 ),
                 _MetricRow(
-                  label: 'Process in/out p95',
+                  label: l10n.processInOutP95,
                   value:
                       '${snapshot.processInputDurationP95Ms.toStringAsFixed(1)}/'
                       '${snapshot.processOutputDurationP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Readback / reuse',
+                  label: l10n.readbackReuse,
                   value:
-                      '${snapshot.gpuReadbackPerFrame ? 'readback' : 'zero-copy'}, '
-                      '${snapshot.textureReuseEnabled ? 'reuse' : 'allocate'}',
+                      '${snapshot.gpuReadbackPerFrame ? l10n.valueReadback : l10n.valueZeroCopy}, '
+                      '${snapshot.textureReuseEnabled ? l10n.valueReuse : l10n.valueAllocate}',
                 ),
                 _MetricRow(
-                  label: 'Queue depth',
+                  label: l10n.queueDepth,
                   value: '${snapshot.queueDepthEncoder}',
                 ),
               ],
             ),
             const Divider(height: 18),
             _MetricSection(
-              title: 'Network',
+              title: l10n.network,
               rows: [
                 _MetricRow(
-                  label: 'Sent',
+                  label: l10n.sent,
                   value: '${snapshot.sentVideoFps.toStringAsFixed(1)} fps',
                 ),
                 _MetricRow(
-                  label: 'Send interval p95',
+                  label: l10n.sendIntervalP95,
                   value:
                       '${snapshot.sendFrameIntervalP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Send duration',
+                  label: l10n.sendDuration,
                   value:
                       '${snapshot.accessUnitSendDurationAverageMs.toStringAsFixed(1)}/'
                       '${snapshot.accessUnitSendDurationP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Socket calls',
+                  label: l10n.socketCalls,
                   value:
                       '${snapshot.socketSendCallsPerSecond.toStringAsFixed(1)}/s',
                 ),
                 _MetricRow(
-                  label: 'Pending',
+                  label: l10n.pending,
                   value: '${snapshot.pendingSendBytes} B',
                 ),
                 _MetricRow(
-                  label: 'Queue depth',
+                  label: l10n.queueDepth,
                   value: '${snapshot.queueDepthTransport}',
                 ),
                 _MetricRow(
-                  label: 'Queue wait avg/p95',
+                  label: l10n.queueWaitAvgP95,
                   value:
                       '${snapshot.videoQueueWaitAverageMs.toStringAsFixed(1)}/'
                       '${snapshot.videoQueueWaitP95Ms.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Stale video drops',
+                  label: l10n.staleVideoDrops,
                   value:
                       '${snapshot.staleVideoDroppedFrames} '
                       '(${snapshot.staleVideoDroppedFps.toStringAsFixed(1)} fps)',
@@ -725,55 +903,55 @@ class _SenderCounters extends StatelessWidget {
             ),
             const Divider(height: 18),
             _MetricSection(
-              title: 'Audio',
+              title: l10n.audio,
               rows: [
                 _MetricRow(
-                  label: 'State',
+                  label: l10n.audioState,
                   value: snapshot.audioEnabled
                       ? snapshot.audioCaptureState
-                      : 'disabled',
+                      : l10n.valueDisabled,
                 ),
                 _MetricRow(
-                  label: 'Device',
+                  label: l10n.audioDevice,
                   value: snapshot.audioDeviceName.isEmpty
-                      ? 'unknown'
+                      ? l10n.valueUnknown
                       : snapshot.audioDeviceName,
                 ),
                 _MetricRow(
-                  label: 'Input / encoded',
+                  label: l10n.inputEncoded,
                   value:
                       '${snapshot.audioInputSampleRate} Hz ${snapshot.audioInputChannels} ch / '
                       '${snapshot.audioEncodedSampleRate} Hz ${snapshot.audioEncodedChannels} ch',
                 ),
                 _MetricRow(
-                  label: 'Capture / sent',
+                  label: l10n.captureSent,
                   value:
                       '${snapshot.audioCaptureFps.toStringAsFixed(1)} fps / '
                       '${snapshot.sentAudioPackets}',
                 ),
                 _MetricRow(
-                  label: 'Encode avg',
+                  label: l10n.encodeAverage,
                   value:
                       '${snapshot.audioEncodeAverageMs.toStringAsFixed(1)} ms',
                 ),
                 _MetricRow(
-                  label: 'Queue / dropped',
+                  label: l10n.queueDropped,
                   value:
                       '${snapshot.audioQueueDepth} / ${snapshot.audioDroppedPackets}',
                 ),
                 _MetricRow(
-                  label: 'Writer wait V/A',
+                  label: l10n.writerWaitVA,
                   value:
                       '${snapshot.packetWriterVideoWaitMs.toStringAsFixed(1)}/'
                       '${snapshot.packetWriterAudioWaitMs.toStringAsFixed(1)} ms',
                 ),
                 if (snapshot.audioLastError.isNotEmpty)
                   _MetricRow(
-                    label: 'Audio error',
+                    label: l10n.audioError,
                     value: snapshot.audioLastError,
                   ),
                 _MetricRow(
-                  label: 'TV audio path',
+                  label: l10n.tvAudioPath,
                   value:
                       'stream ${snapshot.tvAudioStreaming}, '
                       'cap ${snapshot.audioCaptureActive}, '
@@ -783,42 +961,89 @@ class _SenderCounters extends StatelessWidget {
               ],
             ),
             const Divider(height: 18),
+            const Divider(height: 18),
             _MetricSection(
-              title: 'Playback control',
+              title: l10n.pcSoundMute,
               rows: [
-                _MetricRow(label: 'State', value: snapshot.playbackState),
                 _MetricRow(
-                  label: 'Pause / resume',
+                  label: l10n.pcMuteRequested,
+                  value: snapshot.pcLocalAudioMuteRequested.toString(),
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteApplied,
+                  value: snapshot.pcLocalAudioMuteApplied.toString(),
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteActual,
+                  value: snapshot.pcLocalAudioActualMuted.toString(),
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteOriginal,
+                  value: snapshot.pcLocalAudioOriginalMuteState.toString(),
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteExternalChange,
+                  value: snapshot.pcLocalAudioMuteExternalOverride.toString(),
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteTargetDevice,
+                  value: snapshot.pcLocalAudioMuteTargetDeviceId.isEmpty
+                      ? '-'
+                      : snapshot.pcLocalAudioMuteTargetDeviceId,
+                ),
+                _MetricRow(
+                  label: l10n.pcMuteErrorCode,
+                  value: snapshot.pcLocalAudioMuteErrorCode.isEmpty
+                      ? '-'
+                      : snapshot.pcLocalAudioMuteErrorCode,
+                ),
+                if (snapshot.localSpeakerMuteLastError.isNotEmpty)
+                  _MetricRow(
+                    label: l10n.audioError,
+                    value: snapshot.localSpeakerMuteLastError,
+                  ),
+              ],
+            ),
+            const Divider(height: 18),
+            _MetricSection(
+              title: l10n.playbackControl,
+              rows: [
+                _MetricRow(
+                  label: l10n.audioState,
+                  value: snapshot.playbackState,
+                ),
+                _MetricRow(
+                  label: l10n.pauseResume,
                   value:
                       '${snapshot.pauseRequestsReceived} / ${snapshot.resumeRequestsReceived}',
                 ),
                 _MetricRow(
-                  label: 'ACK / error',
+                  label: l10n.ackError,
                   value:
                       '${snapshot.playbackCommandAcksSent} / ${snapshot.playbackCommandErrorsSent}',
                 ),
                 _MetricRow(
-                  label: 'Resume config resend',
+                  label: l10n.resumeConfigResend,
                   value: '${snapshot.resumeCodecConfigResends}',
                 ),
               ],
             ),
             const Divider(height: 18),
             _MetricRow(
-              label: 'Captured total',
+              label: l10n.capturedTotal,
               value: '${snapshot.capturedFrames}',
             ),
             _MetricRow(
-              label: 'Last sequence',
+              label: l10n.lastSequence,
               value: '${snapshot.lastProcessedFrameSequence}',
             ),
             _MetricRow(
-              label: 'Intentional skip',
+              label: l10n.intentionalSkip,
               value:
                   '${snapshot.cadenceSkippedFrames} (${snapshot.cadenceDroppedFps.toStringAsFixed(1)} fps)',
             ),
             _MetricRow(
-              label: 'Real drops',
+              label: l10n.realDrops,
               value:
                   'conv ${snapshot.conversionBackpressureDroppedFrames}, '
                   'enc ${snapshot.encoderBackpressureDroppedFrames}, '
@@ -826,29 +1051,32 @@ class _SenderCounters extends StatelessWidget {
                   'stale ${snapshot.staleVideoDroppedFrames}',
             ),
             _MetricRow(
-              label: 'Config sent',
+              label: l10n.configSent,
               value: '${snapshot.codecConfigSent}',
             ),
-            _MetricRow(label: 'Key frames', value: '${snapshot.keyFramesSent}'),
             _MetricRow(
-              label: 'Total dropped',
+              label: l10n.keyFrames,
+              value: '${snapshot.keyFramesSent}',
+            ),
+            _MetricRow(
+              label: l10n.totalDropped,
               value: '${snapshot.totalDroppedFrames}',
             ),
-            _MetricRow(label: 'Packets', value: '${snapshot.packetsSent}'),
-            _MetricRow(label: 'Bytes', value: '${snapshot.bytesSent}'),
+            _MetricRow(label: l10n.packets, value: '${snapshot.packetsSent}'),
+            _MetricRow(label: l10n.bytes, value: '${snapshot.bytesSent}'),
             _MetricRow(
-              label: 'Send completed',
+              label: l10n.sendCompleted,
               value: '${snapshot.sendCompletedBytes}',
             ),
             _MetricRow(
-              label: 'Queue depth',
+              label: l10n.queueDepth,
               value:
                   '${snapshot.queueDepthCapture}/'
                   '${snapshot.queueDepthEncoder}/'
                   '${snapshot.queueDepthTransport}',
             ),
             _MetricRow(
-              label: 'Capture -> encode',
+              label: l10n.captureToEncode,
               value:
                   '${snapshot.lastCaptureToEncodeMs.toStringAsFixed(1)} ms '
                   '(avg ${snapshot.averageCaptureToEncodeMs.toStringAsFixed(1)}, '
@@ -887,8 +1115,11 @@ class _StateBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
-    final failed = controller.state == MirrorSessionState.failed;
+    final failed =
+        controller.state == MirrorSessionState.failed ||
+        controller.state == MirrorSessionState.error;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: failed ? colorScheme.errorContainer : colorScheme.surface,
@@ -908,16 +1139,8 @@ class _StateBanner extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('State: ${controller.state.wireName}'),
-                  if (controller.userMessage != null)
-                    Text(controller.userMessage!),
-                  if (controller.developerMessage != null)
-                    Text(
-                      controller.developerMessage!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                  Text(_senderStateLabel(l10n, controller.state)),
+                  Text(_senderStatusMessage(l10n, controller.state)),
                 ],
               ),
             ),

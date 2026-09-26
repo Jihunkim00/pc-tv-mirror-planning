@@ -11,6 +11,7 @@ add_executable(${BINARY_NAME} WIN32
   "main.cpp"
   "mirror_native_bridge.cpp"
   "native/audio/aac_encoder.cpp"
+  "native/audio/audio_endpoint_mute_controller.cpp"
   "native/audio/audio_device_enumerator.cpp"
   "native/audio/system_audio_loopback.cpp"
   "native/audio/wasapi_local_monitor_renderer.cpp"
@@ -65,7 +66,12 @@ add_executable(cadence_limiter_test EXCLUDE_FROM_ALL
 add_executable(latest_frame_handoff_test EXCLUDE_FROM_ALL
   "native/capture/latest_frame_handoff_test.cpp"
 )
+add_executable(endpoint_mute_policy_test EXCLUDE_FROM_ALL
+  "native/audio/endpoint_mute_policy_test.cpp"
+)
 target_include_directories(cadence_limiter_test PRIVATE ".")
 target_include_directories(latest_frame_handoff_test PRIVATE ".")
+target_include_directories(endpoint_mute_policy_test PRIVATE ".")
 target_compile_features(latest_frame_handoff_test PRIVATE cxx_std_17)
+target_compile_features(endpoint_mute_policy_test PRIVATE cxx_std_17)
 add_dependencies(${BINARY_NAME} flutter_assemble)

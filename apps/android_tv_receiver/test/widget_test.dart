@@ -1,6 +1,8 @@
 import 'package:android_tv_receiver/app/android_tv_receiver_app.dart';
 import 'package:android_tv_receiver/core/native_bridge/receiver_native_api.dart';
 import 'package:android_tv_receiver/features/receiver/receiver_home_page.dart';
+import 'package:android_tv_receiver/core/localization/locale_resolution.dart';
+import 'package:android_tv_receiver/l10n/generated/app_localizations.dart';
 import 'package:android_tv_receiver/widgets/tv_focus_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,7 +17,7 @@ void main() {
 
     expect(nativeApi.startedPort, 50720);
     expect(find.text('Waiting for PC video frames'), findsOneWidget);
-    expect(find.text('State: listening'), findsOneWidget);
+    expect(find.text('State: Listening'), findsOneWidget);
 
     expect(find.text('Auto fullscreen'), findsOneWidget);
   });
@@ -146,7 +148,7 @@ void main() {
     );
 
     expect(find.text('Waiting for PC video frames'), findsNothing);
-    expect(find.text('State: streaming'), findsOneWidget);
+    expect(find.text('State: Streaming'), findsOneWidget);
   });
 
   testWidgets('video surface is constrained to a 16:9 viewport', (
@@ -385,6 +387,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: supportedAppLocales,
+        locale: const Locale('en'),
         home: StatefulBuilder(
           builder: (context, setState) {
             rebuild = setState;

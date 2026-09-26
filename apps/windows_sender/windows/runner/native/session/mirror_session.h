@@ -2,6 +2,7 @@
 #define RUNNER_NATIVE_SESSION_MIRROR_SESSION_H_
 
 #include "native/audio/aac_encoder.h"
+#include "native/audio/audio_endpoint_mute_controller.h"
 #include "native/audio/system_audio_loopback.h"
 #include "native/audio/wasapi_local_monitor_renderer.h"
 #include "native/capture/display_capture.h"
@@ -25,6 +26,7 @@ namespace pctv {
 
 class MirrorSession {
  public:
+  ~MirrorSession();
   NativeSnapshot Start(const StartSessionOptions& options);
   NativeSnapshot Stop();
   NativeSnapshot Snapshot();
@@ -76,12 +78,10 @@ class MirrorSession {
   void SetLastEncodeError(const std::string& error);
   void SetLastSendError(const std::string& error);
   void MarkFirstAccessUnitSent();
-  void ApplyLocalMonitorMute(bool requested);
 
   std::mutex mutex_;
   std::mutex status_mutex_;
   std::mutex transport_send_mutex_;
-  std::mutex audio_route_mutex_;
   std::condition_variable status_changed_;
   std::atomic_bool running_{false};
   std::string last_source_id_;
@@ -241,9 +241,14 @@ class MirrorSession {
   int audio_input_sample_rate_ = 0;
   int audio_input_channels_ = 0;
   std::string audio_last_error_;
-  WasapiLocalMonitorRenderer* local_monitor_renderer_ = nullptr;
+  std::string local_speaker_mute_last_error_;
   std::atomic_bool pc_local_audio_mute_supported_{false};
   std::atomic_bool pc_local_audio_mute_applied_{false};
+  std::atomic_bool pc_local_audio_actual_mute_{false};
+  std::atomic_bool pc_local_audio_original_mute_state_{false};
+  std::atomic_bool pc_local_audio_mute_external_override_{false};
+  std::string pc_local_audio_mute_target_device_id_;
+  std::string pc_local_audio_mute_error_code_;
   std::atomic_bool local_monitor_active_{false};
   std::atomic_bool local_monitor_muted_{false};
   std::atomic_int local_monitor_queue_depth_{0};
