@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:android_tv_receiver/app/android_tv_receiver_app.dart';
 import 'package:android_tv_receiver/core/native_bridge/receiver_native_api.dart';
 import 'package:android_tv_receiver/features/receiver/receiver_home_page.dart';
@@ -19,9 +21,333 @@ void main() {
     expect(find.text('Waiting for PC video frames'), findsOneWidget);
     expect(find.text('State: Listening'), findsOneWidget);
 
+    await tester.drag(
+      find.byKey(const Key('receiver.settingsScroll')),
+      const Offset(0, -500),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Auto fullscreen'), findsOneWidget);
   });
 
+  testWidgets('connection info stays visible outside the settings scroll', (
+    tester,
+  ) async {
+    final nativeApi = _FakeReceiverNativeApi(
+      localIpv4Addresses: ['192.168.1.40', '10.20.30.4'],
+      receiverPort: 54123,
+    );
+    await _pumpReceiverApp(tester, nativeApi);
+
+    final panel = find.byKey(const Key('receiver.connectionInfoPanel'));
+    final settings = find.byKey(const Key('receiver.settingsScroll'));
+    expect(find.text('PC connection info'), findsOneWidget);
+    expect(find.text('TV IP address'), findsOneWidget);
+    expect(find.text('192.168.1.40'), findsOneWidget);
+    expect(find.text('10.20.30.4'), findsOneWidget);
+    expect(find.text('54123'), findsOneWidget);
+    expect(find.text('192.168.1.40:54123'), findsNothing);
+    expect(find.text('0.0.0.0'), findsNothing);
+    expect(find.ancestor(of: panel, matching: settings), findsNothing);
+
+    final panelRect = tester.getRect(panel);
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: settings, matching: find.byType(Scrollable)),
+    );
+    await tester.drag(settings, const Offset(0, -700));
+    await tester.pumpAndSettle();
+
+    expect(scrollable.position.pixels, greaterThan(0));
+    expect(find.text('192.168.1.40'), findsOneWidget);
+    expect(tester.getRect(panel), panelRect);
+  });
+
+  testWidgets('address checking changes to an address when startup completes', (
+    tester,
+  ) async {
+    final pendingStart = Completer<ReceiverSessionSnapshot>();
+    final nativeApi = _FakeReceiverNativeApi(pendingStart: pendingStart);
+    await _pumpReceiverApp(tester, nativeApi);
+
+    expect(find.text('Checking IP address…'), findsOneWidget);
+
+    nativeApi.localIpv4Addresses = ['10.20.30.40'];
+    pendingStart.complete(
+      _snapshot(
+        state: MirrorSessionState.listening,
+        userMessage: 'Listening for a Windows sender.',
+        decoderReady: true,
+        surfaceRendererReady: true,
+        localIpv4Addresses: ['10.20.30.40'],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('10.20.30.40'), findsOneWidget);
+    expect(find.text('Checking IP address…'), findsNothing);
+  });
+
+  testWidgets('empty and failed address lookups show different messages', (
+    tester,
+  ) async {
+    await _pumpReceiverApp(
+      tester,
+      _FakeReceiverNativeApi(localIpv4Addresses: []),
+    );
+    expect(find.text('Check the network connection.'), findsOneWidget);
+    expect(find.text('0.0.0.0'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpReceiverApp(
+      tester,
+      _FakeReceiverNativeApi(addressLookupFailed: true),
+    );
+    expect(
+      find.text("Couldn't check the IP address. Try again shortly."),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpReceiverApp(tester, _FakeReceiverNativeApi(startError: true));
+    expect(
+      find.text("Couldn't check the IP address. Try again shortly."),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('resume refreshes the address without restarting the receiver', (
+    tester,
+  ) async {
+    final nativeApi = _FakeReceiverNativeApi(
+      localIpv4Addresses: ['192.168.1.40'],
+    );
+    await _pumpReceiverApp(tester, nativeApi);
+
+    nativeApi.localIpv4Addresses = ['10.20.30.40'];
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(find.text('10.20.30.40'), findsOneWidget);
+    expect(find.text('192.168.1.40'), findsNothing);
+    expect(nativeApi.startCalls, 1);
+    expect(nativeApi.stopCalls, 0);
+    expect(nativeApi.statusCalls, greaterThan(0));
+  });
+
+  testWidgets(
+    'network changes refresh addresses without restarting the receiver',
+    (tester) async {
+      final nativeApi = _FakeReceiverNativeApi(
+        localIpv4Addresses: ['192.168.1.40'],
+      );
+      await _pumpReceiverApp(tester, nativeApi);
+
+      nativeApi.localIpv4Addresses = ['10.20.30.40'];
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(find.text('10.20.30.40'), findsOneWidget);
+      expect(find.text('192.168.1.40'), findsNothing);
+      expect(nativeApi.startCalls, 1);
+      expect(nativeApi.stopCalls, 0);
+      expect(nativeApi.statusCalls, greaterThan(0));
+    },
+  );
+  testWidgets('connection info returns after fullscreen exit', (tester) async {
+    const controlsChannel = MethodChannel('pc_tv_mirror/receiver_controls');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(controlsChannel, (_) async => null);
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(controlsChannel, null),
+    );
+
+    await _pumpReceiverApp(tester, _FakeReceiverNativeApi());
+    expect(_focusedDebugLabel(), 'Restart receiver');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(_focusedDebugLabel(), 'Fullscreen');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('receiver.connectionInfoPanel')), findsNothing);
+
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          'pc_tv_mirror/receiver_controls',
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('remoteAction', {'action': 'exitFullscreen'}),
+          ),
+          null,
+        );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('receiver.connectionInfoPanel')),
+      findsOneWidget,
+    );
+    expect(find.text('192.168.1.40'), findsOneWidget);
+  });
+
+  testWidgets(
+    'connection info fits 720p and 1080p in all locales with one or several IPs',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.devicePixelRatio = 1;
+      for (final resolution in const [Size(1280, 720), Size(1920, 1080)]) {
+        tester.view.physicalSize = resolution;
+        for (final addresses in const <List<String>>[
+          ['203.0.113.24'],
+          ['203.0.113.24', '10.20.30.40'],
+        ]) {
+          for (final language in ['ko', 'en', 'ja']) {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pumpAndSettle();
+            final nativeApi = _FakeReceiverNativeApi(
+              localIpv4Addresses: addresses,
+            );
+            await tester.pumpWidget(
+              MaterialApp(
+                locale: Locale(language),
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: supportedAppLocales,
+                home: ReceiverHomePage(
+                  nativeApi: nativeApi,
+                  showNativeSurface: false,
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+
+            final panel = find.byKey(const Key('receiver.connectionInfoPanel'));
+            final l10n = AppLocalizations.of(tester.element(panel));
+            expect(tester.takeException(), isNull);
+            expect(find.text(l10n.pcConnectionInfo), findsOneWidget);
+            expect(
+              tester
+                  .widget<Text>(find.text(l10n.pcConnectionInfo))
+                  .style
+                  ?.fontSize,
+              14,
+            );
+            expect(find.text(l10n.tvIpAddress), findsOneWidget);
+            expect(
+              tester.widget<Text>(find.text(l10n.tvIpAddress)).style?.fontSize,
+              11,
+            );
+            expect(find.text(l10n.port), findsOneWidget);
+            expect(
+              tester.widget<Text>(find.text(l10n.port)).style?.fontSize,
+              11,
+            );
+            expect(find.text(l10n.ipAddressEntryInstruction), findsOneWidget);
+            for (final address in addresses) {
+              expect(
+                find.text(address),
+                findsOneWidget,
+                reason:
+                    'Missing $address at ${resolution.width}x${resolution.height} in $language for $addresses.',
+              );
+            }
+            final primaryAddressValue = addresses.length == 1
+                ? addresses.first
+                : '10.20.30.40';
+            final primaryAddress = tester.widget<Text>(
+              find.text(primaryAddressValue),
+            );
+            expect(primaryAddress.maxLines, isNull);
+            expect(primaryAddress.overflow, isNull);
+            expect(primaryAddress.style?.fontSize, 16);
+            final instruction = find.text(l10n.ipAddressEntryInstruction);
+            expect(tester.widget<Text>(instruction).style?.fontSize, 10);
+            expect(tester.getSize(instruction).height, lessThan(14));
+            expect(tester.widget<Text>(find.text('50720')).style?.fontSize, 14);
+            expect(find.text('50720'), findsOneWidget);
+
+            final panelRect = tester.getRect(panel);
+            expect(panelRect.left, greaterThanOrEqualTo(0));
+            expect(panelRect.right, lessThanOrEqualTo(resolution.width));
+            expect(panelRect.bottom, lessThanOrEqualTo(resolution.height));
+            expect(panelRect.height, lessThanOrEqualTo(130));
+            if (resolution.height == 720) {
+              for (final key in const [
+                Key('receiver.restartButton'),
+                Key('receiver.fullscreenButton'),
+                Key('receiver.stopButton'),
+                Key('receiver.autoFullscreenSetting'),
+              ]) {
+                final rect = tester.getRect(find.byKey(key));
+                expect(rect.top, greaterThanOrEqualTo(0));
+                expect(
+                  rect.bottom,
+                  lessThanOrEqualTo(resolution.height),
+                  reason: 'Expected the control to remain visible at 720p.',
+                );
+              }
+            }
+            if (addresses.length == 1) {
+              expect(
+                find.byKey(const Key('receiver.additionalAddressesScroll')),
+                findsNothing,
+              );
+            } else {
+              expect(
+                find.byKey(const Key('receiver.additionalAddressesScroll')),
+                findsOneWidget,
+              );
+            }
+          }
+        }
+      }
+    },
+  );
+
+  testWidgets('many additional IPs use a capped D-pad scroll area', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    final nativeApi = _FakeReceiverNativeApi(
+      localIpv4Addresses: List.generate(
+        12,
+        (index) => '192.168.1.${index + 1}',
+      ),
+    );
+    await _pumpReceiverApp(tester, nativeApi);
+
+    final panel = find.byKey(const Key('receiver.connectionInfoPanel'));
+    final additionalList = find.byKey(
+      const Key('receiver.additionalAddressesScroll'),
+    );
+    final additionalScrollable = tester.state<ScrollableState>(
+      find.descendant(of: additionalList, matching: find.byType(Scrollable)),
+    );
+    final outerSettings = find.byKey(const Key('receiver.settingsScroll'));
+    final outerScrollable = tester.state<ScrollableState>(
+      find.descendant(of: outerSettings, matching: find.byType(Scrollable)),
+    );
+
+    expect(tester.getSize(additionalList).height, lessThanOrEqualTo(48));
+    expect(additionalScrollable.position.maxScrollExtent, greaterThan(0));
+    expect(find.text('192.168.1.1'), findsOneWidget);
+    expect(find.text('50720'), findsOneWidget);
+    expect(_focusedDebugLabel(), 'Restart receiver');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+    expect(_focusedDebugLabel(), 'Additional TV IP addresses');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+
+    expect(additionalScrollable.position.pixels, greaterThan(0));
+    expect(outerScrollable.position.pixels, 0);
+    expect(find.text('192.168.1.1'), findsOneWidget);
+    expect(find.text('50720'), findsOneWidget);
+    expect(tester.getRect(panel).bottom, lessThanOrEqualTo(720));
+  });
   testWidgets('initial focus is Restart receiver', (tester) async {
     await _pumpReceiverApp(tester, _FakeReceiverNativeApi());
 
@@ -173,6 +499,7 @@ void main() {
       'receiverPort': 50720,
       'receiverBindAddress': '0.0.0.0',
       'localIpv4Addresses': ['192.168.1.40'],
+      'localIpv4AddressesQueryFailed': true,
       'decoderReady': true,
       'surfaceRendererReady': true,
       'receiverMaxVideoWidth': 3840,
@@ -296,6 +623,7 @@ void main() {
 
     expect(snapshot.receiverBindAddress, '0.0.0.0');
     expect(snapshot.localIpv4Addresses, ['192.168.1.40']);
+    expect(snapshot.localIpv4AddressesQueryFailed, isTrue);
     expect(snapshot.receiverMaxVideoWidth, 3840);
     expect(snapshot.receiverMaxVideoHeight, 2160);
     expect(snapshot.receiverSupports4k30, isTrue);
@@ -442,14 +770,27 @@ String? _focusedDebugLabel() {
 }
 
 final class _FakeReceiverNativeApi implements ReceiverNativeApi {
-  _FakeReceiverNativeApi({this.startState = MirrorSessionState.listening});
+  _FakeReceiverNativeApi({
+    this.startState = MirrorSessionState.listening,
+    this.localIpv4Addresses = const ['192.168.1.40'],
+    this.receiverPort = 50720,
+    this.addressLookupFailed = false,
+    this.pendingStart,
+    this.startError = false,
+  });
 
   final MirrorSessionState startState;
+  List<String> localIpv4Addresses;
+  final int receiverPort;
+  final bool addressLookupFailed;
+  final Completer<ReceiverSessionSnapshot>? pendingStart;
+  final bool startError;
   int? startedPort;
   int startCalls = 0;
   int stopCalls = 0;
   int pauseCalls = 0;
   int resumeCalls = 0;
+  int statusCalls = 0;
 
   @override
   Future<ReceiverCapabilities> getCapabilities() async {
@@ -468,7 +809,14 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
   Future<ReceiverSessionSnapshot> startReceiver({required int port}) async {
     startedPort = port;
     startCalls += 1;
-    return _snapshot(
+    if (startError) {
+      throw StateError('Receiver startup failed.');
+    }
+    final pending = pendingStart;
+    if (pending != null) {
+      return pending.future;
+    }
+    return _makeSnapshot(
       state: startState,
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
@@ -482,7 +830,7 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
   @override
   Future<ReceiverSessionSnapshot> stopReceiver() async {
     stopCalls += 1;
-    return _snapshot(
+    return _makeSnapshot(
       state: MirrorSessionState.idle,
       userMessage: 'Receiver stopped.',
       decoderReady: false,
@@ -492,7 +840,8 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
 
   @override
   Future<ReceiverSessionSnapshot> getReceiverStatus() async {
-    return _snapshot(
+    statusCalls += 1;
+    return _makeSnapshot(
       state: startState,
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
@@ -505,7 +854,7 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
 
   @override
   Future<ReceiverSessionSnapshot> setAudioMuted(bool muted) async {
-    return _snapshot(
+    return _makeSnapshot(
       state: startState,
       userMessage: 'Listening for a Windows sender.',
       decoderReady: true,
@@ -520,7 +869,7 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
   Future<ReceiverSessionSnapshot> sendPlaybackCommand(String command) async {
     if (command == 'pause') {
       pauseCalls += 1;
-      return _snapshot(
+      return _makeSnapshot(
         state: MirrorSessionState.paused,
         userMessage: 'Playback paused.',
         decoderReady: true,
@@ -529,12 +878,31 @@ final class _FakeReceiverNativeApi implements ReceiverNativeApi {
       );
     }
     resumeCalls += 1;
-    return _snapshot(
+    return _makeSnapshot(
       state: MirrorSessionState.resuming,
       userMessage: 'Playback resuming.',
       decoderReady: true,
       surfaceRendererReady: true,
       releasedToSurfaceFrames: 1,
+    );
+  }
+
+  ReceiverSessionSnapshot _makeSnapshot({
+    required MirrorSessionState state,
+    required String userMessage,
+    required bool decoderReady,
+    required bool surfaceRendererReady,
+    int releasedToSurfaceFrames = 0,
+  }) {
+    return _snapshot(
+      state: state,
+      userMessage: userMessage,
+      decoderReady: decoderReady,
+      surfaceRendererReady: surfaceRendererReady,
+      releasedToSurfaceFrames: releasedToSurfaceFrames,
+      receiverPort: receiverPort,
+      localIpv4Addresses: localIpv4Addresses,
+      localIpv4AddressesQueryFailed: addressLookupFailed,
     );
   }
 }
@@ -545,12 +913,17 @@ ReceiverSessionSnapshot _snapshot({
   required bool decoderReady,
   required bool surfaceRendererReady,
   int releasedToSurfaceFrames = 0,
+  int receiverPort = 50720,
+  List<String> localIpv4Addresses = const [],
+  bool localIpv4AddressesQueryFailed = false,
 }) {
   return ReceiverSessionSnapshot(
     state: state,
     userMessage: userMessage,
-    receiverPort: 50720,
+    receiverPort: receiverPort,
     decoderReady: decoderReady,
+    localIpv4Addresses: localIpv4Addresses,
+    localIpv4AddressesQueryFailed: localIpv4AddressesQueryFailed,
     surfaceRendererReady: surfaceRendererReady,
     releasedToSurfaceFrames: releasedToSurfaceFrames,
   );

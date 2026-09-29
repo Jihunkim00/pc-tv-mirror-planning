@@ -5,6 +5,8 @@ import 'package:mirror_protocol/mirror_protocol.dart';
 
 import '../../core/native_bridge/receiver_native_api.dart';
 
+enum ReceiverAddressLookupState { checking, complete, failed }
+
 class ReceiverController extends ChangeNotifier {
   ReceiverController(this._nativeApi);
 
@@ -20,6 +22,8 @@ class ReceiverController extends ChangeNotifier {
   bool _busy = false;
   Timer? _statusTimer;
   bool _pollingStatus = false;
+  ReceiverAddressLookupState _addressLookupState =
+      ReceiverAddressLookupState.checking;
 
   ReceiverCapabilities? get capabilities => _capabilities;
   ReceiverSessionSnapshot? get snapshot => _snapshot;
@@ -27,6 +31,7 @@ class ReceiverController extends ChangeNotifier {
   String get statusMessage => _statusMessage;
   List<String> get log => List.unmodifiable(_log);
   bool get busy => _busy;
+  ReceiverAddressLookupState get addressLookupState => _addressLookupState;
   bool get pauseCommandPending => _snapshot?.pauseCommandPending ?? false;
   bool get resumeCommandPending => _snapshot?.resumeCommandPending ?? false;
 
@@ -34,6 +39,7 @@ class ReceiverController extends ChangeNotifier {
     if (_busy) {
       return;
     }
+    _addressLookupState = ReceiverAddressLookupState.checking;
     _setBusy(true);
     try {
       _capabilities = await _nativeApi.getCapabilities();
@@ -44,6 +50,7 @@ class ReceiverController extends ChangeNotifier {
       _appendLog(snapshot.userMessage);
     } catch (error) {
       _state = MirrorSessionState.failed;
+      _addressLookupState = ReceiverAddressLookupState.failed;
       _statusMessage = 'Receiver could not start.';
       _appendLog('Receiver start failed: $error');
     } finally {
@@ -58,7 +65,6 @@ class ReceiverController extends ChangeNotifier {
     _setBusy(true);
     try {
       final snapshot = await _nativeApi.stopReceiver();
-      _stopPolling();
       _applySnapshot(snapshot);
       _appendLog(snapshot.userMessage);
     } catch (error) {
@@ -102,6 +108,9 @@ class ReceiverController extends ChangeNotifier {
 
   void _applySnapshot(ReceiverSessionSnapshot snapshot, {bool notify = false}) {
     _snapshot = snapshot;
+    _addressLookupState = snapshot.localIpv4AddressesQueryFailed
+        ? ReceiverAddressLookupState.failed
+        : ReceiverAddressLookupState.complete;
     _state = snapshot.state;
     _statusMessage = snapshot.userMessage;
     if (notify) {
@@ -122,6 +131,8 @@ class ReceiverController extends ChangeNotifier {
     _pollingStatus = false;
   }
 
+  Future<void> refreshStatus() => _pollStatus();
+
   Future<void> _pollStatus() async {
     if (_pollingStatus) {
       return;
@@ -130,10 +141,9 @@ class ReceiverController extends ChangeNotifier {
     try {
       final snapshot = await _nativeApi.getReceiverStatus();
       _applySnapshot(snapshot, notify: true);
-      if (snapshot.state == MirrorSessionState.idle) {
-        _stopPolling();
-      }
+      _startPolling();
     } catch (error) {
+      _addressLookupState = ReceiverAddressLookupState.failed;
       _appendLog('Receiver status polling failed: $error');
       _stopPolling();
       notifyListeners();

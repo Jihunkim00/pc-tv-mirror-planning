@@ -312,7 +312,7 @@ private class StageOneReceiverServer(
             }
             snapshot(
                 state = "listening",
-                userMessage = "Listening on ${receiverAddressText(port)}.",
+                userMessage = "Listening on port $port.",
                 receiverPort = port,
                 decoderReady = h264DecoderAvailable,
                 surfaceRendererReady = decoder.hasSurface,
@@ -798,6 +798,7 @@ private class StageOneReceiverServer(
         errorCode: String? = null,
         developerMessage: String? = null,
     ): Map<String, Any> {
+        val addressLookup = lookupLocalIpv4Addresses()
         val decoderSnapshot = decoder.snapshot()
         val audioSnapshot = audioDecoder.snapshot()
         val activeDeveloperMessage =
@@ -815,7 +816,7 @@ private class StageOneReceiverServer(
         }
         val activeUserMessage = userMessage ?: when (activeState) {
             "idle" -> "Receiver resources were released."
-            "listening" -> "Listening on ${receiverAddressText(receiverPort)}."
+            "listening" -> "Listening on port $receiverPort."
             "waitingForSurface" -> "Waiting for the TV video surface."
             "waitingForKeyFrame" -> "Waiting for the first decodable key frame."
             "streaming" -> "PC video is being released to the TV surface."
@@ -829,7 +830,8 @@ private class StageOneReceiverServer(
             "userMessage" to activeUserMessage,
             "receiverPort" to receiverPort,
             "receiverBindAddress" to BIND_ADDRESS,
-            "localIpv4Addresses" to localIpv4Addresses(),
+            "localIpv4Addresses" to addressLookup.addresses,
+            "localIpv4AddressesQueryFailed" to addressLookup.failed,
             "connectionId" to connectionId,
             "receiverSessionGeneration" to receiverSessionGeneration,
             "sessionId" to currentSessionId,
@@ -1091,13 +1093,6 @@ private class StageOneReceiverServer(
         Log.w("PC_TV_MIRROR", message)
     }
 
-    private fun receiverAddressText(port: Int): String {
-        val addresses = localIpv4Addresses()
-        if (addresses.isEmpty()) {
-            return "$BIND_ADDRESS:$port"
-        }
-        return addresses.joinToString(", ") { "$it:$port" }
-    }
 }
 
 private data class DecoderSnapshot(
@@ -4162,25 +4157,36 @@ private fun setOptionalFormatInteger(format: MediaFormat, key: String, value: In
     }
 }
 
-private fun localIpv4Addresses(): List<String> {
+private data class LocalIpv4AddressLookup(
+    val addresses: List<String>,
+    val failed: Boolean,
+)
+
+private fun lookupLocalIpv4Addresses(): LocalIpv4AddressLookup {
     return try {
-        NetworkInterface.getNetworkInterfaces().toList()
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+            ?: return LocalIpv4AddressLookup(emptyList(), failed = false)
+        val addresses = interfaces.toList()
             .filter { it.isUp && !it.isLoopback }
             .flatMap { networkInterface ->
                 networkInterface.inetAddresses.toList()
                     .filterIsInstance<Inet4Address>()
-                    .filter { !it.isLoopbackAddress }
-                    .map { it.hostAddress ?: "" }
+                    .filter {
+                        !it.isAnyLocalAddress &&
+                            !it.isLoopbackAddress &&
+                            !it.isMulticastAddress
+                    }
+                    .mapNotNull { it.hostAddress }
             }
-            .filter { it.isNotBlank() }
             .distinct()
             .sorted()
+        LocalIpv4AddressLookup(addresses, failed = false)
     } catch (error: Exception) {
         Log.w(
             "PC_TV_MIRROR",
-            "Could not enumerate local IPv4 addresses: ${error.message ?: error.javaClass.simpleName}",
+            "Could not enumerate local IPv4 addresses: " + (error.message ?: error.javaClass.simpleName),
         )
-        emptyList()
+        LocalIpv4AddressLookup(emptyList(), failed = true)
     }
 }
 

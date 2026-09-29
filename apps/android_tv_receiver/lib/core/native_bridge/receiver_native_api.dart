@@ -88,6 +88,7 @@ final class ReceiverSessionSnapshot {
     this.receiverPerformanceClass = 'unknown',
     this.receiverBindAddress = '0.0.0.0',
     this.localIpv4Addresses = const <String>[],
+    this.localIpv4AddressesQueryFailed = false,
     this.bytesReceived = 0,
     this.configPacketsReceived = 0,
     this.accessUnitsReceived = 0,
@@ -250,6 +251,7 @@ final class ReceiverSessionSnapshot {
   final String receiverPerformanceClass;
   final String receiverBindAddress;
   final List<String> localIpv4Addresses;
+  final bool localIpv4AddressesQueryFailed;
   final int bytesReceived;
   final int configPacketsReceived;
   final int accessUnitsReceived;
@@ -449,6 +451,10 @@ final class ReceiverSessionSnapshot {
         defaultValue: '0.0.0.0',
       ),
       localIpv4Addresses: _readOptionalStringList(json, 'localIpv4Addresses'),
+      localIpv4AddressesQueryFailed: _readOptionalBool(
+        json,
+        'localIpv4AddressesQueryFailed',
+      ),
       bytesReceived: _readOptionalInt(json, 'bytesReceived'),
       configPacketsReceived: _readOptionalInt(json, 'configPacketsReceived'),
       accessUnitsReceived: _readOptionalInt(json, 'accessUnitsReceived'),

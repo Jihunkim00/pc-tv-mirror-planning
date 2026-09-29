@@ -42,6 +42,27 @@ class AppLocalizationsKo extends AppLocalizations {
   String get tvAddress => 'TV 주소';
 
   @override
+  String get pcConnectionInfo => 'PC 연결 정보';
+
+  @override
+  String get tvIpAddress => 'TV IP 주소';
+
+  @override
+  String get port => '포트';
+
+  @override
+  String get ipAddressEntryInstruction => 'PC 앱에 TV IP를 입력하세요';
+
+  @override
+  String get ipAddressChecking => 'IP 주소 확인 중…';
+
+  @override
+  String get networkConnectionCheck => '네트워크 연결을 확인하세요';
+
+  @override
+  String get ipAddressLookupFailed => 'IP 주소를 확인하지 못했습니다. 잠시 후 다시 확인하세요.';
+
+  @override
   String get protocol => '프로토콜';
 
   @override

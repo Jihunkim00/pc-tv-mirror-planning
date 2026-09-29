@@ -42,6 +42,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tvAddress => 'TV address';
 
   @override
+  String get pcConnectionInfo => 'PC connection info';
+
+  @override
+  String get tvIpAddress => 'TV IP address';
+
+  @override
+  String get port => 'Port';
+
+  @override
+  String get ipAddressEntryInstruction => 'Enter this TV IP in the PC app.';
+
+  @override
+  String get ipAddressChecking => 'Checking IP address…';
+
+  @override
+  String get networkConnectionCheck => 'Check the network connection.';
+
+  @override
+  String get ipAddressLookupFailed =>
+      'Couldn\'t check the IP address. Try again shortly.';
+
+  @override
   String get protocol => 'Protocol';
 
   @override

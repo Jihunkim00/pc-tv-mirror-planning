@@ -166,6 +166,48 @@ abstract class AppLocalizations {
   /// **'TV address'**
   String get tvAddress;
 
+  /// No description provided for @pcConnectionInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'PC connection info'**
+  String get pcConnectionInfo;
+
+  /// No description provided for @tvIpAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'TV IP address'**
+  String get tvIpAddress;
+
+  /// No description provided for @port.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get port;
+
+  /// No description provided for @ipAddressEntryInstruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter this TV IP in the PC app.'**
+  String get ipAddressEntryInstruction;
+
+  /// No description provided for @ipAddressChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking IP address…'**
+  String get ipAddressChecking;
+
+  /// No description provided for @networkConnectionCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the network connection.'**
+  String get networkConnectionCheck;
+
+  /// No description provided for @ipAddressLookupFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check the IP address. Try again shortly.'**
+  String get ipAddressLookupFailed;
+
   /// No description provided for @protocol.
   ///
   /// In en, this message translates to:
